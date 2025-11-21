@@ -1,0 +1,12 @@
+# Root Gitignore for LadyManager (monorepo)
+# Frontend build and dependencies
+node_modules/
+.next/
+
+# Python/Backend virtual env and caches
+venv/
+__pycache__/
+
+# Secrets and system files
+.env
+.DS_Store
