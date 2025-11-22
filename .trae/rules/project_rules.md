@@ -48,14 +48,14 @@ The project depends on a `.env` file in the `/backend` directory with the follow
 - `GROQ_API_KEY`: API Key for AI processing.
 - `CIVITAI_API_KEY`: Optional key for NSFW content fetching.
 
-## Puertos y Disciplina de Ejecución
-- Frontend: debe correr estrictamente en el puerto 3000 (http://localhost:3000). Si el puerto está ocupado, liberar procesos en conflicto y reintentar; no usar puertos alternativos.
-- Backend: debe correr estrictamente en el puerto 8000 (http://127.0.0.1:8000). Si el puerto 8000 está ocupado, el servidor debe fallar y avisar, no cambiar automáticamente a otro puerto.
-- Razón: consistencia de entorno local y evitar errores de conexión en flujos entre UI y API.
+## Ports and Execution Discipline
+- Frontend: must run strictly on port 3000 (http://localhost:3000). If the port is occupied, free conflicting processes and retry; do not use alternative ports.
+- Backend: must run strictly on port 8000 (http://127.0.0.1:8000). If port 8000 is occupied, the server must fail and notify; do not switch ports automatically.
+- Rationale: ensure consistent local environment and avoid connection errors between UI and API.
 
-### Script recomendado (dev estricto)
-- Usa `./scripts/dev-strict.sh` para levantar servicios con disciplina de puertos.
-- Comportamiento:
-  - Libera 3000 si está ocupado para evitar que Next cambie a 3001.
-  - Verifica 8000; si está ocupado, falla y avisa (no cambia de puerto).
-  - Arranca backend en `127.0.0.1:8000` y frontend en `http://localhost:3000`.
+### Recommended dev script (strict)
+- Use `./scripts/dev-strict.sh` to start services with port discipline.
+- Behavior:
+  - Frees port 3000 if it is occupied to prevent Next from switching to 3001.
+  - Checks port 8000; if occupied, fails and warns (does not change port).
+  - Starts backend on `127.0.0.1:8000` and frontend on `http://localhost:3000`.
