@@ -30,3 +30,9 @@
 - Frontend: Nuevo `StudioView` con selector de modelo, sliders de Batch/CFG, área de prompting con botón "✨ Soñar Prompt (IA)" y botón de acción "🚀 Generar [N] Imágenes". Integrado en Sidebar y `app/page.tsx`.
 - Cómo: `httpx` para llamadas a ReForge (127.0.0.1:7860), `cloudscraper` para Civitai, `groq` para IA con clave desde `.env`, CORS habilitado para `http://localhost:3000`. Ejecutado con `scripts/dev-strict.sh` en puertos fijos (3000/8000).
 - Próximos pasos: mover textos a `copy_blocks`/`site_settings`, validaciones (Zod en frontend si aplica), persistencia simple para preferencias del Studio.
+
+## 🟣 Marketing Inspector — 2025-11-22
+- Backend: `POST /marketing/generate` (Groq Llama 3, US English, 30 tags exactos) y `DELETE /files` con validación de ruta dentro de `OUTPUTS_DIR`.
+- Frontend: `ImageModal` con overlay de imagen, prompt usado, botón “🪄 Generar Info para DeviantArt”, inputs (Title/Description/Tags), “Copiar Todo” en formato `TITLE\n\nDESCRIPTION\n\nTAGS`, y borrado con confirmación nativa.
+- Persistencia: guarda metadatos en `localStorage` usando `marketing_meta::<filename>`; carga automática al abrir modal y escritura automática al editar o generar.
+- Objetivo de flujo: Generate → Inspect (IA Marketing) → Copy & Publish.
