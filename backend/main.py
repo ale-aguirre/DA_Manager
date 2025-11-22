@@ -166,8 +166,8 @@ async def process_ai(req: ProcessRequest):
 
 @app.post("/save-files")
 async def save_files(payload: dict):
-    """Guarda personajes.txt y poses.txt en REFORGE_PATH con formato de línea:
-    trigger_word, nombre, tags_calidad
+    """Guarda personajes.txt y poses.txt en REFORGE_PATH con formato consolidado por entidad:
+    trigger1, trigger2, nombre_limpio, tags_calidad
     - Sobrescribe o crea si no existen.
     - No guarda JSON, solo texto plano.
     """
@@ -177,11 +177,9 @@ async def save_files(payload: dict):
     if not REFORGE_PATH:
         raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
 
-    # Permite override opcional de tags de calidad desde el payload, si se envían
-    quality_override = (
-        payload.get("qualityTags")
-        or payload.get("tagsCalidad")
-        or "best quality, highly detailed"
+    # Cadena estricta de calidad (Anime/NSFW optimizada)
+    quality_tags = (
+        "masterpiece, best quality, amazing quality, absurdres, explicit, nsfw, (highly detailed face:1.2)"
     )
 
     try:
@@ -192,25 +190,26 @@ async def save_files(payload: dict):
             personajes = out.get("personajes", []) or []
             poses = out.get("poses", []) or []
 
-            def make_lines(entities):
-                lines: list[str] = []
-                for e in entities:
-                    if not isinstance(e, dict):
-                        continue
-                    nombre = (e.get("nombre") or "").strip()
-                    triggers = e.get("triggers") or []
-                    # Una línea por trigger
-                    for t in triggers:
-                        trigger = (t or "").strip()
-                        if not trigger or not nombre:
-                            continue
-                        lines.append(f"{trigger}, {nombre}, {quality_override}")
-                return lines
+            def make_line(entity: dict) -> str | None:
+                if not isinstance(entity, dict):
+                    return None
+                nombre = (entity.get("nombre") or "").strip()
+                triggers = [
+                    (t or "").strip() for t in (entity.get("triggers") or []) if (t or "").strip()
+                ]
+                if not nombre:
+                    return None
+                # Consolidar todos los triggers en una sola línea
+                prefix = ", ".join(triggers) if triggers else ""
+                if prefix:
+                    return f"{prefix}, {nombre}, {quality_tags}"
+                else:
+                    # Si no hay triggers, aún guardamos nombre + calidad
+                    return f"{nombre}, {quality_tags}"
 
-            personajes_lines = make_lines(personajes)
-            poses_lines = make_lines(poses)
+            personajes_lines = [l for l in (make_line(e) for e in personajes) if l]
+            poses_lines = [l for l in (make_line(e) for e in poses) if l]
 
-            # Escribe texto plano, una entrada por línea
             (base / "personajes.txt").write_text(
                 "\n".join(personajes_lines) + ("\n" if personajes_lines else ""),
                 encoding="utf-8",
