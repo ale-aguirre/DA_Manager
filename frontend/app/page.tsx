@@ -7,6 +7,7 @@ import LogConsole from "../src/components/dashboard/LogConsole";
 import RadarView from "../src/components/radar/RadarView";
 import ProcessView from "../src/components/processor/ProcessView";
 import type { CivitaiModel } from "../src/types/civitai";
+import FactoryControl from "../src/components/factory/FactoryControl";
 
 type View = "dashboard" | "radar" | "ia" | "files" | "settings";
 
@@ -70,6 +71,7 @@ export default function Home() {
             </div>
             <RadarView items={items} loading={loading} error={error} onScan={onScan} />
             <LogConsole logs={logs} />
+            <FactoryControl />
           </section>
         ) : view === "ia" ? (
           <section className="space-y-8">
