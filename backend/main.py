@@ -4,6 +4,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import httpx
+from services.reforge import call_txt2img
 import cloudscraper
 from pydantic import BaseModel
 from typing import List, Optional
@@ -163,6 +166,20 @@ async def process_ai(req: ProcessRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error al procesar IA: {str(e)}")
+
+@app.post("/generate")
+async def generate():
+    """Genera imagen vía ReForge (txt2img) usando payload fijo indicado.
+    Devuelve el JSON de Stable Diffusion (incluye imágenes base64)."""
+    try:
+        data = await call_txt2img()
+        return JSONResponse(content=data)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Error de red al contactar ReForge: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado al generar: {str(e)}")
 
 @app.post("/save-files")
 async def save_files(payload: dict):
