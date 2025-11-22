@@ -166,24 +166,62 @@ async def process_ai(req: ProcessRequest):
 
 @app.post("/save-files")
 async def save_files(payload: dict):
-    """Guarda el resultado de IA en archivos JSON dentro de REFORGE_PATH."""
+    """Guarda personajes.txt y poses.txt en REFORGE_PATH con formato de línea:
+    trigger_word, nombre, tags_calidad
+    - Sobrescribe o crea si no existen.
+    - No guarda JSON, solo texto plano.
+    """
     out = payload.get("output")
     if not out or not isinstance(out, dict):
         raise HTTPException(status_code=400, detail="Formato inválido: 'output' requerido.")
     if not REFORGE_PATH:
         raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
+
+    # Permite override opcional de tags de calidad desde el payload, si se envían
+    quality_override = (
+        payload.get("qualityTags")
+        or payload.get("tagsCalidad")
+        or "best quality, highly detailed"
+    )
+
     try:
         def write_files():
             base = Path(REFORGE_PATH)
             base.mkdir(parents=True, exist_ok=True)
-            (base / "ai_personajes.json").write_text(
-                json.dumps(out.get("personajes", []), ensure_ascii=False, indent=2), encoding="utf-8"
+
+            personajes = out.get("personajes", []) or []
+            poses = out.get("poses", []) or []
+
+            def make_lines(entities):
+                lines: list[str] = []
+                for e in entities:
+                    if not isinstance(e, dict):
+                        continue
+                    nombre = (e.get("nombre") or "").strip()
+                    triggers = e.get("triggers") or []
+                    # Una línea por trigger
+                    for t in triggers:
+                        trigger = (t or "").strip()
+                        if not trigger or not nombre:
+                            continue
+                        lines.append(f"{trigger}, {nombre}, {quality_override}")
+                return lines
+
+            personajes_lines = make_lines(personajes)
+            poses_lines = make_lines(poses)
+
+            # Escribe texto plano, una entrada por línea
+            (base / "personajes.txt").write_text(
+                "\n".join(personajes_lines) + ("\n" if personajes_lines else ""),
+                encoding="utf-8",
             )
-            (base / "ai_poses.json").write_text(
-                json.dumps(out.get("poses", []), ensure_ascii=False, indent=2), encoding="utf-8"
+            (base / "poses.txt").write_text(
+                "\n".join(poses_lines) + ("\n" if poses_lines else ""),
+                encoding="utf-8",
             )
+
         await asyncio.to_thread(write_files)
-        return {"status": "ok", "saved": ["ai_personajes.json", "ai_poses.json"]}
+        return {"status": "ok", "saved": ["personajes.txt", "poses.txt"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al guardar archivos: {str(e)}")
 
