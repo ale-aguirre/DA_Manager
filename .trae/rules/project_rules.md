@@ -52,3 +52,10 @@ The project depends on a `.env` file in the `/backend` directory with the follow
 - Frontend: debe correr estrictamente en el puerto 3000 (http://localhost:3000). Si el puerto está ocupado, liberar procesos en conflicto y reintentar; no usar puertos alternativos.
 - Backend: debe correr estrictamente en el puerto 8000 (http://127.0.0.1:8000). Si el puerto 8000 está ocupado, el servidor debe fallar y avisar, no cambiar automáticamente a otro puerto.
 - Razón: consistencia de entorno local y evitar errores de conexión en flujos entre UI y API.
+
+### Script recomendado (dev estricto)
+- Usa `./scripts/dev-strict.sh` para levantar servicios con disciplina de puertos.
+- Comportamiento:
+  - Libera 3000 si está ocupado para evitar que Next cambie a 3001.
+  - Verifica 8000; si está ocupado, falla y avisa (no cambia de puerto).
+  - Arranca backend en `127.0.0.1:8000` y frontend en `http://localhost:3000`.
