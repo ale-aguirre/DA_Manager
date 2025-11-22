@@ -22,3 +22,9 @@
 - Cause: UI y lógica de escaneo/estados concentrados en un único archivo sin componentes reutilizables.
 - Fix: Refactorización modular: creación de src/components (layout/Sidebar.tsx con logo circular, dashboard/StatCard.tsx, dashboard/LogConsole.tsx, radar/RadarView.tsx) y limpieza de page.tsx (<100 líneas) orquestando el layout y estados globales.
 - Prevention: Mantener arquitectura de componentes, tipar props e interfaces, y reutilizar tipos desde src/types; revisar previews tras cambios de estructura.
+
+## 2025-11-22
+- Issue: Error de tipos entre `View` en Sidebar y `View` en page.tsx; además botones sin `cursor-pointer`/`active:scale-95`.
+- Cause: Definiciones separadas de `View` sin la nueva opción `studio`; estilos de interacción omitidos.
+- Fix: Se unificó el literal `View` añadiendo "studio" en ambos archivos y se integró la vista `StudioView` en `page.tsx`. Se actualizaron clases de botones en Sidebar, RadarView, ProcessView y FactoryControl.
+- Prevention: Centralizar tipos de navegación en `src/types` para evitar divergencias; checklist UI para interacción mínima (`cursor-pointer`, `transition-all`, `active:scale-95`) antes de cerrar PR.
