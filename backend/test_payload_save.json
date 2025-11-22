@@ -1,0 +1,10 @@
+{
+  "output": {
+    "personajes": [
+      { "nombre": "Fern", "triggers": ["fern", "sousou no frieren", "purple hair"] }
+    ],
+    "poses": [
+      { "nombre": "Jack-O Challenge", "triggers": ["jack-o' challenge", "all fours"] }
+    ]
+  }
+}
