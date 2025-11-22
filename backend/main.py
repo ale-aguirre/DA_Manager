@@ -29,6 +29,7 @@ CIVITAI_API_KEY = os.getenv("CIVITAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PORT = int(os.getenv("PORT", "8000"))
 OUTPUTS_DIR = os.getenv("OUTPUTS_DIR")
+RESOURCES_DIR = os.getenv("RESOURCES_DIR")
 
 # Utilidades
 def sanitize_filename(name: str) -> str:
@@ -389,16 +390,31 @@ async def process_ai(req: ProcessRequest):
 # Fase 3: Planificador de batalla
 
 def _read_lines(file_name: str) -> List[str]:
-    path = BASE_DIR / "resources" / file_name
+    # Rutas SIEMPRE desde .env (disciplina de entorno). Si falta, devolvemos vacío con advertencia.
+    if not RESOURCES_DIR:
+        print("[Advertencia] RESOURCES_DIR no está definido en .env. No se pueden cargar recursos.")
+        return []
+    path = Path(RESOURCES_DIR) / file_name
     try:
         text = path.read_text(encoding="utf-8")
         return [ln.strip() for ln in text.splitlines() if ln.strip()]
-    except Exception:
+    except Exception as e:
+        print(f"[Advertencia] No se pudo leer {path}: {e}")
         return []
 
 QUALITY_TAGS = (
-    "masterpiece, best quality, amazing quality, absurdres, explicit, nsfw, (highly detailed face:1.2)"
+    "masterpiece, best quality, absurdres, nsfw"
 )
+
+@app.get("/planner/resources")
+async def planner_resources():
+    """Devuelve listas de recursos (outfits, poses, locations) desde RESOURCES_DIR."""
+    outfits = _read_lines("outfits.txt")
+    poses = _read_lines("poses.txt")
+    locations = _read_lines("locations.txt")
+    if not outfits or not poses or not locations:
+        raise HTTPException(status_code=500, detail="Recursos insuficientes o RESOURCES_DIR no configurado.")
+    return {"outfits": outfits, "poses": poses, "locations": locations}
 
 async def _get_atmospheres_for_character(character: str) -> List[str]:
     """Intenta obtener 3 descripciones cortas de atmósfera/iluminación vía Groq (70B)."""
@@ -447,6 +463,7 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
 
 @app.post("/planner/draft")
 async def planner_draft(payload: List[PlannerDraftItem]):
+    from itertools import product
     poses = _read_lines("poses.txt")
     outfits = _read_lines("outfits.txt")
     locations = _read_lines("locations.txt")
@@ -455,15 +472,19 @@ async def planner_draft(payload: List[PlannerDraftItem]):
 
     jobs: List[PlannerJob] = []
     for char in payload:
-        atmos = await _get_atmospheres_for_character(char.character_name)
-        for _ in range(10):
-            p = random.choice(poses)
-            o = random.choice(outfits)
-            l = random.choice(locations)
-            a = random.choice(atmos)
-            trigger = ", ".join([t for t in (char.trigger_words or []) if t.strip()]) or char.character_name
-            lora_tag = f"<lora:{sanitize_filename(char.character_name)}>"
-            prompt = f"{lora_tag}, {trigger}, {o}, {p}, {l}, {a}, {QUALITY_TAGS}"
+        # Combinaciones únicas posibles
+        all_combos = list(product(outfits, poses, locations))
+        random.shuffle(all_combos)
+        take = 10 if len(all_combos) >= 10 else len(all_combos)
+        selected = all_combos[:take]
+        # Si el espacio de combinaciones es menor que 10, rellenamos con elecciones aleatorias
+        if take < 10 and all_combos:
+            selected.extend(random.choice(all_combos) for _ in range(10 - take))
+        # Construcción de prompt con formato estricto solicitado
+        lora_tag = f"<lora:{sanitize_filename(char.character_name)}:0.8>"
+        trigger = ", ".join([t for t in (char.trigger_words or []) if t.strip()]) or char.character_name
+        for o, p, l in selected:
+            prompt = f"{lora_tag}, {trigger}, {o}, {p}, {l}, {QUALITY_TAGS}"
             seed = random.randint(0, 2_147_483_647)
             jobs.append(PlannerJob(character_name=char.character_name, prompt=prompt, seed=seed))
     return JSONResponse(content={"jobs": [j.model_dump() for j in jobs]})

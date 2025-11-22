@@ -83,3 +83,18 @@ export async function postFactoryStop(): Promise<{ status: string }> {
   }
   return res.json();
 }
+
+export interface PlannerResources {
+  outfits: string[];
+  poses: string[];
+  locations: string[];
+}
+
+export async function getPlannerResources(): Promise<PlannerResources> {
+  const res = await fetch(`${BASE_URL}/planner/resources`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Planner resources failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
