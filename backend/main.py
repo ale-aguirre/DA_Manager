@@ -169,11 +169,13 @@ async def process_ai(req: ProcessRequest):
 
 @app.post("/generate")
 async def generate():
-    """Genera imagen vía ReForge (txt2img) usando payload fijo indicado.
-    Devuelve el JSON de Stable Diffusion (incluye imágenes base64)."""
+    """Genera imagen vía ReForge (txt2img) usando payload V1 fijo.
+    Devuelve solo 'images' (base64) y 'info' (metadatos)."""
     try:
         data = await call_txt2img()
-        return JSONResponse(content=data)
+        images = data.get("images", []) if isinstance(data, dict) else []
+        info = data.get("info") if isinstance(data, dict) else None
+        return JSONResponse(content={"images": images, "info": info})
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
     except httpx.RequestError as e:
