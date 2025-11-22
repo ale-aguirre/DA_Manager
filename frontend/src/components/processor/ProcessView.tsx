@@ -87,7 +87,7 @@ export default function ProcessView({ rawItems }: ProcessViewProps) {
         <button
           onClick={executeProcess}
           disabled={processing || dirtyCount === 0}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-5 py-3 text-sm font-medium hover:bg-slate-800 hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-700 disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-5 py-3 text-sm font-medium hover:bg-slate-800 hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-700 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
         >
           <Sparkles className="h-4 w-4" aria-hidden />
           {processing ? "Procesando..." : "Ejecutar Limpieza IA"}

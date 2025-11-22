@@ -6,10 +6,11 @@ import StatCard from "../src/components/dashboard/StatCard";
 import LogConsole from "../src/components/dashboard/LogConsole";
 import RadarView from "../src/components/radar/RadarView";
 import ProcessView from "../src/components/processor/ProcessView";
+import StudioView from "../src/components/studio/StudioView";
 import type { CivitaiModel } from "../src/types/civitai";
 import FactoryControl from "../src/components/factory/FactoryControl";
 
-type View = "dashboard" | "radar" | "ia" | "files" | "settings";
+type View = "dashboard" | "radar" | "ia" | "files" | "settings" | "studio";
 
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
@@ -76,6 +77,10 @@ export default function Home() {
         ) : view === "ia" ? (
           <section className="space-y-8">
             <ProcessView rawItems={items} />
+          </section>
+        ) : view === "studio" ? (
+          <section className="space-y-8">
+            <StudioView />
           </section>
         ) : (
           <section className="space-y-4">

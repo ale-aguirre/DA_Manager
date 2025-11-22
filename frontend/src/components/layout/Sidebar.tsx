@@ -1,8 +1,8 @@
 "use client";
 import React from "react";
-import { Home as HomeIcon, Satellite, Brain, FolderClosed, Settings } from "lucide-react";
+import { Home as HomeIcon, Satellite, Brain, FolderClosed, Settings, Sparkles } from "lucide-react";
 
-type View = "dashboard" | "radar" | "ia" | "files" | "settings";
+type View = "dashboard" | "radar" | "ia" | "files" | "settings" | "studio";
 
 export interface SidebarProps {
   currentView: View;
@@ -25,7 +25,7 @@ const NavItem = ({
   <button
     onClick={() => onClick(value)}
     aria-current={active ? "page" : undefined}
-    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm cursor-pointer transition-all active:scale-95 ${
       active ? "bg-slate-900 border border-slate-800" : "hover:bg-slate-900/60"
     }`}
   >
@@ -68,6 +68,13 @@ export default function Sidebar({ currentView, onChangeView }: SidebarProps) {
           icon={Brain}
           value="ia"
           active={currentView === "ia"}
+          onClick={onChangeView}
+        />
+        <NavItem
+          label="Studio"
+          icon={Sparkles}
+          value="studio"
+          active={currentView === "studio"}
           onClick={onChangeView}
         />
         <NavItem

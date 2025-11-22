@@ -4,9 +4,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 import httpx
-from services.reforge import call_txt2img
+from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint
 import cloudscraper
 from pydantic import BaseModel
 from typing import List, Optional
@@ -44,6 +44,19 @@ class AIEntity(BaseModel):
 class AIOutput(BaseModel):
     personajes: List[AIEntity] = []
     poses: List[AIEntity] = []
+
+class CheckpointRequest(BaseModel):
+    title: str
+
+class DreamRequest(BaseModel):
+    character: str
+    tags: Optional[str] = None
+
+class GenerateRequest(BaseModel):
+    prompt: Optional[str] = None
+    batch_size: Optional[int] = None
+    cfg_scale: Optional[float] = None
+
 
 # Advertencias no bloqueantes
 if not REFORGE_PATH:
@@ -216,12 +229,77 @@ async def process_ai(req: ProcessRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error al procesar IA: {str(e)}")
 
-@app.post("/generate")
-async def generate():
-    """Genera imagen vía ReForge (txt2img) usando payload V1 fijo.
-    Devuelve solo 'images' (base64) y 'info' (metadatos)."""
+@app.get("/reforge/checkpoints")
+async def reforge_checkpoints():
     try:
-        data = await call_txt2img()
+        titles = await list_checkpoints()
+        return {"titles": titles}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Error de red al contactar ReForge: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@app.post("/reforge/checkpoint")
+async def reforge_set_checkpoint(req: CheckpointRequest):
+    if not req.title or not req.title.strip():
+        raise HTTPException(status_code=400, detail="title requerido")
+    try:
+        result = await set_active_checkpoint(req.title.strip())
+        return result
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Error de red al contactar ReForge: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@app.post("/dream")
+async def dream(req: DreamRequest):
+    api_key = GROQ_API_KEY
+    if not api_key:
+        raise HTTPException(status_code=400, detail="GROQ_API_KEY no disponible")
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor")
+
+    system_prompt = (
+        "Eres un experto en Anime y Hentai. Tu tarea es crear un prompt de Stable Diffusion. "
+        "Analiza el personaje recibido. Respeta su personalidad canónica (ej: si es Kuudere, rostro inexpresivo). "
+        "Genera una escena coherente NSFW +18. Devuelve SOLO el prompt en texto plano, sin explicaciones."
+    )
+    user_prompt = f"Personaje: {req.character}\nTags: {req.tags or ''}\nGenera prompt SD en texto plano."
+
+    try:
+        client = Groq(api_key=api_key)
+        completion = await asyncio.to_thread(
+            lambda: client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+            )
+        )
+        content = completion.choices[0].message.content.strip()
+        # Devuelve solo texto plano
+        return PlainTextResponse(content=content)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
+
+
+@app.post("/generate")
+async def generate(payload: GenerateRequest):
+    """Genera imagen vía ReForge (txt2img) con posibilidad de overrides."""
+    try:
+        data = await call_txt2img(
+            prompt=payload.prompt,
+            batch_size=payload.batch_size,
+            cfg_scale=payload.cfg_scale,
+        )
         images = data.get("images", []) if isinstance(data, dict) else []
         info = data.get("info") if isinstance(data, dict) else None
         return JSONResponse(content={"images": images, "info": info})

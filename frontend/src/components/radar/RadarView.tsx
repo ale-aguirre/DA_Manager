@@ -54,7 +54,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
         <button
           onClick={onScan}
           disabled={loading}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-5 py-3 text-sm font-medium hover:bg-slate-800 hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-700 disabled:opacity-60"
+          className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-5 py-3 text-sm font-medium hover:bg-slate-800 hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-700 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -76,7 +76,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             <button
               key={t}
               onClick={() => setTab(t as any)}
-              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs ${
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs cursor-pointer transition-all active:scale-95 ${
                 tab === t
                   ? "border-violet-500 bg-violet-500/20 text-violet-200"
                   : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
