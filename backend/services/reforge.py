@@ -42,7 +42,8 @@ async def call_txt2img(prompt: Optional[str] = None,
     """
     url = f"{BASE_URL}{TXT2IMG_ENDPOINT}"
     payload = build_txt2img_payload(prompt=prompt, batch_size=batch_size, cfg_scale=cfg_scale)
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    # Timeout ampliado a 600s para evitar 502 por Mac M2
+    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         return resp.json()
