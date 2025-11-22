@@ -10,3 +10,4 @@ __pycache__/
 # Secrets and system files
 .env
 .DS_Store
+.dev-backend.pid
