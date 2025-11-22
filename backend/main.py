@@ -235,9 +235,11 @@ async def reforge_checkpoints():
         titles = await list_checkpoints()
         return {"titles": titles}
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Error de red al contactar ReForge: {str(e)}")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
@@ -250,9 +252,11 @@ async def reforge_set_checkpoint(req: CheckpointRequest):
         result = await set_active_checkpoint(req.title.strip())
         return result
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Error de red al contactar ReForge: {str(e)}")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
@@ -304,9 +308,11 @@ async def generate(payload: GenerateRequest):
         info = data.get("info") if isinstance(data, dict) else None
         return JSONResponse(content={"images": images, "info": info})
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=f"ReForge respondió con error: {e.response.text}")
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Error de red al contactar ReForge: {str(e)}")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado al generar: {str(e)}")
 

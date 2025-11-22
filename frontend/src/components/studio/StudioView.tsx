@@ -17,6 +17,7 @@ export default function StudioView() {
   const [prompt, setPrompt] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
+  const [reforgeWarning, setReforgeWarning] = useState<boolean>(false);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -27,6 +28,10 @@ export default function StudioView() {
     const load = async () => {
       try {
         const res = await fetch(`${baseUrl}/reforge/checkpoints`);
+        if (res.status === 502) {
+          setReforgeWarning(true);
+          throw new Error(`Backend error: ${res.status}`);
+        }
         if (!res.ok) throw new Error(`Backend error: ${res.status}`);
         const data: CheckpointsResponse = await res.json();
         setCheckpoints(data?.titles ?? []);
@@ -47,6 +52,10 @@ export default function StudioView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: selectedCheckpoint }),
       });
+      if (res.status === 502) {
+        setReforgeWarning(true);
+        throw new Error(`Backend error: ${res.status}`);
+      }
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       // opcionalmente mostrar feedback
     } catch (e: any) {
@@ -65,6 +74,10 @@ export default function StudioView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ character: character.trim(), tags: tags }),
       });
+      if (res.status === 502) {
+        setReforgeWarning(true);
+        throw new Error(`Backend error: ${res.status}`);
+      }
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const text = await res.text();
       setPrompt(text);
@@ -88,6 +101,10 @@ export default function StudioView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (res.status === 502) {
+        setReforgeWarning(true);
+        throw new Error(`Backend error: ${res.status}`);
+      }
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
       console.log("Generate response:", data);
@@ -106,6 +123,11 @@ export default function StudioView() {
         <h2 className="text-2xl font-semibold">Studio Mode</h2>
         {loading && <span className="text-xs text-zinc-400">Procesando...</span>}
       </header>
+      {reforgeWarning && (
+        <div role="alert" className="rounded-md border border-yellow-700 bg-yellow-900 text-yellow-200 p-3 text-sm">
+          ⚠️ No se detecta ReForge. Asegúrate de iniciarlo con el argumento `--api`.
+        </div>
+      )}
 
       {/* Selector de Modelo */}
       <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
