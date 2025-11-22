@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import Image from "next/image";
-import { ImageOff, Heart, Download, Calendar, ExternalLink } from "lucide-react";
+import { ImageOff, Heart, Download, Calendar, ExternalLink, CheckCircle } from "lucide-react";
 import type { CivitaiModel, CivitaiImage } from "../../types/civitai";
 
 
@@ -68,6 +68,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
       className={`group relative cursor-pointer rounded-xl p-[4px] ${selected ? "ring-1 ring-pink-500" : ""} ${wrapperBorderClass} ${neonClass}`}
       onClick={() => onToggle?.(model.id)}
       style={isTop3 ? ({ ["--spin" as any]: "8s" } as React.CSSProperties) : undefined}
+      aria-selected={!!selected}
     >
       <div
         className="relative z-10 h-full w-full rounded-xl bg-slate-900 overflow-hidden"
@@ -85,7 +86,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
             isVideo ? (
               <video
                 ref={videoRef}
-                className={`h-full w-full object-cover transition-transform duration-300 ${selected ? "scale-100" : "group-hover:scale-105"}`}
+                className={`h-full w-full object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
                 src={imageUrl}
                 muted
                 playsInline
@@ -98,7 +99,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
                 src={imageUrl}
                 alt={model.name || "Civitai preview"}
                 fill
-                className={`object-cover transition-transform duration-300 ${selected ? "scale-100" : "group-hover:scale-105"}`}
+                className={`object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
                 sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
                 priority={index <= 8}
                 onError={() => setMediaError(true)}
@@ -113,10 +114,20 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
             </div>
           )}
 
+          {/* Overlay e icono de seleccionado */}
+          {selected && (
+            <>
+              <div className="pointer-events-none absolute inset-0 z-10 bg-black/40 backdrop-blur-[1px]"></div>
+              <div className="pointer-events-none absolute top-2 left-2 z-20 rounded-full bg-pink-600/80 text-white p-1 ring-1 ring-pink-300">
+                <CheckCircle className="h-5 w-5" aria-hidden />
+              </div>
+            </>
+          )}
+
           {/* Botón de enlace externo (esquina superior derecha) */}
           <button
             onClick={(e) => { e.stopPropagation(); window.open(civitaiUrl, "_blank", "noopener,noreferrer"); }}
-            className="absolute top-2 right-2 z-10 rounded-full p-1 bg-black/50 text-white hover:bg-pink-500"
+            className="absolute top-2 right-2 z-20 rounded-full p-1 bg-black/50 text-white hover:bg-pink-500"
             aria-label="Abrir en Civitai"
           >
             <ExternalLink className="h-4 w-4" />
