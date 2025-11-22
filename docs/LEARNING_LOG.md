@@ -24,6 +24,16 @@
 - Prevention: Mantener arquitectura de componentes, tipar props e interfaces, y reutilizar tipos desde src/types; revisar previews tras cambios de estructura.
 
 ## 2025-11-22
+- Issue: Botón de descarga en Radar usando `model.modelVersions[0].downloadUrl` rompía el linter (prop inexistente en tipos).
+- Cause: Tipado minimal de `CivitaiModelVersion` no incluía `downloadUrl`.
+- Fix: Extender `src/types/civitai.ts` añadiendo `downloadUrl?: string` en `CivitaiModelVersion` y manejar estados de descarga/instalación.
+- Prevention: Revisar tipos antes de usar campos de APIs externas; mantener tipos alineados a las respuestas que se consumen.
+
+## 2025-11-22
+- Issue: Next intentó moverse al puerto 3001 por ocupación del 3000, y bloqueo por lock de dev.
+- Cause: Proceso `node` activo en 3000 (PID 86556) y lock `.next/dev/lock` presente.
+- Fix: Identificar y matar el proceso (`lsof -i :3000` + `kill -9 86556`) y reiniciar `npm run dev` en 3000.
+- Prevention: Usar script `scripts/dev-strict.sh` para disciplina de puertos; revisar y liberar 3000 antes de iniciar frontend.
 - Issue: Error de tipos entre `View` en Sidebar y `View` en page.tsx; además botones sin `cursor-pointer`/`active:scale-95`.
 - Cause: Definiciones separadas de `View` sin la nueva opción `studio`; estilos de interacción omitidos.
 - Fix: Se unificó el literal `View` añadiendo "studio" en ambos archivos y se integró la vista `StudioView` en `page.tsx`. Se actualizaron clases de botones en Sidebar, RadarView, ProcessView y FactoryControl.

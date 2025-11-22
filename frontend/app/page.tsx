@@ -9,6 +9,7 @@ import ProcessView from "../src/components/processor/ProcessView";
 import StudioView from "../src/components/studio/StudioView";
 import type { CivitaiModel } from "../src/types/civitai";
 import FactoryControl from "../src/components/factory/FactoryControl";
+import LocalFilesView from "../src/components/local/LocalFilesView";
 
 type View = "dashboard" | "radar" | "ia" | "files" | "settings" | "studio";
 
@@ -81,6 +82,10 @@ export default function Home() {
         ) : view === "studio" ? (
           <section className="space-y-8">
             <StudioView />
+          </section>
+        ) : view === "files" ? (
+          <section className="space-y-8">
+            <LocalFilesView />
           </section>
         ) : (
           <section className="space-y-4">

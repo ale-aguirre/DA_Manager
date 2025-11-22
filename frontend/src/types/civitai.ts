@@ -4,8 +4,18 @@ export interface CivitaiImage {
   nsfwLevel?: string;
 }
 
+export interface CivitaiFile {
+  downloadUrl?: string;
+  sizeKB?: number;
+  type?: string;
+  format?: string;
+}
+
 export interface CivitaiModelVersion {
   images?: CivitaiImage[];
+  files?: CivitaiFile[];
+  // Optional convenience if API ever exposes direct field
+  downloadUrl?: string;
 }
 
 export interface CivitaiStats {

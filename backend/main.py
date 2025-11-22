@@ -270,11 +270,10 @@ async def dream(req: DreamRequest):
         raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor")
 
     system_prompt = (
-        "Eres un experto en Anime y Hentai. Tu tarea es crear un prompt de Stable Diffusion. "
-        "Analiza el personaje recibido. Respeta su personalidad canónica (ej: si es Kuudere, rostro inexpresivo). "
-        "Genera una escena coherente NSFW +18. Devuelve SOLO el prompt en texto plano, sin explicaciones."
+        "You are a Stable Diffusion Prompt Engineer. You DO NOT speak Spanish. "
+        "You ONLY output comma-separated Danbooru tags in English. NO sentences. NO explanations."
     )
-    user_prompt = f"Personaje: {req.character}\nTags: {req.tags or ''}\nGenera prompt SD en texto plano."
+    user_prompt = f"Character: {req.character}\nTags: {req.tags or ''}\nOutput: comma-separated Danbooru tags in English."
 
     try:
         client = Groq(api_key=api_key)
@@ -285,7 +284,7 @@ async def dream(req: DreamRequest):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.7,
+                temperature=0.2,
             )
         )
         content = completion.choices[0].message.content.strip()
@@ -381,3 +380,94 @@ async def save_files(payload: dict):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+class DownloadLoraRequest(BaseModel):
+    url: str
+    filename: str | None = None
+
+class DeleteLoraRequest(BaseModel):
+    filename: str
+
+@app.post("/download-lora")
+async def download_lora(req: DownloadLoraRequest):
+    """Descarga un archivo .safetensors desde Civitai usando cloudscraper y lo guarda en la carpeta de LoRAs.
+    Destino: REFORGE_PATH/../../models/Lora
+    """
+    if not REFORGE_PATH:
+        raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
+    if not req.url or not isinstance(req.url, str):
+        raise HTTPException(status_code=400, detail="url requerida")
+
+    def _safe_name(name: str) -> str:
+        base = name.strip().lower().replace(" ", "_")
+        if not base.endswith(".safetensors"):
+            base += ".safetensors"
+        # evitar caracteres peligrosos
+        return "".join(c for c in base if c.isalnum() or c in ["_", ".", "-"])
+
+    async def _run() -> dict:
+        try:
+            base = Path(REFORGE_PATH).resolve()
+            lora_dir = base.parents[1] / "models" / "Lora"
+            lora_dir.mkdir(parents=True, exist_ok=True)
+            filename = _safe_name(req.filename or "downloaded_lora.safetensors")
+            target = lora_dir / filename
+
+            def _download():
+                scraper = cloudscraper.create_scraper()
+                with scraper.get(req.url, stream=True, timeout=120) as r:
+                    r.raise_for_status()
+                    with open(target, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):  # 1MB
+                            if chunk:
+                                f.write(chunk)
+                return target.stat().st_size
+
+            size = await asyncio.to_thread(_download)
+            return {"status": "ok", "saved": str(target), "size_bytes": size}
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Error HTTP al descargar: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Error descargando LORA: {str(e)}")
+
+    return await _run()
+
+@app.get("/local/loras")
+async def list_local_loras():
+    """Lista archivos .safetensors en la carpeta de LoRAs"""
+    if not REFORGE_PATH:
+        raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
+
+    def _list() -> list[str]:
+        base = Path(REFORGE_PATH).resolve()
+        lora_dir = base.parents[1] / "models" / "Lora"
+        if not lora_dir.exists():
+            return []
+        return [p.name for p in lora_dir.glob("*.safetensors") if p.is_file()]
+
+    files = await asyncio.to_thread(_list)
+    return {"files": files}
+
+@app.delete("/local/lora")
+async def delete_local_lora(req: DeleteLoraRequest):
+    """Elimina un archivo .safetensors de la carpeta de LoRAs de forma segura"""
+    if not REFORGE_PATH:
+        raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
+    if not req.filename or not isinstance(req.filename, str):
+        raise HTTPException(status_code=400, detail="filename requerido")
+
+    def _delete() -> dict:
+        base = Path(REFORGE_PATH).resolve()
+        lora_dir = base.parents[1] / "models" / "Lora"
+        lora_dir.mkdir(parents=True, exist_ok=True)
+        target = (lora_dir / req.filename).resolve()
+        # prevención de path traversal
+        if lora_dir.resolve() not in target.parents:
+            raise HTTPException(status_code=400, detail="Ruta inválida")
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        target.unlink()
+        return {"status": "ok", "deleted": req.filename}
+
+    return await asyncio.to_thread(_delete)
