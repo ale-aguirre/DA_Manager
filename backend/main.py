@@ -11,6 +11,8 @@ import cloudscraper
 from pydantic import BaseModel
 from typing import List, Optional
 import json
+import base64
+from datetime import datetime
 try:
     from groq import Groq
 except Exception:
@@ -26,6 +28,9 @@ REFORGE_PATH = os.getenv("REFORGE_PATH")
 CIVITAI_API_KEY = os.getenv("CIVITAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PORT = int(os.getenv("PORT", "8000"))
+# Directorio de salidas (server-only); fallback a LadyManager/outputs si no está definido
+REPO_ROOT = BASE_DIR.parent
+OUTPUTS_DIR = os.getenv("OUTPUTS_DIR") or str(REPO_ROOT / "outputs")
 
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
@@ -86,17 +91,24 @@ async def root():
     }
 
 @app.get("/scan/civitai")
-async def scan_civitai():
+async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated"):
     """Escanea modelos de Civitai usando cloudscraper.
     Devuelve una lista con los campos necesarios para el Radar:
     id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
     """
+    # Validación ligera de parámetros
+    valid_periods = {"Day", "Week", "Month", "Year", "AllTime"}
+    valid_sorts = {"Highest Rated", "Most Downloaded", "Newest"}
+    period_val = period if period in valid_periods else "Week"
+    sort_val = sort if sort in valid_sorts else "Highest Rated"
+
     url = "https://civitai.com/api/v1/models"
     params = {
         "types": "LORA",
-        "sort": "Highest Rated",
-        "period": "Week",
+        "sort": sort_val,
+        "period": period_val,
         "limit": 10,
+        "page": max(1, int(page or 1)),
         "nsfw": "true",
         "include": "tags",
     }
@@ -270,8 +282,25 @@ async def dream(req: DreamRequest):
         raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor")
 
     system_prompt = (
-        "You are a Stable Diffusion Prompt Engineer. You DO NOT speak Spanish. "
-        "You ONLY output comma-separated Danbooru tags in English. NO sentences. NO explanations."
+        """
+You are a Master Stable Diffusion Prompter specialized in Anime/Hentai.
+Your goal is to generate high-quality Danbooru tags based on a character name.
+
+RULES:
+1. OUTPUT ONLY the tags separated by commas. No JSON, no intro, no sentences.
+2. Analyze the character's canonical personality and appearance.
+3. Always include quality tags: "masterpiece, best quality, absurdres".
+4. Use specific Danbooru tags for clothes and body types.
+
+EXAMPLES:
+Input: "Frieren"
+Output: "frieren, sousou no frieren, elf, long white hair, green eyes, twintails, white capelet, pantyhose, skirt, holding staff, stoic expression, slight smile, fantasy world, masterpiece, best quality, absurdres, 1girl"
+
+Input: "Yor Forger"
+Output: "yor forger, spy x family, assassin outfit, black dress, halterneck, cleavage, red eyes, black hair, hair ornament, weapon, blood on face, seductive smile, masterpiece, best quality, absurdres, 1girl"
+
+NOW GENERATE FOR THE USER INPUT.
+"""
     )
     user_prompt = f"Character: {req.character}\nTags: {req.tags or ''}\nOutput: comma-separated Danbooru tags in English."
 
@@ -296,7 +325,9 @@ async def dream(req: DreamRequest):
 
 @app.post("/generate")
 async def generate(payload: GenerateRequest):
-    """Genera imagen vía ReForge (txt2img) con posibilidad de overrides."""
+    """Genera imagen vía ReForge (txt2img) con posibilidad de overrides.
+    Auto-guarda las imágenes generadas en OUTPUTS_DIR/fecha/timestamp_seed.png y devuelve paths.
+    """
     try:
         data = await call_txt2img(
             prompt=payload.prompt,
@@ -305,7 +336,51 @@ async def generate(payload: GenerateRequest):
         )
         images = data.get("images", []) if isinstance(data, dict) else []
         info = data.get("info") if isinstance(data, dict) else None
-        return JSONResponse(content={"images": images, "info": info})
+
+        # Preparar carpeta de salida: outputs/YYYY-MM-DD
+        out_base = Path(OUTPUTS_DIR)
+        out_date = datetime.now().strftime("%Y-%m-%d")
+        out_dir = out_base / out_date
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Parsear seeds si vienen
+        seeds: List[str] = []
+        try:
+            if isinstance(info, str):
+                parsed = json.loads(info)
+                if isinstance(parsed, dict):
+                    if isinstance(parsed.get("all_seeds"), list):
+                        seeds = [str(s) for s in parsed.get("all_seeds")]
+                    elif parsed.get("seed") is not None:
+                        seeds = [str(parsed.get("seed"))] * len(images)
+            elif isinstance(info, dict):
+                if isinstance(info.get("all_seeds"), list):
+                    seeds = [str(s) for s in info.get("all_seeds")]
+                elif info.get("seed") is not None:
+                    seeds = [str(info.get("seed"))] * len(images)
+        except Exception:
+            seeds = []
+        if not seeds or len(seeds) != len(images):
+            # Fallback si no hay seeds o número no coincide
+            seeds = ["unknown"] * len(images)
+
+        saved_paths: List[str] = []
+        ts_base = datetime.now().strftime("%H%M%S")
+        # Guardar imágenes en disco
+        for idx, img_b64 in enumerate(images):
+            try:
+                binary = base64.b64decode(img_b64)
+                seed = seeds[idx] if idx < len(seeds) else "unknown"
+                filename = f"{ts_base}_{seed}_{idx}.png"
+                target = out_dir / filename
+                with open(target, "wb") as f:
+                    f.write(binary)
+                saved_paths.append(str(target))
+            except Exception:
+                # no bloquear por un fallo de guardado individual
+                continue
+
+        return JSONResponse(content={"images": images, "info": info, "saved_paths": saved_paths})
     except httpx.HTTPStatusError as e:
         status = e.response.status_code if getattr(e, "response", None) else None
         message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
@@ -471,3 +546,128 @@ async def delete_local_lora(req: DeleteLoraRequest):
         return {"status": "ok", "deleted": req.filename}
 
     return await asyncio.to_thread(_delete)
+
+@app.get("/reforge/progress")
+async def reforge_progress():
+    """Proxy de progreso desde ReForge (Automatic1111). Devuelve progreso, ETA y estado."""
+    url = "http://127.0.0.1:7860/sdapi/v1/progress"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            # Filtrar campos principales
+            out = {
+                "progress": data.get("progress", 0),
+                "eta_relative": data.get("eta_relative", None),
+                "state": data.get("state", {}),
+            }
+            return JSONResponse(content=out)
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado al consultar progreso: {str(e)}")
+
+
+class MarketingRequest(BaseModel):
+    prompt_used: str
+    character: Optional[str] = None
+
+class MarketingOutput(BaseModel):
+    title: str
+    description: str
+    tags: List[str] = []
+
+@app.post("/marketing/generate")
+async def marketing_generate(req: MarketingRequest):
+    """Genera metadatos de venta (título, descripción, tags) usando Groq (Llama 3).
+    Devuelve JSON con campos: {title, description, tags[]}.
+    """
+    api_key = GROQ_API_KEY
+    if not api_key:
+        raise HTTPException(status_code=400, detail="GROQ_API_KEY no disponible")
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor")
+
+    system_prompt = (
+        "You are a US Marketing Expert for Adult Content (anime/NSFW). "
+        "Use American English only. "
+        "Generate a catchy Title (subtle clickbait), a short exciting Description, "
+        "and exactly 30 relevant Tags separated by commas based on the user's prompt and character. "
+        "Return strict JSON: {title, description, tags}."
+    )
+    user_prompt = (
+        f"Prompt: {req.prompt_used}\n"
+        f"Character: {req.character or ''}\n"
+        "Strict output: ONLY JSON with keys 'title', 'description', 'tags'. No explanations."
+    )
+
+    try:
+        client = Groq(api_key=api_key)
+        completion = await asyncio.to_thread(
+            lambda: client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.4,
+            )
+        )
+        content = completion.choices[0].message.content.strip()
+        # Intentar extraer JSON
+        start = content.find("{")
+        end = content.rfind("}")
+        json_str = content[start:end+1] if start != -1 and end != -1 else content
+        parsed = json.loads(json_str)
+        title = str(parsed.get("title", "")).strip()
+        description = str(parsed.get("description", "")).strip()
+        raw_tags = parsed.get("tags")
+        if isinstance(raw_tags, str):
+            tags = [t.strip() for t in raw_tags.split(",") if t.strip()][:30]
+        elif isinstance(raw_tags, list):
+            tags = [str(t).strip() for t in raw_tags if str(t).strip()][:30]
+        else:
+            tags = []
+        out = MarketingOutput(title=title or "", description=description or "", tags=tags)
+        return out.dict()
+    except json.JSONDecodeError:
+        # Fallback: si el modelo no devolvió JSON válido, intentar heurística
+        try:
+            lines = [l.strip() for l in content.splitlines() if l.strip()]
+            title = lines[0] if lines else ""
+            description = lines[1] if len(lines) > 1 else ""
+            tags_line = lines[2] if len(lines) > 2 else ""
+            tags = [t.strip() for t in tags_line.split(",") if t.strip()][:30]
+            out = MarketingOutput(title=title, description=description, tags=tags)
+            return out.dict()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Respuesta no parseable: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
+
+@app.delete("/files")
+async def delete_file(path: str):
+    """Elimina un archivo en OUTPUTS_DIR de forma segura. Usar query param: /files?path=<ruta>."""
+    if not path or not isinstance(path, str):
+        raise HTTPException(status_code=400, detail="path requerido")
+    base = Path(OUTPUTS_DIR).resolve()
+    target = Path(path).resolve()
+    # Seguridad: la ruta debe estar dentro de OUTPUTS_DIR
+    if base not in target.parents:
+        raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    try:
+        def _delete():
+            target.unlink()
+            return {"status": "ok", "deleted": str(target)}
+        result = await asyncio.to_thread(_delete)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar archivo: {str(e)}")

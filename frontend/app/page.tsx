@@ -13,6 +13,8 @@ import LocalFilesView from "../src/components/local/LocalFilesView";
 
 type View = "dashboard" | "radar" | "ia" | "files" | "settings" | "studio";
 
+type ScanOpts = { page?: number; period?: "Day" | "Week" | "Month" | "Year" | "AllTime"; sort?: "Highest Rated" | "Most Downloaded" | "Newest" };
+
 export default function Home() {
   const [view, setView] = useState<View>("dashboard");
   const [items, setItems] = useState<CivitaiModel[]>([]);
@@ -26,21 +28,25 @@ export default function Home() {
     addLog("Dashboard listo.");
   }, []);
 
-  const onScan = async () => {
+  const onScan = async (opts?: ScanOpts) => {
     setLoading(true);
     setError(null);
-    addLog("Escaneando mercado (Civitai LORA, Highest Rated, Week)...");
+    const p = opts?.page ?? 1;
+    const period = opts?.period ?? "Week";
+    const sort = opts?.sort ?? "Highest Rated";
+    addLog(`Escaneando mercado (LORA), p=${p}, period=${period}, sort=${sort}...`);
     try {
-      const res = await fetch("http://127.0.0.1:8000/scan/civitai");
+      const params = new URLSearchParams({ page: String(p), period, sort });
+      const res = await fetch(`http://127.0.0.1:8000/scan/civitai?${params.toString()}`);
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
       setItems(list);
-      addLog(`Scan completado: ${list.length} items.`);
+      addLog(`Scan completado (p${p}/${period}/${sort}): ${list.length} items.`);
     } catch (e: any) {
       const msg = e?.message ?? "Error desconocido";
       setError(msg);
-      addLog(`Error en escaneo: ${msg}`);
+      addLog(`Error en escaneo (p${p}/${period}/${sort}): ${msg}`);
     } finally {
       setLoading(false);
     }

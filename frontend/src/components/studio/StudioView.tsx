@@ -7,6 +7,11 @@ interface DreamRequest { character: string; tags?: string }
 
 interface GenerateRequest { prompt?: string; batch_size?: number; cfg_scale?: number }
 
+interface SessionImage { b64: string; path?: string }
+
+import ProgressBar from "../ui/ProgressBar";
+import ImageModal from "./ImageModal";
+
 export default function StudioView() {
   const [checkpoints, setCheckpoints] = useState<string[]>([]);
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<string>("");
@@ -18,30 +23,47 @@ export default function StudioView() {
   const [loading, setLoading] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
   const [reforgeWarning, setReforgeWarning] = useState<boolean>(false);
+  // Estados nuevos para la tarea de UX
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [sessionImages, setSessionImages] = useState<SessionImage[]>([]);
+  const [selectedImage, setSelectedImage] = useState<SessionImage | null>(null);
+  const [showModal, setShowModal] = useState<boolean>(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  // Progreso real
+  const [progress, setProgress] = useState<number>(0);
+  const [eta, setEta] = useState<number | null>(null);
+  const [progressLabel, setProgressLabel] = useState<string>("Generando...");
+  const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
 
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
-  // Cargar checkpoints al montar
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch(`${baseUrl}/reforge/checkpoints`);
-        if (res.status === 502) {
-          setReforgeWarning(true);
-          throw new Error(`Backend error: ${res.status}`);
-        }
-        if (!res.ok) throw new Error(`Backend error: ${res.status}`);
-        const data: CheckpointsResponse = await res.json();
-        setCheckpoints(data?.titles ?? []);
-        if ((data?.titles ?? []).length > 0) setSelectedCheckpoint(data.titles[0]);
-      } catch (e: any) {
-        console.error("Error cargando checkpoints:", e?.message ?? e);
+  // Cargar checkpoints (montaje y refresco manual)
+  const loadCheckpoints = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${baseUrl}/reforge/checkpoints`);
+      if (res.status === 502) {
+        setReforgeWarning(true);
+        throw new Error(`Backend error: ${res.status}`);
       }
-    };
-    load();
-  }, []);
+      if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+      const data: CheckpointsResponse = await res.json();
+      setCheckpoints(data?.titles ?? []);
+      setSelectedCheckpoint((prev) => {
+        if (prev && (data?.titles ?? []).includes(prev)) return prev;
+        return (data?.titles ?? [])[0] || "";
+      });
+      setReforgeWarning(false);
+    } catch (e: any) {
+      console.error("Error cargando checkpoints:", e?.message ?? e);
+      setReforgeWarning(true);
+    }
+  }, [baseUrl]);
+
+  useEffect(() => {
+    loadCheckpoints();
+  }, [loadCheckpoints]);
 
   const onApplyCheckpoint = async () => {
     if (!selectedCheckpoint) return;
@@ -88,8 +110,46 @@ export default function StudioView() {
     }
   };
 
+  const startProgressPolling = () => {
+    // Reset estado
+    setProgress(0);
+    setEta(null);
+    setProgressLabel("Generando...");
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    intervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${baseUrl}/reforge/progress`);
+        if (!res.ok) return; // evitar ruido
+        const data = await res.json();
+        const p = typeof data?.progress === "number" ? data.progress : 0;
+        const etaRel = typeof data?.eta_relative === "number" ? data.eta_relative : null;
+        setProgress(p);
+        setEta(etaRel);
+        setProgressLabel("Generando...");
+        if (p >= 1) {
+          if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        }
+      } catch (_) {
+        // silent
+      }
+    }, 1000);
+  };
+
+  const stopProgressPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setProgressLabel("Completado");
+  };
+
   const onGenerate = async () => {
-    setLoading(true);
+    setGenerateError(null);
+    setIsGenerating(true);
+    startProgressPolling();
     try {
       const payload: GenerateRequest = {
         prompt: prompt && prompt.trim() ? prompt.trim() : undefined,
@@ -107,11 +167,18 @@ export default function StudioView() {
       }
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
-      console.log("Generate response:", data);
+      const images: string[] = Array.isArray(data?.images) ? data.images : [];
+      const paths: string[] = Array.isArray(data?.saved_paths) ? data.saved_paths : [];
+      if (images.length > 0) {
+        const items: SessionImage[] = images.map((img, idx) => ({ b64: img, path: paths[idx] }));
+        setSessionImages((prev) => [...items, ...prev]);
+      }
     } catch (e: any) {
       console.error("Error en generación:", e?.message ?? e);
+      setGenerateError(e?.message ? String(e.message) : "Error en generación");
     } finally {
-      setLoading(false);
+      setIsGenerating(false);
+      stopProgressPolling();
     }
   };
 
@@ -143,6 +210,15 @@ export default function StudioView() {
             ))}
           </select>
           <button className={btnClass} onClick={onApplyCheckpoint}>Aplicar</button>
+          <button
+            type="button"
+            className={btnClass}
+            onClick={loadCheckpoints}
+            aria-label="Refrescar Lista"
+            title="Refrescar Lista"
+          >
+            🔄 Refrescar Lista
+          </button>
         </div>
       </div>
 
@@ -191,8 +267,62 @@ export default function StudioView() {
 
       {/* Acción */}
       <div className="flex items-center justify-between">
-        <button className={btnClass} onClick={onGenerate}>🚀 Generar [{batchSize}] Imágenes</button>
+        <button
+          className={`${btnClass} ${isGenerating ? "opacity-70 cursor-not-allowed" : ""}`}
+          onClick={onGenerate}
+          disabled={isGenerating}
+        >
+          {isGenerating ? (
+            <span className="inline-flex items-center gap-2">
+              Wait... Generating [{batchSize}] images
+            </span>
+          ) : (
+            <>🚀 Generar [{batchSize}] Imágenes</>
+          )}
+        </button>
       </div>
+      {isGenerating && (
+        <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <ProgressBar value={progress} eta={eta ?? undefined} label={progressLabel} />
+        </div>
+      )}
+      {generateError && (
+        <div role="alert" className="mt-3 rounded-md border border-red-700 bg-red-900 text-red-200 p-3 text-sm">
+          {generateError}
+        </div>
+      )}
+
+      {/* Galería de sesión */}
+      {sessionImages.length > 0 && (
+        <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <h3 className="font-medium mb-3">Session Gallery</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {sessionImages.map((item, idx) => (
+              <img
+                key={idx}
+                src={`data:image/png;base64,${item.b64}`}
+                alt={`Generated ${idx}`}
+                className="rounded-md border border-slate-700 w-full h-auto cursor-pointer hover:opacity-90"
+                onClick={() => { setSelectedImage(item); setShowModal(true); }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Modal de Imagen */}
+      {showModal && selectedImage && (
+        <ImageModal
+          image={selectedImage}
+          promptUsed={prompt}
+          character={character}
+          baseUrl={baseUrl}
+          onClose={() => setShowModal(false)}
+          onDeleted={() => {
+            setSessionImages((prev) => prev.filter((it) => !(it.b64 === selectedImage.b64 && it.path === selectedImage.path)));
+            setShowModal(false);
+          }}
+        />
+      )}
     </section>
   );
 }
