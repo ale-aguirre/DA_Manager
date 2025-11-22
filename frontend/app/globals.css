@@ -3,6 +3,7 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --hl: #ff2aa5; /* neon highlight (pink) */
 }
 
 @theme inline {
@@ -23,4 +24,74 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Animated Conic Gradient Border (per Web Bae guide) */
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes spin-border-angle {
+  to { --angle: 360deg; }
+}
+
+/* Base wrapper that draws the animated border using pseudo-elements */
+.neon-border {
+  position: relative;
+}
+
+.neon-border::before,
+.neon-border::after {
+  content: "";
+  position: absolute;
+  inset: -2px; /* reduce halo spread */
+  border-radius: inherit;
+  pointer-events: none; /* keep interactions on content */
+  background-image: conic-gradient(
+    from var(--angle),
+    var(--hl) 12%,
+    var(--c1) 22%,
+    var(--c2) 42%,
+    var(--c3) 62%,
+    var(--c4) 82%,
+    var(--hl) 92%
+  );
+  animation: spin-border-angle var(--spin, 8s) linear infinite;
+  will-change: background-image, filter;
+}
+
+.neon-border::after {
+  mix-blend-mode: screen; /* glow interacts with dark bg */
+  filter: blur(12px) saturate(1.03) brightness(1.03);
+  opacity: 0.64;
+  box-shadow: 0 0 10px var(--c2), 0 0 20px var(--hl), inset 0 0 4px var(--c2);
+}
+
+.neon-border::before {
+  box-shadow: inset 0 0 3px var(--c2);
+}
+
+
+/* Color sets for Top 3 */
+.neon-gold { /* Amber/Gold */
+  --c1: #fff1a6; /* light gold */
+  --c2: #facc15; /* amber-400 */
+  --c3: #f59e0b; /* amber-500 */
+  --c4: #facc15; /* amber-400 */
+}
+
+.neon-silver { /* Silver */
+  --c1: #f1f5f9; /* slate-100 */
+  --c2: #cbd5e1; /* slate-300 */
+  --c3: #94a3b8; /* slate-400 */
+  --c4: #cbd5e1; /* slate-300 */
+}
+
+.neon-bronze { /* Bronze */
+  --c1: #ffd3a6; /* light bronze */
+  --c2: #e07a3d; /* copper */
+  --c3: #b45309; /* orange-700 */
+  --c4: #e07a3d; /* copper */
 }

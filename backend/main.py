@@ -1,12 +1,14 @@
 import os
 import asyncio
+import random
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 import httpx
 from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint
+from services.lora import ensure_lora
 import cloudscraper
 from pydantic import BaseModel
 from typing import List, Optional
@@ -26,6 +28,17 @@ REFORGE_PATH = os.getenv("REFORGE_PATH")
 CIVITAI_API_KEY = os.getenv("CIVITAI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PORT = int(os.getenv("PORT", "8000"))
+OUTPUTS_DIR = os.getenv("OUTPUTS_DIR")
+
+# Utilidades
+def sanitize_filename(name: str) -> str:
+    """Sanitiza nombres para uso en sistemas de archivos: minúsculas, '_' y '-'."""
+    base = (name or "").strip().lower().replace(" ", "_")
+    allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_-")
+    cleaned = "".join(c for c in base if c in allowed)
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned or "unknown"
 
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
@@ -57,6 +70,23 @@ class GenerateRequest(BaseModel):
     batch_size: Optional[int] = None
     cfg_scale: Optional[float] = None
 
+# Planner models (Fase 3)
+class PlannerDraftItem(BaseModel):
+    character_name: str
+    trigger_words: List[str] = []
+
+class PlannerJob(BaseModel):
+    character_name: str
+    prompt: str
+    seed: int
+
+class PlannerExecutionRequest(BaseModel):
+    # Usamos modelos tipados para asegurar parseo desde Body
+    jobs: List[PlannerJob]
+    resources_meta: Optional[List[dict]] = []
+
+class MagicFixRequest(BaseModel):
+    prompt: str
 
 # Advertencias no bloqueantes
 if not REFORGE_PATH:
@@ -65,6 +95,9 @@ else:
     rp = Path(REFORGE_PATH)
     if not rp.exists():
         print(f"[Advertencia] REFORGE_PATH '{REFORGE_PATH}' no existe en el sistema.")
+
+if not OUTPUTS_DIR:
+    print("[Advertencia] OUTPUTS_DIR no está definido en .env.")
 
 app = FastAPI(title="LadyManager Backend", version="0.1.0")
 
@@ -86,17 +119,33 @@ async def root():
     }
 
 @app.get("/scan/civitai")
-async def scan_civitai():
+async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated"):
     """Escanea modelos de Civitai usando cloudscraper.
     Devuelve una lista con los campos necesarios para el Radar:
     id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
     """
     url = "https://civitai.com/api/v1/models"
+    # Mapear desde UI a valores válidos de Civitai
+    sort_map = {
+        "Rating": "Highest Rated",
+        "Downloads": "Most Downloaded",
+        "Highest Rated": "Highest Rated",
+        "Most Downloaded": "Most Downloaded",
+    }
+    period_map = {
+        "Day": "Day",
+        "Week": "Week",
+        "Month": "Month",
+        "AllTime": "AllTime",
+    }
+    civitai_sort = sort_map.get(sort, "Highest Rated")
+    civitai_period = period_map.get(period, "Week")
     params = {
         "types": "LORA",
-        "sort": "Highest Rated",
-        "period": "Week",
-        "limit": 10,
+        "sort": civitai_sort,
+        "period": civitai_period,
+        "page": page,
+        "limit": 100,
         "nsfw": "true",
         "include": "tags",
     }
@@ -126,9 +175,23 @@ async def scan_civitai():
             _id = item.get("id")
             name = item.get("name")
             tags = item.get("tags") if isinstance(item.get("tags"), list) else []
-            stats = item.get("stats") or {}
+            stats_raw = item.get("stats") or {}
+            stats = dict(stats_raw)  # pasar tal cual, con pequeños fallbacks si existen en el item
             model_versions = item.get("modelVersions") or []
-
+            # Fecha de creación/publicación
+            created_at = (
+                item.get("createdAt")
+                or item.get("publishedAt")
+                or (model_versions and (model_versions[0].get("createdAt") or model_versions[0].get("publishedAt")))
+            )
+            # Fallback de claves frecuentes en stats si están fuera del objeto o faltan
+            if "downloadCount" not in stats and item.get("downloadCount") is not None:
+                stats["downloadCount"] = item.get("downloadCount")
+            if "thumbsUpCount" not in stats and item.get("thumbsUpCount") is not None:
+                stats["thumbsUpCount"] = item.get("thumbsUpCount")
+            if "rating" not in stats and item.get("rating") is not None:
+                stats["rating"] = item.get("rating")
+            
             # Recolectar imágenes (top-level y dentro de modelVersions)
             images: list[dict] = []
 
@@ -154,6 +217,7 @@ async def scan_civitai():
             return {
                 "id": _id,
                 "name": name,
+                "createdAt": created_at,
                 "tags": tags,
                 "stats": stats,
                 "images": images,
@@ -161,7 +225,102 @@ async def scan_civitai():
             }
 
         normalized = [normalize_item(it) for it in items if isinstance(it, dict)]
-        return JSONResponse(content=normalized)
+
+        # Clasificación IA (Groq) de categorías: Character, Pose, Clothing, Style, Concept
+        classified = normalized
+
+        # Heurística de respaldo para clasificar si Groq falla o no devuelve categoría válida
+        allowed_categories = {"Character", "Pose", "Clothing", "Style", "Concept"}
+        def classify_item(it: dict) -> str:
+            # Heurística estricta basada únicamente en tags
+            tl = [ (t or "").lower() for t in (it.get("tags") or []) ]
+            if any(x in tl for x in ["character", "personaje", "waifu", "1girl"]):
+                return "Character"
+            if any(x in tl for x in ["clothing", "outfit", "costume", "dress"]):
+                return "Clothing"
+            if any(x in tl for x in ["pose", "action"]):
+                return "Pose"
+            if any(x in tl for x in ["style", "art style"]):
+                return "Style"
+            return "Concept"
+
+        if GROQ_API_KEY and Groq is not None:
+            try:
+                client = Groq(api_key=GROQ_API_KEY)
+                compact = [
+                    {"id": it.get("id"), "name": it.get("name"), "tags": it.get("tags", [])}
+                    for it in normalized
+                ]
+                system_prompt = (
+                    "Analyze this JSON list of Civitai models.\n"
+                    "Return a JSON object where keys are Model IDs and values are their CATEGORY.\n"
+                    "Categories must be strictly: 'Character', 'Pose', 'Clothing', 'Style', 'Concept'.\n\n"
+                    "Rules:\n"
+                    "- If it's a specific named Anime Girl -> 'Character'.\n"
+                    "- If it's a pose or action -> 'Pose'.\n"
+                    "- If it's an outfit or costume -> 'Clothing'.\n"
+                    "- If it's an art style or visual tweak -> 'Style'.\n"
+                    "- Anything else -> 'Concept'.\n\n"
+                    "Output format: { '12345': 'Character', '67890': 'Pose' }"
+                )
+                user_prompt = "List:\n" + json.dumps(compact)
+                completion = await groq_chat_with_fallbacks(
+                    client,
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.0,
+                )
+                content = completion.choices[0].message.content.strip()
+                # Intentar parsear estrictamente como objeto JSON { id: category }
+                start = content.find("{")
+                end = content.rfind("}")
+                json_str = content[start:end+1] if start != -1 and end != -1 else content
+                id_to_cat = {}
+                try:
+                    parsed = json.loads(json_str)
+                    if isinstance(parsed, dict):
+                        id_to_cat = parsed
+                    else:
+                        raise ValueError("Groq returned non-dict JSON")
+                except Exception:
+                    id_to_cat = {}
+                for it in classified:
+                    _id = it.get("id")
+                    key_candidates = [str(_id), _id]
+                    cat = None
+                    for k in key_candidates:
+                        if k in id_to_cat:
+                            cat = id_to_cat[k]
+                            break
+                    if isinstance(cat, str) and cat in allowed_categories:
+                        it["ai_category"] = cat
+                    else:
+                        it["ai_category"] = classify_item(it)
+            except Exception as e:
+                print(f"[scan_civitai] Clasificación Groq falló: {e}. Aplicando heurística de respaldo.")
+                for it in classified:
+                    it["ai_category"] = classify_item(it)
+        else:
+            for it in classified:
+                it["ai_category"] = classify_item(it)
+
+        # Enriquecer con existencia local y devolver TODOS los items (sin filtrar), por página
+        base_dir = Path(OUTPUTS_DIR) if OUTPUTS_DIR else None
+        try:
+            if base_dir:
+                base_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        def enrich_local(it: dict) -> dict:
+            clean = sanitize_filename(it.get("name") or "")
+            local_exists = bool(base_dir and (base_dir / clean).exists())
+            it["local_exists"] = bool(local_exists)
+            return it
+        final = [enrich_local(it) for it in classified]
+
+        return JSONResponse(content=final)
     except HTTPException as he:
         print(f"[scan_civitai] HTTPException: {getattr(he, 'detail', he)}")
         raise
@@ -197,15 +356,13 @@ async def process_ai(req: ProcessRequest):
 
     try:
         client = Groq(api_key=api_key)
-        completion = await asyncio.to_thread(
-            lambda: client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-            )
+        completion = await groq_chat_with_fallbacks(
+            client,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
         )
         content = completion.choices[0].message.content.strip()
         # Extraer JSON si viene con fences
@@ -228,6 +385,315 @@ async def process_ai(req: ProcessRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error al procesar IA: {str(e)}")
+
+# Fase 3: Planificador de batalla
+
+def _read_lines(file_name: str) -> List[str]:
+    path = BASE_DIR / "resources" / file_name
+    try:
+        text = path.read_text(encoding="utf-8")
+        return [ln.strip() for ln in text.splitlines() if ln.strip()]
+    except Exception:
+        return []
+
+QUALITY_TAGS = (
+    "masterpiece, best quality, amazing quality, absurdres, explicit, nsfw, (highly detailed face:1.2)"
+)
+
+async def _get_atmospheres_for_character(character: str) -> List[str]:
+    """Intenta obtener 3 descripciones cortas de atmósfera/iluminación vía Groq (70B)."""
+    if not GROQ_API_KEY or Groq is None:
+        return [
+            "soft ambient light",
+            "moody shadows",
+            "neon glow",
+        ]
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        system_prompt = (
+            "You generate short visual atmosphere descriptors for Stable Diffusion. "
+            "Return ONLY a JSON array of 3 short English phrases (3-6 words)."
+        )
+        user_prompt = (
+            f"Character: {character}\nTask: 3 varying atmosphere/lighting cues (English). Return ONLY JSON array."
+        )
+        completion = await groq_chat_with_fallbacks(
+            client,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+        )
+        content = completion.choices[0].message.content.strip()
+        start = content.find("[")
+        end = content.rfind("]")
+        json_str = content[start:end+1] if start != -1 and end != -1 else content
+        arr = json.loads(json_str)
+        if isinstance(arr, list) and arr:
+            return [str(x) for x in arr[:3]]
+        return [
+            "soft ambient light",
+            "moody shadows",
+            "neon glow",
+        ]
+    except Exception as e:
+        print(f"[planner] Atmospheres via Groq failed: {e}")
+        return [
+            "soft ambient light",
+            "moody shadows",
+            "neon glow",
+        ]
+
+@app.post("/planner/draft")
+async def planner_draft(payload: List[PlannerDraftItem]):
+    poses = _read_lines("poses.txt")
+    outfits = _read_lines("outfits.txt")
+    locations = _read_lines("locations.txt")
+    if not poses or not outfits or not locations:
+        raise HTTPException(status_code=500, detail="Recursos insuficientes: poses/outfits/locations vacíos.")
+
+    jobs: List[PlannerJob] = []
+    for char in payload:
+        atmos = await _get_atmospheres_for_character(char.character_name)
+        for _ in range(10):
+            p = random.choice(poses)
+            o = random.choice(outfits)
+            l = random.choice(locations)
+            a = random.choice(atmos)
+            trigger = ", ".join([t for t in (char.trigger_words or []) if t.strip()]) or char.character_name
+            lora_tag = f"<lora:{sanitize_filename(char.character_name)}>"
+            prompt = f"{lora_tag}, {trigger}, {o}, {p}, {l}, {a}, {QUALITY_TAGS}"
+            seed = random.randint(0, 2_147_483_647)
+            jobs.append(PlannerJob(character_name=char.character_name, prompt=prompt, seed=seed))
+    return JSONResponse(content={"jobs": [j.model_dump() for j in jobs]})
+
+@app.post("/planner/magicfix")
+async def planner_magicfix(req: MagicFixRequest):
+    if not req.prompt or not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt requerido")
+    if not GROQ_API_KEY or Groq is None:
+        # Devuelve el mismo prompt si Groq no está disponible
+        return {"prompt": req.prompt}
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        system_prompt = (
+            "You are a Stable Diffusion Prompt editor. "
+            "Rewrite the given prompt (tags) to be more coherent and evocative, in English, comma-separated tags only. "
+            "Do NOT add explanations. Return ONLY the rewritten prompt."
+        )
+        user_prompt = req.prompt
+        completion = await groq_chat_with_fallbacks(
+            client,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+        )
+        content = completion.choices[0].message.content.strip()
+        return {"prompt": content}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
+
+# BLOQUE DUPLICADO ELIMINADO: se removieron definiciones duplicadas de endpoints y clases añadidas por error durante la edición.
+
+def _get_lora_dir() -> Path | None:
+    if not REFORGE_PATH:
+        return None
+    try:
+        base = Path(REFORGE_PATH).resolve()
+        return base.parents[1] / "models" / "Lora"
+    except Exception:
+        return None
+
+def _parse_lora_names(prompt: str) -> List[str]:
+    names: List[str] = []
+    p = (prompt or "")
+    # Formatos esperados: <lora:NAME> o <lora:NAME:WEIGHT>
+    import re
+    for m in re.finditer(r"<lora:([a-zA-Z0-9_\-\.]+)(?::[0-9\.]+)?>", p):
+        names.append(m.group(1))
+    return names
+
+def _lora_exists(name: str) -> bool:
+    d = _get_lora_dir()
+    if not d:
+        return False
+    if not d.exists():
+        return False
+    name_low = name.strip().lower()
+    for f in d.glob("*.safetensors"):
+        if name_low in f.name.lower():
+            return True
+    return False
+
+async def _maybe_download_lora(name: str) -> bool:
+    # Sin metadata de URL en PlannerJob, registramos y omitimos descarga.
+    _log(f"LoRA '{name}' no encontrado; no hay metadata para descargar. Se omite.")
+    return False
+
+async def _save_image(character_name: str, image_b64: str) -> str:
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    dest_dir = Path(OUTPUTS_DIR) / sanitize_filename(character_name)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = dest_dir / f"{ts}.png"
+    try:
+        data = base64.b64decode(image_b64)
+        target.write_bytes(data)
+    except Exception as e:
+        _log(f"Error guardando imagen: {e}")
+        raise HTTPException(status_code=500, detail=f"Error guardando imagen: {str(e)}")
+    return str(target)
+
+async def produce_jobs(jobs: List[PlannerJob]):
+    FACTORY_STATE.update({
+        "is_active": True,
+        "current_job_index": 0,
+        "total_jobs": len(jobs),
+        "current_character": None,
+        "last_image_path": FACTORY_STATE.get("last_image_path"),
+        "stop_requested": False,
+    })
+    _log(f"Producción iniciada: {len(jobs)} trabajos.")
+    for idx, job in enumerate(jobs, start=1):
+        if FACTORY_STATE.get("stop_requested"):
+            _log("Parada de emergencia solicitada. Deteniendo cola.")
+            break
+        FACTORY_STATE["current_job_index"] = idx
+        FACTORY_STATE["current_character"] = job.character_name
+        _log(f"Procesando {idx}/{len(jobs)}: {job.character_name}")
+        # Descarga inteligente de LoRA
+        loras = _parse_lora_names(job.prompt)
+        for name in loras:
+            if not _lora_exists(name):
+                _log(f"LoRA faltante: {name}. Intentando descarga...")
+                ok = await _maybe_download_lora(name)
+                if not ok:
+                    _log(f"Descarga omitida: no hay metadata disponible para '{name}'.")
+        # Generación vía ReForge
+        try:
+            _log(f"Generando imagen {idx}/{len(jobs)}...")
+            data = await call_txt2img(prompt=job.prompt)
+            images = data.get("images", []) if isinstance(data, dict) else []
+            if not images:
+                _log("ReForge no devolvió imágenes.")
+                continue
+            last_b64 = images[0]
+            # Guardado
+            path = await _save_image(job.character_name, last_b64)
+            FACTORY_STATE["last_image_path"] = path
+            FACTORY_STATE["last_image_b64"] = f"data:image/png;base64,{last_b64}"
+            _log(f"Guardado en disco: {path}")
+        except Exception as e:
+            _log(f"Error en generación: {e}")
+            continue
+    FACTORY_STATE["is_active"] = False
+    _log("Producción finalizada.")
+
+def schedule_production(jobs: List[PlannerJob]):
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(produce_jobs(jobs))
+    except RuntimeError:
+        # Si no hay loop (entornos específicos), ejecutar en to_thread
+        asyncio.run(produce_jobs(jobs))
+
+async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[ResourceMeta]] = None):
+    FACTORY_STATE.update({
+        "is_active": True,
+        "current_job_index": 0,
+        "total_jobs": len(jobs),
+        "current_character": None,
+    })
+    _log("Iniciando aprovisionamiento de LoRAs...")
+    meta_map = { (rm.character_name or "").strip(): rm for rm in (resources or []) if rm and (rm.character_name or "").strip() }
+    unique_chars = sorted(set(j.character_name for j in jobs))
+    succeeded = set()
+    failed = set()
+    for char in unique_chars:
+        rm = meta_map.get(char)
+        # Siempre usar nombre de archivo sanitizado basado en el personaje
+        filename = sanitize_filename(char)
+        download_url = rm.download_url if rm and rm.download_url else ""
+        ok = await asyncio.to_thread(ensure_lora, char, filename, download_url, _log)
+        if not ok:
+            _log(f"❌ Error descargando {char}. Saltando sus trabajos.")
+            failed.add(char)
+        else:
+            succeeded.add(char)
+    filtered_jobs = [j for j in jobs if j.character_name in succeeded]
+    # Ajustar conteo y log UX
+    activos = len(filtered_jobs)
+    omitidos = len(failed)
+    FACTORY_STATE["total_jobs"] = activos
+    _log(f"Producción ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
+    if activos == 0:
+        FACTORY_STATE["is_active"] = False
+        _log("No hay trabajos ejecutables tras aprovisionamiento.")
+        return
+    _log("Aprovisionamiento completado. Iniciando generación...")
+    await produce_jobs(filtered_jobs)
+
+@app.post("/planner/execute")
+async def execute_plan(payload: PlannerExecutionRequest, background_tasks: BackgroundTasks):
+    if not isinstance(payload.jobs, list) or not payload.jobs:
+        raise HTTPException(status_code=400, detail="jobs requerido y no vacío")
+    # Inicializamos estado y programamos tarea de fondo
+    FACTORY_STATE.update({
+        "is_active": True,
+        "current_job_index": 0,
+        "total_jobs": len(payload.jobs),
+        "current_character": None,
+    })
+    _log("Solicitud de ejecución recibida. Iniciando aprovisionamiento...")
+    background_tasks.add_task(execute_pipeline, payload.jobs, payload.resources_meta or [])
+    return {"status": "started", "total_jobs": len(payload.jobs)}
+
+@app.get("/factory/status")
+async def factory_status():
+    return {
+        "is_active": bool(FACTORY_STATE.get("is_active")),
+        "current_job_index": int(FACTORY_STATE.get("current_job_index", 0)),
+        "total_jobs": int(FACTORY_STATE.get("total_jobs", 0)),
+        "current_character": FACTORY_STATE.get("current_character"),
+        "last_image_url": FACTORY_STATE.get("last_image_path"),
+        "last_image_b64": FACTORY_STATE.get("last_image_b64"),
+        "logs": FACTORY_STATE.get("logs", [])[-100:],
+    }
+
+@app.post("/factory/stop")
+async def factory_stop():
+    FACTORY_STATE["stop_requested"] = True
+    _log("Parada de emergencia activada por el usuario.")
+    return {"status": "stopping"}
+
+# Lista de modelos Groq con fallback (prioridad de calidad -> rapidez -> legacy)
+GROQ_MODEL_FALLBACKS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "llama3-70b-8192",
+]
+
+async def groq_chat_with_fallbacks(client, messages: list, temperature: float = 0.2):
+  """Intenta solicitar a Groq iterando sobre GROQ_MODEL_FALLBACKS antes de rendirse."""
+  last_error = None
+  for model in GROQ_MODEL_FALLBACKS:
+    try:
+      completion = await asyncio.to_thread(
+        lambda: client.chat.completions.create(
+          model=model,
+          messages=messages,
+          temperature=temperature,
+        )
+      )
+      return completion
+    except Exception as e:
+      last_error = e
+      continue
+  raise HTTPException(status_code=502, detail=f"Error en Groq (fallback agotado): {str(last_error)}")
 
 @app.get("/reforge/checkpoints")
 async def reforge_checkpoints():
@@ -277,15 +743,13 @@ async def dream(req: DreamRequest):
 
     try:
         client = Groq(api_key=api_key)
-        completion = await asyncio.to_thread(
-            lambda: client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-            )
+        completion = await groq_chat_with_fallbacks(
+            client,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
         )
         content = completion.choices[0].message.content.strip()
         # Devuelve solo texto plano
@@ -471,3 +935,208 @@ async def delete_local_lora(req: DeleteLoraRequest):
         return {"status": "ok", "deleted": req.filename}
 
     return await asyncio.to_thread(_delete)
+
+# ===== FASE 4: Motor de Producción =====
+from fastapi import BackgroundTasks
+import base64
+from datetime import datetime
+from typing import Dict, Any
+
+class ResourceMeta(BaseModel):
+    character_name: str
+    download_url: Optional[str] = None
+    filename: Optional[str] = None
+
+class ExecuteRequest(BaseModel):
+    jobs: List[PlannerJob]
+    resources_meta: Optional[List[ResourceMeta]] = []
+
+# Estado global de Fábrica (consulta vía /factory/status)
+FACTORY_STATE: Dict[str, Any] = {
+    "is_active": False,
+    "current_job_index": 0,
+    "total_jobs": 0,
+    "current_character": None,
+    "last_image_path": None,
+    "logs": [],
+    "stop_requested": False,
+}
+
+def _log(msg: str) -> None:
+    ts = datetime.now().strftime("%H:%M:%S")
+    FACTORY_STATE["logs"].append(f"[{ts}] {msg}")
+    # Limitar tamaño de log para no crecer indefinidamente
+    if len(FACTORY_STATE["logs"]) > 400:
+        FACTORY_STATE["logs"] = FACTORY_STATE["logs"][-300:]
+
+def _get_lora_dir() -> Path | None:
+    if not REFORGE_PATH:
+        return None
+    try:
+        base = Path(REFORGE_PATH).resolve()
+        return base.parents[1] / "models" / "Lora"
+    except Exception:
+        return None
+
+def _parse_lora_names(prompt: str) -> List[str]:
+    names: List[str] = []
+    p = (prompt or "")
+    # Formatos esperados: <lora:NAME> o <lora:NAME:WEIGHT>
+    import re
+    for m in re.finditer(r"<lora:([a-zA-Z0-9_\-\.]+)(?::[0-9\.]+)?>", p):
+        names.append(m.group(1))
+    return names
+
+def _lora_exists(name: str) -> bool:
+    d = _get_lora_dir()
+    if not d:
+        return False
+    if not d.exists():
+        return False
+    name_low = name.strip().lower()
+    for f in d.glob("*.safetensors"):
+        if name_low in f.name.lower():
+            return True
+    return False
+
+async def _maybe_download_lora(name: str) -> bool:
+    # Sin metadata de URL en PlannerJob, registramos y omitimos descarga.
+    _log(f"LoRA '{name}' no encontrado; no hay metadata para descargar. Se omite.")
+    return False
+
+async def _save_image(character_name: str, image_b64: str) -> str:
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    dest_dir = Path(OUTPUTS_DIR) / sanitize_filename(character_name)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = dest_dir / f"{ts}.png"
+    try:
+        data = base64.b64decode(image_b64)
+        target.write_bytes(data)
+    except Exception as e:
+        _log(f"Error guardando imagen: {e}")
+        raise HTTPException(status_code=500, detail=f"Error guardando imagen: {str(e)}")
+    return str(target)
+
+async def produce_jobs(jobs: List[PlannerJob]):
+    FACTORY_STATE.update({
+        "is_active": True,
+        "current_job_index": 0,
+        "total_jobs": len(jobs),
+        "current_character": None,
+        "last_image_path": FACTORY_STATE.get("last_image_path"),
+        "stop_requested": False,
+    })
+    _log(f"Producción iniciada: {len(jobs)} trabajos.")
+    for idx, job in enumerate(jobs, start=1):
+        if FACTORY_STATE.get("stop_requested"):
+            _log("Parada de emergencia solicitada. Deteniendo cola.")
+            break
+        FACTORY_STATE["current_job_index"] = idx
+        FACTORY_STATE["current_character"] = job.character_name
+        _log(f"Procesando {idx}/{len(jobs)}: {job.character_name}")
+        # Descarga inteligente de LoRA
+        loras = _parse_lora_names(job.prompt)
+        for name in loras:
+            if not _lora_exists(name):
+                _log(f"LoRA faltante: {name}. Intentando descarga...")
+                ok = await _maybe_download_lora(name)
+                if not ok:
+                    _log(f"Descarga omitida: no hay metadata disponible para '{name}'.")
+        # Generación vía ReForge
+        try:
+            _log(f"Generando imagen {idx}/{len(jobs)}...")
+            data = await call_txt2img(prompt=job.prompt)
+            images = data.get("images", []) if isinstance(data, dict) else []
+            if not images:
+                _log("ReForge no devolvió imágenes.")
+                continue
+            last_b64 = images[0]
+            # Guardado
+            path = await _save_image(job.character_name, last_b64)
+            FACTORY_STATE["last_image_path"] = path
+            FACTORY_STATE["last_image_b64"] = f"data:image/png;base64,{last_b64}"
+            _log(f"Guardado en disco: {path}")
+        except Exception as e:
+            _log(f"Error en generación: {e}")
+            continue
+    FACTORY_STATE["is_active"] = False
+    _log("Producción finalizada.")
+
+def schedule_production(jobs: List[PlannerJob]):
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(produce_jobs(jobs))
+    except RuntimeError:
+        # Si no hay loop (entornos específicos), ejecutar en to_thread
+        asyncio.run(produce_jobs(jobs))
+
+async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[ResourceMeta]] = None):
+    FACTORY_STATE.update({
+        "is_active": True,
+        "current_job_index": 0,
+        "total_jobs": len(jobs),
+        "current_character": None,
+    })
+    _log("Iniciando aprovisionamiento de LoRAs...")
+    meta_map = { (rm.character_name or "").strip(): rm for rm in (resources or []) if rm and (rm.character_name or "").strip() }
+    unique_chars = sorted(set(j.character_name for j in jobs))
+    succeeded = set()
+    failed = set()
+    for char in unique_chars:
+        rm = meta_map.get(char)
+        # Siempre usar nombre de archivo sanitizado basado en el personaje
+        filename = sanitize_filename(char)
+        download_url = rm.download_url if rm and rm.download_url else ""
+        ok = await asyncio.to_thread(ensure_lora, char, filename, download_url, _log)
+        if not ok:
+            _log(f"❌ Error descargando {char}. Saltando sus trabajos.")
+            failed.add(char)
+        else:
+            succeeded.add(char)
+    filtered_jobs = [j for j in jobs if j.character_name in succeeded]
+    # Ajustar conteo y log UX
+    activos = len(filtered_jobs)
+    omitidos = len(failed)
+    FACTORY_STATE["total_jobs"] = activos
+    _log(f"Producción ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
+    if activos == 0:
+        FACTORY_STATE["is_active"] = False
+        _log("No hay trabajos ejecutables tras aprovisionamiento.")
+        return
+    _log("Aprovisionamiento completado. Iniciando generación...")
+    await produce_jobs(filtered_jobs)
+
+@app.post("/planner/execute")
+async def planner_execute(payload: ExecuteRequest, background_tasks: BackgroundTasks):
+    if not isinstance(payload.jobs, list) or not payload.jobs:
+        raise HTTPException(status_code=400, detail="jobs requerido y no vacío")
+    # Inicializamos estado y programamos tarea de fondo
+    FACTORY_STATE.update({
+        "is_active": True,
+        "current_job_index": 0,
+        "total_jobs": len(payload.jobs),
+        "current_character": None,
+    })
+    _log("Solicitud de ejecución recibida. Iniciando aprovisionamiento...")
+    background_tasks.add_task(execute_pipeline, payload.jobs, payload.resources_meta or [])
+    return {"status": "started", "total_jobs": len(payload.jobs)}
+
+@app.get("/factory/status")
+async def factory_status():
+    return {
+        "is_active": bool(FACTORY_STATE.get("is_active")),
+        "current_job_index": int(FACTORY_STATE.get("current_job_index", 0)),
+        "total_jobs": int(FACTORY_STATE.get("total_jobs", 0)),
+        "current_character": FACTORY_STATE.get("current_character"),
+        "last_image_url": FACTORY_STATE.get("last_image_path"),
+        "last_image_b64": FACTORY_STATE.get("last_image_b64"),
+        "logs": FACTORY_STATE.get("logs", [])[-100:],
+    }
+
+@app.post("/factory/stop")
+async def factory_stop():
+    FACTORY_STATE["stop_requested"] = True
+    _log("Parada de emergencia activada por el usuario.")
+    return {"status": "stopping"}
