@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { Scan, Loader2 } from "lucide-react";
+import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
 
 export interface RadarViewProps {
@@ -25,6 +26,21 @@ function SkeletonCard() {
 }
 
 export default function RadarView({ items, loading, error, onScan }: RadarViewProps) {
+  const [tab, setTab] = React.useState<"Todo" | "Personajes" | "Poses/Ropa" | "Estilo">("Todo");
+
+  const filtered = React.useMemo(() => {
+    if (tab === "Todo") return items;
+    const matchers: Record<string, (tags?: string[]) => boolean> = {
+      "Personajes": (tags) => (tags || []).some((t) => t.toLowerCase().includes("character")),
+      "Poses/Ropa": (tags) => (tags || []).some((t) => {
+        const s = t.toLowerCase();
+        return s.includes("pose") || s.includes("clothing") || s.includes("outfit");
+      }),
+      "Estilo": (tags) => (tags || []).some((t) => t.toLowerCase().includes("style")),
+    };
+    return items.filter((m) => matchers[tab](m.tags));
+  }, [items, tab]);
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       {/* Card Escáner */}
@@ -54,45 +70,26 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
       {/* Resultados */}
       <div className="lg:col-span-2">
+        {/* Filtros rápidos */}
+        <div className="mb-4 flex flex-wrap gap-2">
+          {["Todo", "Personajes", "Poses/Ropa", "Estilo"].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t as any)}
+              className={`inline-flex items-center rounded-full border px-3 py-1 text-xs ${
+                tab === t
+                  ? "border-violet-500 bg-violet-500/20 text-violet-200"
+                  : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-3">
           {loading
             ? Array.from({ length: 9 }).map((_, idx) => <SkeletonCard key={idx} />)
-            : items.map((item) => {
-                const imageUrl =
-                  item.modelVersions?.[0]?.images?.[0]?.url ?? "/next.svg";
-                const tags = (item.tags ?? []).slice(0, 3);
-                return (
-                  <article
-                    key={item.id}
-                    className="group rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-xl transition-transform duration-200 hover:scale-[1.02] hover:border-slate-700"
-                  >
-                    <div className="aspect-[2/3] w-full overflow-hidden rounded-lg bg-slate-800">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={imageUrl}
-                        alt={item.name}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    </div>
-                    <h3 className="mt-3 truncate text-base font-semibold">
-                      {item.name}
-                    </h3>
-                    {tags.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {tags.map((t) => (
-                          <span
-                            key={t}
-                            className="inline-flex items-center rounded-full border border-slate-800 bg-slate-900 px-2 py-0.5 text-xs text-zinc-300"
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
+            : filtered.map((item) => <CivitaiCard key={item.id} model={item} />)}
         </div>
       </div>
     </div>

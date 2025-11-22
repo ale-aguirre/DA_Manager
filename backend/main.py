@@ -74,7 +74,10 @@ async def root():
 
 @app.get("/scan/civitai")
 async def scan_civitai():
-    """Escanea modelos de Civitai usando cloudscraper y devuelve la lista cruda de 'items'."""
+    """Escanea modelos de Civitai usando cloudscraper.
+    Devuelve una lista con los campos necesarios para el Radar:
+    id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
+    """
     url = "https://civitai.com/api/v1/models"
     params = {
         "types": "LORA",
@@ -90,6 +93,10 @@ async def scan_civitai():
 
     scraper = cloudscraper.create_scraper()
 
+    def _detect_type(url: str | None) -> str:
+        u = (url or "").lower()
+        return "video" if u.endswith((".mp4", ".webm")) else "image"
+
     try:
         def fetch():
             resp = scraper.get(url, params=params, timeout=20)
@@ -100,7 +107,48 @@ async def scan_civitai():
         items = data.get("items", [])
         if not isinstance(items, list):
             raise HTTPException(status_code=502, detail="Respuesta inválida de Civitai: 'items' no es lista.")
-        return items
+
+        def normalize_item(item: dict) -> dict:
+            # Campos base
+            _id = item.get("id")
+            name = item.get("name")
+            tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+            stats = item.get("stats") or {}
+            model_versions = item.get("modelVersions") or []
+
+            # Recolectar imágenes (top-level y dentro de modelVersions)
+            images: list[dict] = []
+
+            for img in (item.get("images") or []):
+                urlx = img.get("url")
+                if urlx:
+                    entry = {"url": urlx, "type": _detect_type(urlx)}
+                    nsfw = img.get("nsfwLevel")
+                    if nsfw is not None:
+                        entry["nsfwLevel"] = nsfw
+                    images.append(entry)
+
+            for mv in model_versions:
+                for img in (mv.get("images") or []):
+                    urlx = img.get("url")
+                    if urlx:
+                        entry = {"url": urlx, "type": _detect_type(urlx)}
+                        nsfw = img.get("nsfwLevel")
+                        if nsfw is not None:
+                            entry["nsfwLevel"] = nsfw
+                        images.append(entry)
+
+            return {
+                "id": _id,
+                "name": name,
+                "tags": tags,
+                "stats": stats,
+                "images": images,
+                "modelVersions": model_versions,
+            }
+
+        normalized = [normalize_item(it) for it in items if isinstance(it, dict)]
+        return JSONResponse(content=normalized)
     except HTTPException:
         # Propaga errores HTTP ya formateados
         raise
