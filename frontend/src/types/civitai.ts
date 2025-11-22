@@ -28,8 +28,13 @@ export interface CivitaiStats {
 export interface CivitaiModel {
   id: number;
   name: string;
+  createdAt?: string;
   tags?: string[];
   stats?: CivitaiStats;
   images?: CivitaiImage[];
   modelVersions?: CivitaiModelVersion[];
+  // Indicador local
+  local_exists?: boolean;
+  // Categoría IA (backend)
+  ai_category?: "Character" | "Pose" | "Clothing" | "Style" | "Concept";
 }
