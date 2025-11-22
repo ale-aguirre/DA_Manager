@@ -1,0 +1,9 @@
+{
+  "High Quality": {
+    "steps": 30,
+    "cfg": 6,
+    "hr_scale": 1.5,
+    "sampler": "DPM++ 2M SDE",
+    "scheduler": "Karras"
+  }
+}
