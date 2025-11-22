@@ -47,3 +47,8 @@ The project depends on a `.env` file in the `/backend` directory with the follow
 - `REFORGE_PATH`: Absolute path to the Stable Diffusion wildcards folder.
 - `GROQ_API_KEY`: API Key for AI processing.
 - `CIVITAI_API_KEY`: Optional key for NSFW content fetching.
+
+## Puertos y Disciplina de Ejecución
+- Frontend: debe correr estrictamente en el puerto 3000 (http://localhost:3000). Si el puerto está ocupado, liberar procesos en conflicto y reintentar; no usar puertos alternativos.
+- Backend: debe correr estrictamente en el puerto 8000 (http://127.0.0.1:8000). Si el puerto 8000 está ocupado, el servidor debe fallar y avisar, no cambiar automáticamente a otro puerto.
+- Razón: consistencia de entorno local y evitar errores de conexión en flujos entre UI y API.

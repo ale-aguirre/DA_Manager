@@ -83,7 +83,7 @@ async def scan_civitai():
         "types": "LORA",
         "sort": "Highest Rated",
         "period": "Week",
-        "limit": 50,
+        "limit": 10,
         "nsfw": "true",
         "include": "tags",
     }
@@ -149,10 +149,11 @@ async def scan_civitai():
 
         normalized = [normalize_item(it) for it in items if isinstance(it, dict)]
         return JSONResponse(content=normalized)
-    except HTTPException:
-        # Propaga errores HTTP ya formateados
+    except HTTPException as he:
+        print(f"[scan_civitai] HTTPException: {getattr(he, 'detail', he)}")
         raise
     except Exception as e:
+        print(f"[scan_civitai] Error de conexión/parseo: {repr(e)}")
         raise HTTPException(status_code=502, detail=f"Error al consultar Civitai: {str(e)}")
 
 @app.post("/process-ai")
@@ -295,4 +296,4 @@ async def save_files(payload: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=PORT, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
