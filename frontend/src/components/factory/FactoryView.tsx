@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { getFactoryStatus, postFactoryStop } from "../../lib/api";
+import { getFactoryStatus, postFactoryStop, getReforgeProgress } from "../../lib/api";
 import { OctagonX, Square, Eraser } from "lucide-react";
 
 export default function FactoryView() {
@@ -12,7 +12,9 @@ export default function FactoryView() {
   const [logs, setLogs] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [currentPrompt, setCurrentPrompt] = React.useState<string | null>(null);
+  const [currentNegativePrompt, setCurrentNegativePrompt] = React.useState<string | null>(null);
   const [currentConfig, setCurrentConfig] = React.useState<any | null>(null);
+  const [realProgress, setRealProgress] = React.useState(0);
 
   React.useEffect(() => {
     let mounted = true;
@@ -29,20 +31,37 @@ export default function FactoryView() {
         setLogs(status.logs || []);
         setCurrentPrompt(status.current_prompt || null);
         setCurrentConfig(status.current_config || null);
+        setCurrentNegativePrompt(status.current_negative_prompt || null);
+
+        // Si está activo, consultar progreso real a ReForge
+        if (status.is_active) {
+          try {
+            const prog = await getReforgeProgress();
+            if (mounted && prog && typeof prog.progress === 'number') {
+              setRealProgress(Math.round(prog.progress * 100));
+            }
+          } catch (e) {
+            // Ignorar error de progreso para no spamear
+          }
+        } else {
+          setRealProgress(0);
+        }
       } catch (e: any) {
         if (!mounted) return;
         setError(e?.message || "Error consultando estado de Fábrica");
       }
     };
     poll();
-    interval = setInterval(poll, 2000);
+    interval = setInterval(poll, 1000); // Polling más rápido para fluidez
     return () => {
       mounted = false;
       clearInterval(interval);
     };
   }, []);
 
-  const progressPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((currentIndex / total) * 100))) : 0;
+  // Usar progreso real si está disponible, sino fallback a jobs
+  const jobProgress = total > 0 ? Math.min(100, Math.max(0, Math.round((currentIndex / total) * 100))) : 0;
+  const displayProgress = isActive ? realProgress : jobProgress;
 
   const stop = async () => {
     try {
@@ -88,16 +107,20 @@ export default function FactoryView() {
       {/* Barra de progreso */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
         <div className="h-2 w-full rounded-full bg-slate-800">
-          <div style={{ width: `${progressPercent}%` }} className="h-2 rounded-full bg-emerald-500 transition-all" />
+          <div style={{ width: `${displayProgress}%` }} className="h-2 rounded-full bg-emerald-500 transition-all" />
         </div>
         <div className="mt-2 text-xs text-zinc-400">
           {character ? `Objetivo actual: ${character}` : ""}
         </div>
-        {/* Prompt y Configuración debajo de la barra de progreso */}
+        {/* Orden solicitado: Base Prompt, Negative Prompt y Configuración */}
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="text-xs text-zinc-400">
             <div className="font-medium text-zinc-300">Prompt enviado</div>
             <pre className="mt-1 whitespace-pre-wrap break-words">{currentPrompt || "—"}</pre>
+            <div className="mt-3">
+              <div className="font-medium text-zinc-300">Prompt negativo</div>
+              <pre className="mt-1 whitespace-pre-wrap break-words">{currentNegativePrompt || "—"}</pre>
+            </div>
           </div>
           <div className="text-xs text-zinc-400">
             <div className="font-medium text-zinc-300">Configuración</div>

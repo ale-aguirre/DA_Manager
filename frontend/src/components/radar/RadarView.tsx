@@ -3,8 +3,98 @@ import React from "react";
 import { Scan, Loader2, Send, Trash2, ListX, X, Save } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft } from "../../lib/api";
+import { postPlannerDraft, postDownloadLora, postDownloadCheckpoint } from "../../lib/api";
 import { useRouter } from "next/navigation";
+
+function ManualDownloadView() {
+  const [url, setUrl] = React.useState("");
+  const [filename, setFilename] = React.useState("");
+  const [type, setType] = React.useState<"LoRA" | "Checkpoint">("LoRA");
+  const [loading, setLoading] = React.useState(false);
+  const [status, setStatus] = React.useState<{ type: "success" | "error"; msg: string } | null>(null);
+
+  const handleDownload = async () => {
+    if (!url) return;
+    setLoading(true);
+    setStatus(null);
+    try {
+      if (type === "LoRA") {
+        await postDownloadLora(url, filename || undefined);
+      } else {
+        await postDownloadCheckpoint(url, filename || undefined);
+      }
+      setStatus({ type: "success", msg: "Descarga completada correctamente." });
+      setUrl("");
+      setFilename("");
+    } catch (e: any) {
+      setStatus({ type: "error", msg: e.message || "Error en descarga" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-xl rounded-xl border border-slate-800 bg-slate-900 p-6">
+      <h3 className="mb-4 text-lg font-medium text-zinc-200">Descarga Manual</h3>
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1 block text-xs text-zinc-400">Tipo de Recurso</label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+              <input type="radio" name="dtype" checked={type === "LoRA"} onChange={() => setType("LoRA")} className="accent-violet-500" />
+              LoRA (.safetensors)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+              <input type="radio" name="dtype" checked={type === "Checkpoint"} onChange={() => setType("Checkpoint")} className="accent-violet-500" />
+              Checkpoint (SDXL/SD1.5)
+            </label>
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-zinc-400">URL de Descarga (Civitai/HuggingFace)</label>
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://civitai.com/api/download/models/..."
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-zinc-400">Nombre de Archivo (Opcional)</label>
+          <input
+            type="text"
+            value={filename}
+            onChange={(e) => setFilename(e.target.value)}
+            placeholder="ej: mi_modelo_v1"
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none"
+          />
+          <p className="mt-1 text-[10px] text-zinc-500">Si se deja vacío, se intentará deducir o usar un nombre genérico.</p>
+        </div>
+
+        {status && (
+          <div className={`rounded-lg p-3 text-xs ${status.type === "success" ? "bg-green-900/30 text-green-300 border border-green-800" : "bg-red-900/30 text-red-300 border border-red-800"}`}>
+            {status.msg}
+          </div>
+        )}
+
+        <button
+          onClick={handleDownload}
+          disabled={loading || !url}
+          className="w-full rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Descargando...
+            </span>
+          ) : (
+            "Iniciar Descarga"
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export interface RadarViewProps {
   items: CivitaiModel[];
@@ -38,6 +128,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [showBlacklist, setShowBlacklist] = React.useState(false);
   const [blacklist, setBlacklist] = React.useState<string[]>([]);
   const [blacklistInput, setBlacklistInput] = React.useState("");
+  const [showManual, setShowManual] = React.useState(false);
 
   React.useEffect(() => {
     try {
@@ -49,13 +140,13 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       }
       setBlacklist(list);
       setBlacklistInput(list.join(", "));
-    } catch {}
+    } catch { }
   }, []);
 
   React.useEffect(() => {
     try {
       localStorage.setItem("radar_blacklist", JSON.stringify(blacklist));
-    } catch {}
+    } catch { }
   }, [blacklist]);
 
   const parseInputToList = (input: string): string[] => {
@@ -141,7 +232,18 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       trigger_words: deriveTriggerWords(m),
     }));
     try {
-      const res = await postPlannerDraft(payload);
+      // Leer batch_count desde preset global si existe
+      let jobCount: number | undefined = undefined;
+      try {
+        const raw = localStorage.getItem("planner_preset_global");
+        if (raw) {
+          const preset = JSON.parse(raw);
+          if (preset && typeof preset.batch_count === "number" && preset.batch_count > 0) {
+            jobCount = preset.batch_count;
+          }
+        }
+      } catch {}
+      const res = await postPlannerDraft(payload, jobCount);
       localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
       // Nuevo: guardar contexto enriquecido por personaje
       try {
@@ -154,7 +256,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           };
         }
         localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
-      } catch {}
+      } catch { }
       // Guardar metadatos para la Fábrica (modelId + downloadUrl)
       const meta = selectedModels.map((m) => {
         const versions = m.modelVersions || [];
@@ -217,6 +319,13 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             {loading ? "Escaneando..." : "Escanear Tendencias"}
           </button>
           <button
+            onClick={() => setShowManual(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-600 bg-blue-600/20 px-3 py-2 text-sm text-blue-100 hover:bg-blue-600/30 hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer transition-all active:scale-95"
+          >
+            <Send className="h-4 w-4" />
+            Descarga Manual
+          </button>
+          <button
             onClick={openBlacklist}
             className="inline-flex items-center gap-2 rounded-lg border border-red-600 bg-red-600/20 px-3 py-2 text-sm text-red-100 hover:bg-red-600/30 hover:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-600 cursor-pointer transition-all active:scale-95"
           >
@@ -226,6 +335,18 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
         </div>
       </div>
       {error && <p className="-mt-4 mb-4 text-xs text-red-400">{error}</p>}
+
+      {/* Modal Manual Download */}
+      {showManual && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
+          <div className="w-[92vw] max-w-xl relative">
+            <button onClick={() => setShowManual(false)} className="absolute -top-10 right-0 text-zinc-400 hover:text-white">
+              <X className="h-6 w-6" />
+            </button>
+            <ManualDownloadView />
+          </div>
+        </div>
+      )}
 
       {/* Modal Blacklist */}
       {showBlacklist && (
@@ -272,11 +393,10 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           <button
             key={t}
             onClick={() => setTab(t as any)}
-            className={`inline-flex items-center rounded-full border px-3 py-1 text-xs cursor-pointer transition-all active:scale-95 ${
-              tab === t
-                ? "border-violet-500 bg-violet-500/20 text-violet-200"
-                : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
-            }`}
+            className={`inline-flex items-center rounded-full border px-3 py-1 text-xs cursor-pointer transition-all active:scale-95 ${tab === t
+              ? "border-violet-500 bg-violet-500/20 text-violet-200"
+              : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
+              }`}
           >
             {t}
           </button>
@@ -293,14 +413,14 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           {loading
             ? Array.from({ length: 12 }).map((_, idx) => <SkeletonCard key={idx} />)
             : filtered.map((item, idx) => (
-                <CivitaiCard
-                  key={item.id}
-                  model={item}
-                  index={idx + 1}
-                  selected={selectedItems.some((s) => s.modelId === item.id)}
-                  onToggle={toggleSelect}
-                />
-              ))}
+              <CivitaiCard
+                key={item.id}
+                model={item}
+                index={idx + 1}
+                selected={selectedItems.some((s) => s.modelId === item.id)}
+                onToggle={toggleSelect}
+              />
+            ))}
         </div>
       )}
 

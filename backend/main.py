@@ -4,13 +4,15 @@ import random
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 import httpx
-from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint, get_options, interrupt_generation
+from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint, get_options, interrupt_generation, list_vaes
 from services.lora import ensure_lora
 import cloudscraper
 from pydantic import BaseModel
+from urllib.parse import quote
 from typing import List, Optional
 import json
 try:
@@ -97,11 +99,18 @@ class GenerateRequest(BaseModel):
 class PlannerDraftItem(BaseModel):
     character_name: str
     trigger_words: List[str] = []
+    # Nuevo: permitir especificar cantidad de jobs deseados por personaje (opcional)
+    batch_count: Optional[int] = None
+    # Distribución explícita por intensidad (opcional)
+    safe_count: Optional[int] = None
+    ecchi_count: Optional[int] = None
+    nsfw_count: Optional[int] = None
 
 class PlannerJob(BaseModel):
     character_name: str
     prompt: str
     seed: int
+    negative_prompt: Optional[str] = None
 
 class PlannerExecutionRequest(BaseModel):
     # Usamos modelos tipados para asegurar parseo desde Body
@@ -154,6 +163,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Montar directorio estático para servir imágenes generadas
+try:
+    if OUTPUTS_DIR and Path(OUTPUTS_DIR).exists():
+        app.mount("/files", StaticFiles(directory=str(OUTPUTS_DIR)), name="files")
+        print(f"[Static] Mounted OUTPUTS_DIR at /files: {OUTPUTS_DIR}")
+    else:
+        print("[Static] OUTPUTS_DIR no configurado o no existe; no se monta /files")
+except Exception as e:
+    print(f"[Static] Error montando /files: {e}")
+
 @app.get("/")
 async def root():
     """Endpoint básico de salud del sistema."""
@@ -161,6 +180,95 @@ async def root():
         "status": "online",
         "reforge_path": REFORGE_PATH,
     }
+
+# Endpoint para borrar archivos bajo OUTPUTS_DIR
+@app.delete("/files")
+async def delete_file(path: str):
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    base = Path(OUTPUTS_DIR).resolve()
+    # Normalizar y evitar traversal
+    try:
+        target = (base / path).resolve()
+        if base not in target.parents and target != base:
+            raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        if target.is_dir():
+            raise HTTPException(status_code=400, detail="Ruta apunta a directorio, no archivo")
+        target.unlink()
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error borrando archivo: {e}")
+
+# Modelo y endpoint de galería
+class GalleryItem(BaseModel):
+    filename: str
+    path: str
+    url: str
+    character: str
+    timestamp: int
+
+@app.get("/gallery")
+async def get_gallery(page: int = 1, limit: int = 100, character: Optional[str] = None):
+    """Explora OUTPUTS_DIR y devuelve lista paginada de imágenes.
+    - filename: nombre del archivo
+    - path: ruta relativa dentro de OUTPUTS_DIR (usada para DELETE)
+    - url: /files/<path> para servir en navegador
+    - character: nombre del personaje (top-level folder)
+    - timestamp: mtime del archivo (segundos)
+    """
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    base = Path(OUTPUTS_DIR)
+    if not base.exists():
+        raise HTTPException(status_code=404, detail="OUTPUTS_DIR no existe en el sistema")
+    exts = {".png", ".jpg", ".jpeg", ".webp"}
+    items: list[GalleryItem] = []
+    try:
+        def scan() -> list[GalleryItem]:
+            out: list[GalleryItem] = []
+            for root, _, files in os.walk(base):
+                for fname in files:
+                    ext = os.path.splitext(fname)[1].lower()
+                    if ext not in exts:
+                        continue
+                    fpath = Path(root) / fname
+                    rel = fpath.relative_to(base)
+                    rel_str = str(rel).replace("\\", "/")
+                    # Importante: codificar URL para manejar espacios y caracteres especiales
+                    url = f"/files/{quote(rel_str)}"
+                    # derivar personaje desde primer segmento
+                    parts = rel_str.split("/")
+                    char_name = parts[0] if parts else "unknown"
+                    # presentación amigable
+                    character_pretty = char_name.replace("_", " ")
+                    ts = int(fpath.stat().st_mtime)
+                    out.append(GalleryItem(
+                        filename=fname,
+                        path=rel_str,
+                        url=url,
+                        character=character_pretty,
+                        timestamp=ts,
+                    ))
+            return out
+        all_items = await asyncio.to_thread(scan)
+        # filtro por personaje si se envía
+        if character and character.strip():
+            cc = character.strip().lower()
+            all_items = [it for it in all_items if it.character.lower() == cc]
+        # ordenar por fecha desc
+        all_items.sort(key=lambda x: x.timestamp, reverse=True)
+        # paginación simple
+        page = max(1, int(page))
+        limit = max(1, min(500, int(limit)))
+        start = (page - 1) * limit
+        end = start + limit
+        return JSONResponse(content=[it.dict() for it in all_items[start:end]])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error escaneando galería: {e}")
 
 @app.get("/scan/civitai")
 async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated"):
@@ -579,7 +687,7 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
         ]
 
 @app.post("/planner/draft")
-async def planner_draft(payload: List[PlannerDraftItem]):
+async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int] = None):
     """Genera 10 jobs por personaje con relleno INFALIBLE y enriquece contexto:
     - Intento IA (Groq) para sugerir combinaciones Outfit+Pose+Location.
     - Validación y Fallback determinista: si IA falla o hay vacíos, se eligen aleatorios.
@@ -730,29 +838,32 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             "recommended_params": recommended_params,
         }
 
-    async def groq_suggest_combos(character_name: str, trigger_words: List[str], count: int = 10) -> List[dict]:
-        """Solicita a Groq una lista de combinaciones. Devuelve [{outfit, pose, location}]"""
+    async def groq_suggest_combos(character_name: str, trigger_words: List[str], preferred_location: Optional[str] = None, count: int = 10) -> List[dict]:
+        """Solicita a Groq una lista de combinaciones. Devuelve [{outfit, pose, location, lighting, camera}]"""
         if not GROQ_API_KEY or Groq is None:
             return []
         try:
             client = Groq(api_key=GROQ_API_KEY)
             system_prompt = (
-                "Eres un planificador de escenas para Stable Diffusion. Sugiere combinaciones coherentes de Outfit+Pose+Location para el personaje dado. "
-                "Asegura coherencia entre Location y Outfit: si Location es 'dungeon', Outfit NO puede ser 'bikini' salvo que se indique explícitamente; prefiere 'armor' o 'rags'. "
-                "Responde SOLO JSON con formato: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\"}] con exactamente 10 elementos."
+                "You are an Anime Art Director. Based on the character '{name}' and location '{location}', select the BEST matching Outfit, Lighting, and Camera angle from the provided lists. "
+                "Ensure visual coherence (e.g., dark lighting for dungeons, torchlight for caves, armor for dangerous areas). "
+                "Return ONLY JSON array with format: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\",\"lighting\":\"...\",\"camera\":\"...\"}] with up to 10 elements."
             )
             user_prompt = (
-                f"Personaje: {character_name}\n"
+                f"Character: {character_name}\n"
                 f"Triggers: {', '.join(trigger_words or [])}\n"
-                f"Outfits ejemplos: {', '.join((outfits_casual + outfits_lingerie + outfits_cosplay)[:10])}\n"
-                f"Poses ejemplos: {', '.join(poses[:10])}\n"
-                f"Locations ejemplos: {', '.join(locations[:10])}\n"
-                "Devuelve SOLO JSON (array)."
+                f"Preferred Location (optional): {preferred_location or '(none)'}\n"
+                f"Outfit list (examples): {', '.join((outfits_casual + outfits_lingerie + outfits_cosplay)[:15])}\n"
+                f"Pose list (examples): {', '.join(poses[:15])}\n"
+                f"Location list (examples): {', '.join(locations[:15])}\n"
+                f"Lighting list (examples): {', '.join(lighting[:15])}\n"
+                f"Camera list (examples): {', '.join(camera[:15])}\n"
+                "Return ONLY JSON array with the specified format."
             )
             completion = await groq_chat_with_fallbacks(
                 client,
                 [
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_prompt.replace("{name}", character_name).replace("{location}", preferred_location or "(none)")},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.2,
@@ -770,6 +881,8 @@ async def planner_draft(payload: List[PlannerDraftItem]):
                             "outfit": str(it["outfit"]),
                             "pose": str(it["pose"]),
                             "location": str(it["location"]),
+                            "lighting": str(it.get("lighting") or ""),
+                            "camera": str(it.get("camera") or ""),
                         })
             return combos[:count]
         except Exception:
@@ -780,20 +893,44 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             "outfit": random.choice(all_outfits) if all_outfits else random.choice(FALLBACK_OUTFITS),
             "pose": random.choice(safe_poses) if safe_poses else random.choice(FALLBACK_POSES),
             "location": random.choice(locations) if locations else random.choice(FALLBACK_LOCATIONS),
+            "lighting": random.choice(lighting) if lighting else "soft lighting",
+            "camera": random.choice(camera) if camera else "front view",
         }
 
     # Construcción de trabajos y borradores enriquecidos por personaje
     all_jobs: List[PlannerJob] = []
     drafts: List[dict] = []
 
+    def _compute_distribution(n: int) -> tuple[int, int, int]:
+        """Devuelve (safe_count, ecchi_count, nsfw_count) proporcional al total n.
+        Para n < 9 usa 20/40/40 con al menos 1 SAFE.
+        Para n >= 9 usa 30/40/30.
+        """
+        if n <= 0:
+            return (0, 0, 0)
+        if n < 9:
+            safe = max(1, int(n * 0.2))
+            ecchi = int(n * 0.4)
+            nsfw = n - safe - ecchi
+        else:
+            safe = int(round(n * 0.3))
+            ecchi = int(round(n * 0.4))
+            nsfw = n - safe - ecchi
+        # Ajustes por redondeo
+        if safe + ecchi + nsfw != n:
+            nsfw = n - safe - ecchi
+        return (safe, ecchi, nsfw)
+
     for char in payload:
         lora_tag = f"<lora:{sanitize_filename(char.character_name)}:0.8>"
         trigger = ", ".join([t for t in (char.trigger_words or []) if t.strip()]) or sanitize_filename(char.character_name)
+        # Determinar cantidad de jobs solicitada
+        requested_n = job_count if (isinstance(job_count, int) and job_count > 0) else (char.batch_count if (hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count and char.batch_count > 0) else 10)
 
         # 1) Intentar combos con IA
-        combos = await groq_suggest_combos(char.character_name, char.trigger_words or [], 10)
+        combos = await groq_suggest_combos(char.character_name, char.trigger_words or [], None, requested_n)
         # 2) Validación y fallback determinista
-        while len(combos) < 10:
+        while len(combos) < requested_n:
             combos.append(random_combo())
         # Garantía de no vacíos
         validated: List[dict] = []
@@ -808,13 +945,17 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             return random.choice(pool) if pool else random.choice(FALLBACK_POSES)
         def _pick_location() -> str:
             return random.choice(locations) if locations else random.choice(FALLBACK_LOCATIONS)
-        for c in combos[:10]:
+        for c in combos[:requested_n]:
             o_raw = (c.get("outfit") or "")
             p_raw = (c.get("pose") or "")
             l_raw = (c.get("location") or "")
+            li_raw = (c.get("lighting") or "")
+            ca_raw = (c.get("camera") or "")
             o = _pick_outfit() if _bad_value(o_raw) or (o_raw.strip() == "") else o_raw.strip()
             p = _pick_pose() if _bad_value(p_raw) or (p_raw.strip() == "") else p_raw.strip()
             l = _pick_location() if _bad_value(l_raw) or (l_raw.strip() == "") else l_raw.strip()
+            li = (li_raw or "").strip()
+            ca = (ca_raw or "").strip()
             # Coherencia básica: evitar bikini en dungeon
             if "dungeon" in (l or "").lower() and "bikini" in (o or "").lower():
                 o = "armor" if "armor" in [x.lower() for x in all_outfits] else "rags"
@@ -822,19 +963,40 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             o = o or "casual clothes"
             p = p or "standing pose"
             l = l or "studio"
-            validated.append({"outfit": o, "pose": p, "location": l})
+            validated.append({"outfit": o, "pose": p, "location": l, "lighting": li, "camera": ca})
 
         per_char_jobs: List[PlannerJob] = []
         per_char_jobs_payload: List[dict] = []
         atmospheres: List[str] = await _get_atmospheres_for_character(char.character_name)
 
-        # Clasificar intensidad por índices: 0-2 SAFE, 3-6 ECCHI, 7-9 NSFW
-        for i, base in enumerate(validated[:10]):
-            intensity = "SAFE" if i < 3 else ("ECCHI" if i < 7 else "NSFW")
-            rating = "rating_safe" if i < 3 else ("rating_questionable, cleavage" if i < 7 else "rating_explicit, nsfw, explicit")
-            lighting_choice = random.choice(lighting) if lighting else "soft lighting"
+        # Clasificar intensidad usando distribución explícita si viene en el payload; si no, proporcional al N solicitado
+        def _clean_int(v: Optional[int]) -> int:
+            try:
+                return int(v) if (v is not None and int(v) > 0) else 0
+            except Exception:
+                return 0
+        explicit_safe = _clean_int(getattr(char, "safe_count", None))
+        explicit_ecchi = _clean_int(getattr(char, "ecchi_count", None))
+        explicit_nsfw = _clean_int(getattr(char, "nsfw_count", None))
+        if (explicit_safe + explicit_ecchi + explicit_nsfw) > 0:
+            # Ajustar para que siempre sumen al total solicitado
+            safe_count = min(explicit_safe, requested_n)
+            ecchi_count = min(explicit_ecchi, max(0, requested_n - safe_count))
+            nsfw_count = max(0, requested_n - safe_count - ecchi_count)
+        else:
+            safe_count, ecchi_count, nsfw_count = _compute_distribution(requested_n)
+        for i, base in enumerate(validated[:requested_n]):
+            if i < safe_count:
+                intensity = "SAFE"
+            elif i < safe_count + ecchi_count:
+                intensity = "ECCHI"
+            else:
+                intensity = "NSFW"
+            rating = "rating_safe" if intensity == "SAFE" else ("rating_questionable, cleavage" if intensity == "ECCHI" else "rating_explicit, nsfw, explicit")
+            # Lighting/Cámara: usar sugerencia IA si existe; si no, fallback y atmósfera
+            lighting_choice = (base.get("lighting") or "").strip() or (random.choice(lighting) if lighting else "soft lighting")
             atmo_choice = random.choice(atmospheres) if atmospheres else ""
-            cam_choice = random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot")
+            cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot"))
             expression_choice = random.choice(expressions) if expressions else "smile"
             hairstyle_choice = random.choice(hairstyles) if hairstyles else "ponytail"
             quality_end = "masterpiece, best quality, absurdres"
@@ -858,6 +1020,15 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             seed = random.randint(0, 2_147_483_647)
             job_model = PlannerJob(character_name=char.character_name, prompt=prompt, seed=seed)
             per_char_jobs.append(job_model)
+            # Marcar visibilidad de IA en campos técnicos cuando provienen de la sugerencia
+            ai_meta = {}
+            if (base.get("lighting") or "").strip():
+                ai_meta["lighting"] = "Sugerido por IA por coherencia"
+            if (base.get("camera") or "").strip():
+                ai_meta["camera"] = "Sugerido por IA por coherencia"
+            if (c.get("outfit") or "").strip():
+                ai_meta["outfit"] = "Sugerido por IA por coherencia"
+
             per_char_jobs_payload.append({
                 **job_model.model_dump(),
                 "intensity": intensity,
@@ -868,6 +1039,7 @@ async def planner_draft(payload: List[PlannerDraftItem]):
                 "camera": cam_choice,
                 "expression": expression_choice,
                 "hairstyle": hairstyle_choice,
+                "ai_meta": ai_meta,
             })
 
         # Enriquecimiento de contexto por personaje (Civitai)
@@ -1116,6 +1288,76 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
 
 # [DEPRECATED] produce_jobs (v1) eliminado. Usar produce_jobs para producción asíncrona con aprovisionamiento.
 
+# ===== FASE 4: Motor de Producción =====
+from fastapi import BackgroundTasks
+import base64
+from datetime import datetime
+from typing import Dict, Any
+
+class ResourceMeta(BaseModel):
+    character_name: str
+    download_url: Optional[str] = None
+    filename: Optional[str] = None
+
+class ExecuteRequest(BaseModel):
+    jobs: List[PlannerJob]
+    resources_meta: Optional[List[ResourceMeta]] = []
+
+# Nuevo: configuración por personaje (steps/cfg)
+class GroupConfigItem(BaseModel):
+    character_name: str
+    cfg_scale: Optional[float] = None
+    steps: Optional[int] = None
+    hires_fix: Optional[bool] = None
+    denoising_strength: Optional[float] = None
+    output_path: Optional[str] = None
+    extra_loras: Optional[List[str]] = []
+    hires_steps: Optional[int] = None
+    batch_size: Optional[int] = None
+    adetailer: Optional[bool] = None
+    # Nuevos controles técnicos avanzados
+    vae: Optional[str] = None
+    clip_skip: Optional[int] = None
+    # Hires Fix y sampler/upscaler/checkpoint
+    upscale_by: Optional[float] = None
+    upscaler: Optional[str] = None
+    sampler: Optional[str] = None
+    checkpoint: Optional[str] = None
+
+class ExecuteV2Request(BaseModel):
+    jobs: List[PlannerJob]
+    resources_meta: Optional[List[ResourceMeta]] = []
+    group_config: Optional[List[GroupConfigItem]] = []
+
+# Estado global de Fábrica (consulta vía /factory/status)
+FACTORY_STATE: Dict[str, Any] = {
+    "is_active": False,
+    "current_job_index": 0,
+    "total_jobs": 0,
+    "current_character": None,
+    "last_image_path": None,
+    "logs": [],
+    "stop_requested": False,
+}
+
+def _log(msg: str) -> None:
+    ts = datetime.now().strftime("%H:%M:%S")
+    FACTORY_STATE["logs"].append(f"[{ts}] {msg}")
+    # Limitar tamaño de log para no crecer indefinidamente
+    if len(FACTORY_STATE["logs"]) > 400:
+        FACTORY_STATE["logs"] = FACTORY_STATE["logs"][-300:]
+
+from services.reforge import get_progress
+
+@app.get("/reforge/progress")
+async def reforge_progress():
+    """Proxy para obtener progreso real desde ReForge."""
+    try:
+        return await get_progress()
+    except Exception as e:
+        # Si falla, devolver estructura vacía para no romper frontend
+        return {"progress": 0, "eta_relative": 0, "state": {"job": "", "job_no": 0, "job_count": 0}}
+
 async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[GroupConfigItem]] = None):
     FACTORY_STATE.update({
         "is_active": True,
@@ -1125,6 +1367,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         "last_image_path": FACTORY_STATE.get("last_image_path"),
         "stop_requested": False,
         "current_prompt": None,
+        "current_negative_prompt": None,
         "current_config": None,
     })
     cfg_map: Dict[str, GroupConfigItem] = {}
@@ -1150,6 +1393,24 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         gc = cfg_map.get(job.character_name)
         steps_override = gc.steps if gc and isinstance(gc.steps, int) else None
         cfg_override = gc.cfg_scale if gc and isinstance(gc.cfg_scale, (int, float)) else None
+        
+        # Inyección de LoRAs extra
+        final_prompt = job.prompt
+        extra_loras = gc.extra_loras if gc and isinstance(gc.extra_loras, list) else []
+        if extra_loras:
+            # Formato esperado: "nombre_archivo" (sin extensión ni ruta, ya que ReForge lo busca por nombre)
+            # Se asume peso 0.7 por defecto si no se especifica, pero el frontend enviará strings formateados si es necesario.
+            # Aquí el frontend enviará strings como "pixel_art_v2:0.8" o simplemente "pixel_art_v2".
+            # Nosotros envolvemos en <lora:...>
+            lora_blocks = []
+            for l in extra_loras:
+                if ":" in l:
+                    lora_blocks.append(f"<lora:{l}>")
+                else:
+                    lora_blocks.append(f"<lora:{l}:0.7>")
+            if lora_blocks:
+                final_prompt = f"{final_prompt}, {', '.join(lora_blocks)}"
+
         try:
             actual_steps = steps_override if isinstance(steps_override, int) else 28
             actual_cfg = cfg_override if isinstance(cfg_override, (int, float)) else 7
@@ -1161,24 +1422,103 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             bs = options.get("sd_batch_size") if isinstance(options, dict) else None
             bs = bs if isinstance(bs, int) else 1
             # Persistir prompt y configuración actual
-            FACTORY_STATE["current_prompt"] = job.prompt
+            FACTORY_STATE["current_prompt"] = final_prompt
+            FACTORY_STATE["current_negative_prompt"] = getattr(job, "negative_prompt", None)
+            # Override de checkpoint por job si se especifica
+            if gc and isinstance(gc.checkpoint, str) and gc.checkpoint.strip():
+                new_ckpt = gc.checkpoint.strip()
+                if ckpt != new_ckpt:
+                    try:
+                        await set_active_checkpoint(new_ckpt)
+                        ckpt = new_ckpt
+                        _log(f"Checkpoint activado para {job.character_name}: {ckpt}")
+                    except Exception as e:
+                        _log(f"Error activando checkpoint '{new_ckpt}': {e}")
+            
+            # Obtener opciones actuales para loguear hr_scale real
+            options = await get_options()
+            hr_scale = options.get("hr_scale") if isinstance(options, dict) else 1.5
+            
+            # Determinar estado real de Hires Fix para el log
+            hr_override = (gc.hires_fix if (gc and isinstance(gc.hires_fix, bool)) else None)
+            actual_hr = hr_override if hr_override is not None else enable_hr
+            # Si hay override de escala desde el group_config, úsalo para el log
+            hr_scale_override = (gc.upscale_by if (gc and isinstance(gc.upscale_by, (int, float))) else None)
+            hires_str = f"ON (x{(hr_scale_override if (actual_hr and hr_scale_override is not None) else hr_scale)})" if actual_hr else "OFF"
+
             FACTORY_STATE["current_config"] = {
                 "steps": actual_steps,
                 "cfg": actual_cfg,
                 "batch_size": bs,
-                "hires_fix": enable_hr,
-                "hr_scale": hr_scale,
+                "hires_fix": actual_hr,
+                "hr_scale": (hr_scale_override if (actual_hr and hr_scale_override is not None) else hr_scale),
                 "seed": job.seed,
                 "checkpoint": ckpt,
             }
-            _log(f"Enviando a ReForge: [Seed {job.seed}] Prompt: {job.prompt}")
+            _log(f"Enviando a ReForge: [Seed {job.seed}] Prompt: {final_prompt}")
             _log(f"Checkpoint: {ckpt}")
             _log(f"Config: Steps {actual_steps}, CFG {actual_cfg}, Batch Size {bs}, Hires Fix: {hires_str}")
+            # Logs de upscaler/adetailer
+            if gc and isinstance(gc.upscaler, str) and gc.upscaler.strip():
+                _log(f"Upscaler: {gc.upscaler}")
+            if gc and gc.adetailer:
+                _log("ADetailer: ON (face)")
             _log(f"Generando imagen {idx}/{len(jobs)}...")
+            
             # Overrides de Hires Fix y Denoising según group_config
-            hr_override = (gc.hires_fix if (gc and isinstance(gc.hires_fix, bool)) else None)
             dn_override = (float(gc.denoising_strength) if (gc and isinstance(gc.denoising_strength, (int, float))) else None)
-            data = await call_txt2img(prompt=job.prompt, cfg_scale=cfg_override, steps=steps_override, enable_hr=hr_override, denoising_strength=dn_override)
+            hr_steps_override = (gc.hires_steps if (gc and isinstance(gc.hires_steps, int)) else None)
+            
+            # Batch Size override
+            bs_override = (gc.batch_size if (gc and isinstance(gc.batch_size, int) and gc.batch_size > 0) else None)
+            
+            # Adetailer script construction (formato API estándar: lista name/args)
+            scripts_arr = []
+            if gc and gc.adetailer:
+                scripts_arr.append({
+                    "name": "ADetailer",
+                    "args": [
+                        True,
+                        False,
+                        {"ad_model": "face_yolo8n.pt"},
+                    ],
+                })
+
+            # Upscaler override (si existe en group config o se pasa como extra)
+            # Nota: call_txt2img debe soportar hr_upscaler si queremos cambiarlo dinámicamente.
+            # Por ahora solo logueamos, la implementación completa requeriría actualizar call_txt2img.
+            
+            # Overrides avanzados: VAE y Clip Skip (CLIP_stop_at_last_layers)
+            vae_override = (gc.vae if (gc and isinstance(gc.vae, str) and gc.vae.strip()) else None)
+            cs_override = (gc.clip_skip if (gc and isinstance(gc.clip_skip, int) and 1 <= gc.clip_skip <= 12) else None)
+            override_settings = {}
+            if vae_override:
+                override_settings["sd_vae"] = vae_override
+            if cs_override is not None:
+                override_settings["CLIP_stop_at_last_layers"] = cs_override
+
+            # Upscaler y escala de Hires (si viene del group_config)
+            hr_upscaler = gc.upscaler if (gc and isinstance(gc.upscaler, str) and gc.upscaler.strip()) else None
+            hr_scale_override = gc.upscale_by if (gc and isinstance(gc.upscale_by, (int, float))) else None
+
+            data = await call_txt2img(
+                prompt=final_prompt, 
+                negative_prompt=getattr(job, "negative_prompt", None),
+                cfg_scale=cfg_override, 
+                steps=steps_override, 
+                enable_hr=hr_override, 
+                denoising_strength=dn_override, 
+                hr_second_pass_steps=hr_steps_override,
+                batch_size=bs_override,
+                hr_upscaler=hr_upscaler,
+                hr_scale=hr_scale_override,
+                alwayson_scripts=scripts_arr if scripts_arr else None,
+                override_settings=override_settings or None
+            )
+            # Si se solicitó STOP mientras esperábamos respuesta, no continuar.
+            if FACTORY_STATE.get("stop_requested"):
+                _log("Parada detectada tras la respuesta. Omitiendo guardado y cancelando cola.")
+                break
             images = data.get("images", []) if isinstance(data, dict) else []
             if not images:
                 _log("ReForge no devolvió imágenes.")
@@ -1290,31 +1630,34 @@ async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[Reso
     await produce_jobs(filtered_jobs, group_config)
 
 @app.post("/planner/execute")
-async def execute_plan(payload: PlannerExecutionRequest, background_tasks: BackgroundTasks):
-    if not isinstance(payload.jobs, list) or not payload.jobs:
-        raise HTTPException(status_code=400, detail="jobs requerido y no vacío")
-    # Señal para detener cualquier producción previa en curso
-    FACTORY_STATE["stop_requested"] = True
-    _log("Solicitud de ejecución recibida. Limpiando cola previa y reseteando contadores...")
-    FACTORY_STATE.update({
-        "is_active": True,
-        "stop_requested": False,
-        "current_job_index": 0,
-        "total_jobs": len(payload.jobs),
-        "current_character": None,
-        "current_prompt": None,
-        "current_config": None,
-    })
-    _log("Iniciando aprovisionamiento de recursos...")
-    # Debug de datos entrantes (resources_meta)
-    try:
-        _log(f"Recibido Meta: {json.dumps(payload.resources_meta or [], indent=2)}")
-    except Exception as e:
-        _log(f"Recibido Meta: (error serializando) {e}")
+async def execute_plan(payload: ExecuteRequest, background_tasks: BackgroundTasks):
+    """
+    Endpoint V1 (legacy): No soporta configuración por personaje.
+    """
+    if FACTORY_STATE["is_active"]:
+        raise HTTPException(status_code=400, detail="Fábrica ocupada")
+    
+    # Validar jobs
+    if not payload.jobs:
+        raise HTTPException(status_code=400, detail="Lista de jobs vacía")
+
+    # Iniciar proceso en background
     background_tasks.add_task(execute_pipeline, payload.jobs, payload.resources_meta or [], [])
     return {"status": "started", "total_jobs": len(payload.jobs)}
 
-# [REMOVED] Endpoint /planner/execute_v2 eliminado. Use /planner/execute (ya usa execute_pipeline).
+@app.post("/planner/execute_v2")
+async def execute_plan_v2(payload: ExecuteV2Request, background_tasks: BackgroundTasks):
+    """
+    Endpoint V2: Soporta configuración por personaje (steps, cfg, hires fix, etc).
+    """
+    if FACTORY_STATE["is_active"]:
+        raise HTTPException(status_code=400, detail="Fábrica ocupada")
+    
+    if not payload.jobs:
+        raise HTTPException(status_code=400, detail="Lista de jobs vacía")
+
+    background_tasks.add_task(execute_pipeline, payload.jobs, payload.resources_meta or [], payload.group_config or [])
+    return {"status": "started", "total_jobs": len(payload.jobs), "version": "v2"}
 
 # Lista de modelos Groq con fallback (prioridad de calidad -> rapidez -> legacy)
 GROQ_MODEL_FALLBACKS = [
@@ -1351,6 +1694,46 @@ async def reforge_checkpoints():
         message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
         raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@app.get("/reforge/vaes")
+async def reforge_vaes():
+    """Lista VAEs disponibles desde ReForge/SD WebUI."""
+    try:
+        names = await list_vaes()
+        return {"names": names}
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
+
+@app.get("/reforge/options")
+async def reforge_options():
+    """Lee configuración actual simplificada: VAE y Clip Skip."""
+    try:
+        opts = await get_options()
+        current_vae = None
+        current_clip_skip = None
+        if isinstance(opts, dict):
+            current_vae = opts.get("sd_vae")
+            current_clip_skip = opts.get("CLIP_stop_at_last_layers")
+        return {
+            "current_vae": current_vae or "Automatic",
+            "current_clip_skip": int(current_clip_skip) if isinstance(current_clip_skip, (int, float)) else 1,
+        }
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
+    except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
@@ -1554,6 +1937,54 @@ async def download_lora(req: DownloadLoraRequest):
 
     return await _run()
 
+class DownloadCheckpointRequest(BaseModel):
+    url: str
+    filename: str | None = None
+
+@app.post("/download-checkpoint")
+async def download_checkpoint(req: DownloadCheckpointRequest):
+    """Descarga un archivo .safetensors desde Civitai usando cloudscraper y lo guarda en la carpeta de Checkpoints.
+    Destino: REFORGE_PATH/../../models/Stable-diffusion
+    """
+    if not REFORGE_PATH:
+        raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
+    if not req.url or not isinstance(req.url, str):
+        raise HTTPException(status_code=400, detail="url requerida")
+
+    def _safe_name(name: str) -> str:
+        base = name.strip().lower().replace(" ", "_")
+        if not base.endswith(".safetensors"):
+            base += ".safetensors"
+        return "".join(c for c in base if c.isalnum() or c in ["_", ".", "-"])
+
+    async def _run() -> dict:
+        try:
+            base = Path(REFORGE_PATH).resolve()
+            # Checkpoints están en models/Stable-diffusion
+            ckpt_dir = base.parents[1] / "models" / "Stable-diffusion"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            filename = _safe_name(req.filename or "downloaded_checkpoint.safetensors")
+            target = ckpt_dir / filename
+
+            def _download():
+                scraper = cloudscraper.create_scraper()
+                with scraper.get(req.url, stream=True, timeout=120) as r:
+                    r.raise_for_status()
+                    with open(target, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):  # 1MB
+                            if chunk:
+                                f.write(chunk)
+                return target.stat().st_size
+
+            size = await asyncio.to_thread(_download)
+            return {"status": "ok", "saved": str(target), "size_bytes": size}
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"Error HTTP al descargar: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Error descargando Checkpoint: {str(e)}")
+
+    return await _run()
+
 @app.get("/local/loras")
 async def list_local_loras():
     """Lista archivos .safetensors en la carpeta de LoRAs"""
@@ -1565,7 +1996,8 @@ async def list_local_loras():
         lora_dir = base.parents[1] / "models" / "Lora"
         if not lora_dir.exists():
             return []
-        return [p.name for p in lora_dir.glob("*.safetensors") if p.is_file()]
+        # Escaneo recursivo
+        return [p.stem for p in lora_dir.rglob("*.safetensors") if p.is_file()]
 
     files = await asyncio.to_thread(_list)
     return {"files": files}
@@ -1593,52 +2025,7 @@ async def delete_local_lora(req: DeleteLoraRequest):
 
     return await asyncio.to_thread(_delete)
 
-# ===== FASE 4: Motor de Producción =====
-from fastapi import BackgroundTasks
-import base64
-from datetime import datetime
-from typing import Dict, Any
 
-class ResourceMeta(BaseModel):
-    character_name: str
-    download_url: Optional[str] = None
-    filename: Optional[str] = None
-
-class ExecuteRequest(BaseModel):
-    jobs: List[PlannerJob]
-    resources_meta: Optional[List[ResourceMeta]] = []
-
-# Nuevo: configuración por personaje (steps/cfg)
-class GroupConfigItem(BaseModel):
-    character_name: str
-    cfg_scale: Optional[float] = None
-    steps: Optional[int] = None
-    hires_fix: Optional[bool] = None
-    denoising_strength: Optional[float] = None
-    output_path: Optional[str] = None
-
-class ExecuteV2Request(BaseModel):
-    jobs: List[PlannerJob]
-    resources_meta: Optional[List[ResourceMeta]] = []
-    group_config: Optional[List[GroupConfigItem]] = []
-
-# Estado global de Fábrica (consulta vía /factory/status)
-FACTORY_STATE: Dict[str, Any] = {
-    "is_active": False,
-    "current_job_index": 0,
-    "total_jobs": 0,
-    "current_character": None,
-    "last_image_path": None,
-    "logs": [],
-    "stop_requested": False,
-}
-
-def _log(msg: str) -> None:
-    ts = datetime.now().strftime("%H:%M:%S")
-    FACTORY_STATE["logs"].append(f"[{ts}] {msg}")
-    # Limitar tamaño de log para no crecer indefinidamente
-    if len(FACTORY_STATE["logs"]) > 400:
-        FACTORY_STATE["logs"] = FACTORY_STATE["logs"][-300:]
 
 # get_lora_dir centralizado en la sección superior. Esta definición duplicada ha sido eliminada para unificar rutas.
 
@@ -1724,6 +2111,7 @@ async def factory_status(limit: int = 50):
         "total_jobs": int(FACTORY_STATE.get("total_jobs", 0)),
         "current_character": FACTORY_STATE.get("current_character"),
         "current_prompt": FACTORY_STATE.get("current_prompt"),
+        "current_negative_prompt": FACTORY_STATE.get("current_negative_prompt"),
         "current_config": FACTORY_STATE.get("current_config"),
         "last_image_url": FACTORY_STATE.get("last_image_path"),
         "last_image_b64": FACTORY_STATE.get("last_image_b64"),

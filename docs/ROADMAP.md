@@ -73,3 +73,42 @@
 - [ ] Extender `/planner/draft` con campos Expression/Hairstyle y coherencia IA.
 - [ ] UI Planner: selectores por Job y panel técnico por personaje.
 - [ ] Validar visualmente en Preview y registrar en `/docs/LEARNING_LOG.md`.
+
+## 🟢 Phase 3.5 — Refinements & Manual Downloads — 2025-11-23
+
+### Real-time Progress Tracking
+- [x] Backend: Added `/reforge/progress` endpoint to proxy ReForge's progress API.
+- [x] Backend: Added `get_progress()` function in `services/reforge.py`.
+- [x] Frontend: Updated `FactoryView.tsx` to poll `/reforge/progress` for real-time generation status.
+- [x] Frontend: Improved progress bar to show actual generation percentage instead of job-based estimation.
+
+### Planner Configuration Enhancements
+- [x] Frontend: Added **Batch Size** slider (1-8) in Technical Config panel.
+- [x] Frontend: Added **Adetailer** toggle for face enhancement.
+- [x] Backend: Updated `GroupConfigItem` to include `batch_size` and `adetailer` fields.
+- [x] Backend: Updated `produce_jobs` to pass `batch_size` and `adetailer` to ReForge.
+- [x] Backend: Implemented Adetailer via `alwayson_scripts` in `call_txt2img`.
+
+### Improved Intensity Tags
+- [x] Frontend: Enhanced `setIntensity` function in `PlannerView.tsx` with comprehensive tag lists:
+  - **Safe**: `rating_safe, best quality, masterpiece`
+  - **Ecchi**: `rating_questionable, cleavage, swimsuit, (ecchi:1.2), best quality, masterpiece`
+  - **NSFW**: `rating_explicit, nsfw, nipple, pussy, nude, best quality, masterpiece`
+
+### Radar Manual Download Mode
+- [x] Backend: Added `/download-checkpoint` endpoint for manual checkpoint downloads.
+- [x] Backend: Checkpoint saving path correctly configured to `REFORGE_PATH/../../models/Stable-diffusion`.
+- [x] Frontend: Added `postDownloadCheckpoint` and `postDownloadLora` API functions.
+- [x] Frontend: Implemented `ManualDownloadView` component with URL input and type selection (LoRA/Checkpoint).
+- [x] Frontend: Refactored Manual Mode as a modal (not a filter tab) to avoid UI crashes.
+- [x] Frontend: Added "Descarga Manual" button in Radar toolbar.
+
+### Bug Fixes
+- [x] Fixed compilation error in `api.ts` (API_BASE → BASE_URL).
+- [x] Fixed duplicate `tab` state declaration in `RadarView.tsx`.
+- [x] Fixed crash when clicking "Manual" tab (removed from filter tabs, now a modal).
+
+### Default Values
+- [x] Set default **Hires Steps** to 15 in Planner.
+- [x] Set default **Upscaler** to "R-ESRGAN 4x+" in Planner.
+- [x] Set default **Hairstyle** to "(Original/Vacío)" to respect LoRA tags.

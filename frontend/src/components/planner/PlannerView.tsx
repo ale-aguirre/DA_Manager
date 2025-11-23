@@ -1,8 +1,8 @@
 "use client";
 import React from "react";
-import { Wand2, Trash2, RefreshCw, Play, Radar, Search, Cog, Camera, Sun, ChevronDown, ChevronUp } from "lucide-react";
+import { Wand2, Trash2, RefreshCw, Play, Radar, Search, Cog, Camera, Sun, ChevronDown, ChevronUp, Bot } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
-import { magicFixPrompt, getPlannerResources, postPlannerAnalyze, getReforgeCheckpoints, postReforgeSetCheckpoint } from "../../lib/api";
+import { magicFixPrompt, getPlannerResources, postPlannerAnalyze, getReforgeCheckpoints, postReforgeSetCheckpoint, getLocalLoras, getReforgeVAEs, getReforgeOptions } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import type { ResourceMeta } from "../../lib/api";
 
@@ -13,6 +13,10 @@ const QUALITY_SET = new Set([
   "absurdres",
   "nsfw",
 ]);
+
+// Estándar de oro para Negative Prompt (Anime)
+// Nota: NO incluir "nsfw" aquí para no bloquear contenidos NSFW cuando la intensidad lo requiera.
+const DEFAULT_NEGATIVE_ANIME = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name";
 
 function splitPrompt(prompt: string): string[] {
   return (prompt || "")
@@ -105,10 +109,10 @@ function extractExtras(prompt: string): { lighting?: string; camera?: string; ex
     ].some((k) => low.includes(k));
   };
   const EXPRESSION_HINTS = [
-    "smile","blushing","angry","crying","ahegao","wink","shy","confident","surprised","determined","smug","pout","teary eyes","embarrassed","happy"
+    "smile", "blushing", "angry", "crying", "ahegao", "wink", "shy", "confident", "surprised", "determined", "smug", "pout", "teary eyes", "embarrassed", "happy"
   ];
   const HAIRSTYLE_HINTS = [
-    "ponytail","twintails","bob cut","long hair","braid","side ponytail","messy hair","bun","short hair","wavy hair","curly hair","straight hair","half up","half down"
+    "ponytail", "twintails", "bob cut", "long hair", "braid", "side ponytail", "messy hair", "bun", "short hair", "wavy hair", "curly hair", "straight hair", "half up", "half down"
   ];
   const isExpression = (s: string) => EXPRESSION_HINTS.includes(s.toLowerCase());
   const isHairstyle = (s: string) => HAIRSTYLE_HINTS.includes(s.toLowerCase());
@@ -135,16 +139,16 @@ function rebuildPromptWithExtras(original: string, extras: { lighting?: string; 
     else core.push(t);
   }
   const EXPRESSION_HINTS = [
-    "smile","blushing","angry","crying","ahegao","wink","shy","confident","surprised","determined","smug","pout","teary eyes","embarrassed","happy"
+    "smile", "blushing", "angry", "crying", "ahegao", "wink", "shy", "confident", "surprised", "determined", "smug", "pout", "teary eyes", "embarrassed", "happy"
   ];
   const HAIRSTYLE_HINTS = [
-    "ponytail","twintails","bob cut","long hair","braid","side ponytail","messy hair","bun","short hair","wavy hair","curly hair","straight hair","half up","half down"
+    "ponytail", "twintails", "bob cut", "long hair", "braid", "side ponytail", "messy hair", "bun", "short hair", "wavy hair", "curly hair", "straight hair", "half up", "half down"
   ];
   const tail = core.slice(-3);
   const head = core.slice(0, Math.max(0, core.length - 3)).filter((t) => {
     const low = t.toLowerCase();
-    const isLight = ["light","lighting","shadow","shadows","glow","ambient","rim light","neon","backlight","backlit","studio light","soft lighting"].some((k) => low.includes(k));
-    const isCam = ["angle","shot","lens","close-up","portrait","fov","zoom","fisheye","bokeh","wide angle","low angle","high angle","front view","cowboy shot"].some((k) => low.includes(k));
+    const isLight = ["light", "lighting", "shadow", "shadows", "glow", "ambient", "rim light", "neon", "backlight", "backlit", "studio light", "soft lighting"].some((k) => low.includes(k));
+    const isCam = ["angle", "shot", "lens", "close-up", "portrait", "fov", "zoom", "fisheye", "bokeh", "wide angle", "low angle", "high angle", "front view", "cowboy shot"].some((k) => low.includes(k));
     const isExpr = EXPRESSION_HINTS.includes(low);
     const isHair = HAIRSTYLE_HINTS.includes(low);
     return !(isLight || isCam || isExpr || isHair);
@@ -160,25 +164,32 @@ function rebuildPromptWithExtras(original: string, extras: { lighting?: string; 
 
 export default function PlannerView() {
   const [jobs, setJobs] = React.useState<PlannerJob[]>([]);
-const [loading, setLoading] = React.useState(false);
-const [error, setError] = React.useState<string | null>(null);
-const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[]; lighting?: string[]; camera?: string[]; expressions?: string[]; hairstyles?: string[]; upscalers?: string[] } | null>(null);
-const [selected, setSelected] = React.useState<Set<number>>(new Set());
-const [openEditor, setOpenEditor] = React.useState<{ row: number; field: "outfit" | "pose" | "location" } | null>(null);
-const [metaByCharacter, setMetaByCharacter] = React.useState<Record<string, { image_url?: string; trigger_words?: string[]; download_url?: string }>>({});
-const router = useRouter();
-const [loreByCharacter, setLoreByCharacter] = React.useState<Record<string, string>>({});
-const [configOpen, setConfigOpen] = React.useState<Record<string, boolean>>({});
-const [configByCharacter, setConfigByCharacter] = React.useState<Record<string, { hiresFix: boolean; denoising: number; outputPath: string }>>({});
-const [techConfigByCharacter, setTechConfigByCharacter] = React.useState<Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string }>>({});
-const [plannerContext, setPlannerContext] = React.useState<Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, any> }> }>>({});
-const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
-const setTechConfig = (character: string | null, partial: Partial<{ steps: number; cfg: number; sampler: string; seed: number; hiresFix: boolean; upscaleBy: number; upscaler: string; checkpoint: string }>) => {
-  if (!character) return;
-  setTechConfigByCharacter((prev) => ({ ...prev, [character]: { ...prev[character], ...partial } }));
-};
-const [showDetails, setShowDetails] = React.useState<Set<number>>(new Set());
-const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[]; lighting?: string[]; camera?: string[]; expressions?: string[]; hairstyles?: string[]; upscalers?: string[] } | null>(null);
+  const [selected, setSelected] = React.useState<Set<number>>(new Set());
+  const [openEditor, setOpenEditor] = React.useState<{ row: number; field: "outfit" | "pose" | "location" } | null>(null);
+  const [metaByCharacter, setMetaByCharacter] = React.useState<Record<string, { image_url?: string; trigger_words?: string[]; download_url?: string }>>({});
+  const router = useRouter();
+  const [loreByCharacter, setLoreByCharacter] = React.useState<Record<string, string>>({});
+  const [configOpen, setConfigOpen] = React.useState<Record<string, boolean>>({});
+  const [configByCharacter, setConfigByCharacter] = React.useState<Record<string, { hiresFix: boolean; denoising: number; outputPath: string }>>({});
+  const [techConfigByCharacter, setTechConfigByCharacter] = React.useState<Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string; extraLoras?: string[]; hiresSteps?: number; batch_size?: number; batch_count?: number; adetailer?: boolean; vae?: string; clipSkip?: number; negativePrompt?: string }>>({});
+  const [plannerContext, setPlannerContext] = React.useState<Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, any> }> }>>({});
+  const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
+  const [localLoras, setLocalLoras] = React.useState<string[]>([]);
+  const [vaes, setVaes] = React.useState<string[]>([]);
+  const [reforgeOptions, setReforgeOptionsState] = React.useState<{ current_vae: string; current_clip_skip: number } | null>(null);
+  const setTechConfig = (character: string | null, partial: Partial<{ steps: number; cfg: number; sampler: string; seed: number; hiresFix: boolean; upscaleBy: number; upscaler: string; checkpoint: string; extraLoras: string[]; hiresSteps: number; batch_size: number; batch_count: number; adetailer: boolean; vae: string; clipSkip: number; negativePrompt: string }>) => {
+    if (!character) return;
+    setTechConfigByCharacter((prev) => {
+      const next = { ...prev, [character]: { ...prev[character], ...partial } };
+      try { localStorage.setItem("planner_tech", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const [showDetails, setShowDetails] = React.useState<Set<number>>(new Set());
+  const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     // Abrir prompt por defecto para todos los jobs existentes
@@ -199,6 +210,91 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
     }
   }, []);
 
+  // Aplicar defaults (Negative/Steps/CFG y más) y preset global al cambiar de personaje
+  React.useEffect(() => {
+    if (!activeCharacter) return;
+    const tech = techConfigByCharacter[activeCharacter] || {};
+    let preset: any = null;
+    try {
+      const raw = localStorage.getItem("planner_preset_global");
+      if (raw) preset = JSON.parse(raw);
+    } catch {}
+    const patchTech: Partial<{ steps: number; cfg: number; negativePrompt: string; batch_size: number; batch_count: number; hiresFix: boolean; adetailer: boolean; upscaler: string }> = {};
+    const neg = (tech.negativePrompt ?? "").trim();
+    if (!neg) {
+      const presetNeg = (preset && typeof preset.negativePrompt === "string" && preset.negativePrompt.trim()) ? preset.negativePrompt.trim() : DEFAULT_NEGATIVE_ANIME;
+      patchTech.negativePrompt = presetNeg;
+    }
+    if (typeof tech.steps !== "number") {
+      patchTech.steps = (preset && typeof preset.steps === "number") ? preset.steps : 30;
+    }
+    if (typeof tech.cfg !== "number") {
+      patchTech.cfg = (preset && typeof preset.cfg === "number") ? preset.cfg : 7;
+    }
+    // Nuevos campos del preset global
+    if (typeof tech.batch_size !== "number") {
+      patchTech.batch_size = (preset && typeof preset.batch_size === "number") ? preset.batch_size : 1;
+    }
+    if (typeof tech.batch_count !== "number") {
+      patchTech.batch_count = (preset && typeof preset.batch_count === "number") ? preset.batch_count : 10;
+    }
+    if (typeof tech.hiresFix !== "boolean") {
+      patchTech.hiresFix = (preset && typeof preset.hiresFix === "boolean") ? preset.hiresFix : true;
+    }
+    if (typeof tech.adetailer !== "boolean") {
+      patchTech.adetailer = (preset && typeof preset.adetailer === "boolean") ? preset.adetailer : true;
+    }
+    if ((tech.upscaler ?? "").trim().length === 0) {
+      patchTech.upscaler = (preset && typeof preset.upscaler === "string") ? preset.upscaler : "";
+    }
+    if (Object.keys(patchTech).length > 0) {
+      setTechConfig(activeCharacter, patchTech);
+    }
+    // Denoise vive en planner_config, no en tech
+    const cfg = configByCharacter[activeCharacter] || {};
+    if (typeof cfg.denoising !== "number") {
+      const nextDenoise = (preset && typeof preset.denoising === "number") ? preset.denoising : 0.35;
+      setConfigByCharacter((prev) => {
+        const next = {
+          ...prev,
+          [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: nextDenoise },
+        };
+        try { localStorage.setItem("planner_config", JSON.stringify(next)); } catch {}
+        return next;
+      });
+    }
+  }, [activeCharacter]);
+
+  // Cargar configuración técnica (incluye Prompt Negativo) desde localStorage
+  React.useEffect(() => {
+    try {
+      const rawTech = localStorage.getItem("planner_tech");
+      if (!rawTech) return;
+      const parsed = JSON.parse(rawTech) as Record<string, any>;
+      if (parsed && typeof parsed === "object") {
+        setTechConfigByCharacter(parsed);
+      }
+    } catch (e) {
+      console.warn("planner_tech inválido o ausente", e);
+    }
+  }, []);
+
+  // Cargar VAEs y opciones actuales de ReForge
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const [vNames, opts] = await Promise.all([
+          getReforgeVAEs().catch(() => []),
+          getReforgeOptions().catch(() => ({ current_vae: "Automatic", current_clip_skip: 1 })),
+        ]);
+        setVaes(Array.isArray(vNames) ? vNames : []);
+        setReforgeOptionsState(opts || null);
+      } catch (e) {
+        console.warn("Error cargando VAEs/opciones", e);
+      }
+    })();
+  }, []);
+
   React.useEffect(() => {
     // Si no hay lore para el personaje activo, cargarlo automáticamente
     if (!activeCharacter) return;
@@ -207,6 +303,17 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
       analyzeLore(activeCharacter);
     }
   }, [activeCharacter]);
+
+  // Auto-ajuste de Clip Skip = 2 para checkpoints Anime/Pony si el usuario aún no lo definió
+  React.useEffect(() => {
+    if (!activeCharacter) return;
+    const tech = techConfigByCharacter[activeCharacter] || {};
+    const ckpt = (tech.checkpoint || "").toLowerCase();
+    const clipSet = typeof tech.clipSkip === "number";
+    if (!clipSet && (ckpt.includes("pony") || ckpt.includes("anime"))) {
+      setTechConfig(activeCharacter, { clipSkip: 2 });
+    }
+  }, [activeCharacter, techConfigByCharacter]);
 
   React.useEffect(() => {
     // Cargar recursos para edición rápida
@@ -228,6 +335,18 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
         setCheckpoints(cps);
       } catch (e) {
         console.warn("No se pudieron cargar checkpoints:", e);
+      }
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    // Cargar LoRAs locales
+    (async () => {
+      try {
+        const loras = await getLocalLoras();
+        setLocalLoras(loras);
+      } catch (e) {
+        console.warn("No se pudieron cargar LoRAs locales:", e);
       }
     })();
   }, []);
@@ -328,6 +447,29 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
     });
   };
 
+  // Slider visual personalizado (barra gris con relleno azul). No usa input range.
+  // Calcula porcentaje y permite clic para ajustar valor. Reusa para Steps, CFG, Denoise, Hires Steps.
+  const SliderBar = (
+    { value, min, max, step = 1, onChange }: { value: number; min: number; max: number; step?: number; onChange: (v: number) => void }
+  ) => {
+    const pct = Math.max(0, Math.min(100, ((value - min) / Math.max(1, (max - min))) * 100));
+    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const p = Math.max(0, Math.min(1, x / rect.width));
+      let raw = min + p * (max - min);
+      // Ajuste por step (soporta decimales)
+      const scaled = Math.round(raw / step) * step;
+      const fixed = Number(scaled.toFixed(2));
+      onChange(Math.max(min, Math.min(max, fixed)));
+    };
+    return (
+      <div className="mt-2 w-full h-4 bg-slate-700 rounded cursor-pointer" onClick={handleClick}>
+        <div style={{ width: `${pct}%` }} className="h-4 bg-blue-600 rounded" />
+      </div>
+    );
+  };
+
   const magicFix = async (idx: number) => {
     try {
       setLoading(true);
@@ -425,10 +567,13 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
       } catch (e) {
         console.warn("planner_meta inválido o ausente", e);
       }
-      // Asegurar que outfit/pose/location no estén vacíos y aplicar seed del panel técnico si existe
+      // Asegurar que outfit/pose/location no estén vacíos, prefijar Prompt Base y aplicar seed/negative desde panel técnico
       const preparedJobs = jobs.map((j) => {
         const tech = techConfigByCharacter[j.character_name];
-        return { ...j, prompt: ensureTriplet(j.prompt), seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1) } as any;
+        const base = plannerContext[j.character_name]?.base_prompt || "";
+        const bodyPrompt = ensureTriplet(j.prompt);
+        const finalPrompt = base && base.trim().length > 0 ? `${base.trim()}, ${bodyPrompt}` : bodyPrompt;
+        return { ...j, prompt: finalPrompt, seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1), negative_prompt: tech?.negativePrompt } as any;
       });
       // Construir group_config por personaje desde Config Avanzada, recomendado y panel técnico
       const groupConfig = Object.keys(perCharacter).map((character) => {
@@ -437,19 +582,28 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
         const tech = techConfigByCharacter[character] || {};
         return {
           character_name: character,
-          hires_fix: tech.hiresFix ?? conf.hiresFix,
+          hires_fix: (tech.hiresFix ?? conf.hiresFix ?? true),
           denoising_strength: conf.denoising,
           output_path: conf.outputPath,
-          steps: tech.steps ?? rec?.steps,
-          cfg_scale: tech.cfg ?? rec?.cfg,
+          steps: tech.steps ?? rec?.steps ?? 30,
+          cfg_scale: tech.cfg ?? rec?.cfg ?? 7,
           sampler: tech.sampler ?? rec?.sampler,
           upscale_by: tech.upscaleBy,
+          upscaler: tech.upscaler,
+          checkpoint: tech.checkpoint,
+          extra_loras: tech.extraLoras,
+          hires_steps: tech.hiresSteps,
+          batch_size: tech.batch_size ?? 1,
+          adetailer: tech.adetailer ?? true,
+          vae: tech.vae,
+          clip_skip: tech.clipSkip,
         } as any;
       });
       try {
-        await postPlannerExecute(preparedJobs, resourcesMeta);
+        const { postPlannerExecuteV2 } = await import("../../lib/api");
+        await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
       } catch (err) {
-        console.warn("Planner execute falló", err);
+        console.warn("Planner execute v2 falló", err);
         throw err;
       }
       router.push("/factory");
@@ -581,16 +735,21 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
     }
     const isRating = (s: string) => {
       const low = s.toLowerCase();
-      return low === "rating_safe" || low === "rating_questionable" || low === "rating_explicit" || low === "explicit" || low === "nsfw";
+      return low === "rating_safe" || low === "rating_questionable" || low === "rating_explicit" || low === "explicit" || low === "nsfw" || low === "safe" || low === "questionable";
     };
     const coreFiltered = core.filter((t) => !isRating(t));
     const qualityFiltered = quality.filter((t) => t.toLowerCase() !== "nsfw");
+
     let newRatings: string[] = [];
-    if (nextLabel === "Safe") newRatings = ["rating_safe"];
-    if (nextLabel === "Ecchi") newRatings = ["rating_questionable", "cleavage"];
-    if (nextLabel === "NSFW") newRatings = ["rating_explicit", "nsfw", "explicit"];
-    const nextTokens = [...newRatings, ...coreFiltered, ...qualityFiltered];
-    updatePrompt(idx, nextTokens.join(", "));
+    if (nextLabel === "Safe") newRatings = ["rating_safe", "best quality", "masterpiece"];
+    if (nextLabel === "Ecchi") newRatings = ["rating_questionable", "cleavage", "swimsuit", "(ecchi:1.2)", "best quality", "masterpiece"];
+    if (nextLabel === "NSFW") newRatings = ["rating_explicit", "nsfw", "nipple", "pussy", "nude", "best quality", "masterpiece"];
+
+    // Unir todo: ratings + core + quality
+    // Filtrar duplicados simples
+    const combined = [...newRatings, ...coreFiltered, ...qualityFiltered];
+    const unique = Array.from(new Set(combined));
+    updatePrompt(idx, unique.join(", "));
   };
 
   const toggleDetails = (idx: number) => {
@@ -734,75 +893,255 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                         </div>
                       </div>
 
-                      {/* Prompt Base */}
+                      {/* CONFIG A1111 (TÉCNICA) - diseño denso estilo A1111 real */}
                       <div className="mt-4">
-                        <label className="text-xs uppercase tracking-wide text-slate-400">Prompt Base</label>
-                        <textarea
-                          value={plannerContext[activeCharacter]?.base_prompt || "(sin base_prompt)"}
-                          readOnly
-                          className="h-20 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                        />
-                      </div>
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="text-xs uppercase tracking-wide text-slate-400">CONFIG A1111 (TÉCNICA)</div>
+                            <button
+                              type="button"
+                              className="text-[11px] rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 hover:bg-slate-700"
+                              onClick={() => {
+                                const t = techConfigByCharacter[activeCharacter!] || {};
+                              const c = configByCharacter[activeCharacter!] || {};
+                              const preset = {
+                                steps: typeof t.steps === "number" ? t.steps : 30,
+                                cfg: typeof t.cfg === "number" ? t.cfg : 7,
+                                negativePrompt: (t.negativePrompt && t.negativePrompt.trim().length > 0) ? t.negativePrompt : DEFAULT_NEGATIVE_ANIME,
+                                batch_size: typeof t.batch_size === "number" ? t.batch_size : 1,
+                                batch_count: typeof t.batch_count === "number" ? t.batch_count : 10,
+                                hiresFix: typeof t.hiresFix === "boolean" ? t.hiresFix : true,
+                                adetailer: typeof t.adetailer === "boolean" ? t.adetailer : true,
+                                upscaler: typeof t.upscaler === "string" ? t.upscaler : "",
+                                denoising: typeof c.denoising === "number" ? c.denoising : 0.35,
+                              };
+                              try { localStorage.setItem("planner_preset_global", JSON.stringify(preset)); } catch {}
+                              }}
+                              title="Guardar Configuración"
+                              aria-label="Guardar Configuración"
+                            >
+                              💾 Guardar Configuración
+                            </button>
+                          </div>
+                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
+                          {/* Fila 1: Modelos */}
+                          <div className="col-span-2">
+                            <label className="text-xs text-slate-300">Stable Diffusion Checkpoint</label>
+                            <select
+                              value={techConfigByCharacter[activeCharacter]?.checkpoint ?? ""}
+                              onChange={async (e) => {
+                                const title = e.target.value;
+                                setTechConfig(activeCharacter, { checkpoint: title });
+                                try { if (title) await postReforgeSetCheckpoint(title); } catch (err) { console.warn("No se pudo aplicar checkpoint", err); }
+                              }}
+                              className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                            >
+                              <option value="">(Sin cambio)</option>
+                              {checkpoints.map((c) => (<option key={c} value={c}>{c}</option>))}
+                            </select>
+                          </div>
 
-                      {/* Config A1111 */}
-                      <div className="mt-4">
-                        <div className="mb-2 text-xs uppercase tracking-wide text-slate-400">Config A1111 (Técnica)</div>
-                        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Steps <span className="ml-1 font-mono text-[11px] text-slate-300">{techConfigByCharacter[activeCharacter]?.steps ?? plannerContext[activeCharacter]?.recommended_params?.steps ?? 30}</span></label>
-                            <input type="range" min={1} max={60} value={techConfigByCharacter[activeCharacter]?.steps ?? plannerContext[activeCharacter]?.recommended_params?.steps ?? 30} onChange={(e) => setTechConfig(activeCharacter, { steps: Number(e.target.value) })} className="mt-2 w-full accent-blue-500" />
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">CFG <span className="ml-1 font-mono text-[11px] text-slate-300">{techConfigByCharacter[activeCharacter]?.cfg ?? plannerContext[activeCharacter]?.recommended_params?.cfg ?? 7}</span></label>
-                            <input type="range" min={1} max={20} step={0.5} value={techConfigByCharacter[activeCharacter]?.cfg ?? plannerContext[activeCharacter]?.recommended_params?.cfg ?? 7} onChange={(e) => setTechConfig(activeCharacter, { cfg: Number(e.target.value) })} className="mt-2 w-full accent-blue-500" />
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Sampler</label>
-                            <select value={techConfigByCharacter[activeCharacter]?.sampler ?? plannerContext[activeCharacter]?.recommended_params?.sampler ?? "Euler a"} onChange={(e) => setTechConfig(activeCharacter, { sampler: e.target.value })} className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200">
-                              <option>Euler a</option>
-                              <option>Euler</option>
-                              <option>DDIM</option>
-                              <option>DPM++ 2M Karras</option>
-                            </select>
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Seed</label>
-                            <input type="number" value={techConfigByCharacter[activeCharacter]?.seed ?? -1} onChange={(e) => setTechConfig(activeCharacter, { seed: Number(e.target.value) })} className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200" />
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Hires Fix</label>
-                            <div className="mt-2">
-                              <input type="checkbox" checked={techConfigByCharacter[activeCharacter]?.hiresFix ?? (configByCharacter[activeCharacter]?.hiresFix ?? true)} onChange={(e) => setTechConfig(activeCharacter, { hiresFix: e.target.checked })} className="accent-blue-500" />
+                          {/* Fila 2: Prompts Base */}
+                          <div className="col-span-2 grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-xs text-slate-300">Prompt Base (Positivo)</label>
+                              <textarea
+                                value={plannerContext[activeCharacter]?.base_prompt || ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setPlannerContext((prev) => {
+                                    const next = { ...prev, [activeCharacter!]: { ...(prev[activeCharacter!] || {}), base_prompt: v } };
+                                    try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Escribe el prefijo de calidad/estilo..."
+                                className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Prompt Negativo</label>
+                              <textarea
+                                value={techConfigByCharacter[activeCharacter]?.negativePrompt ?? ""}
+                                onChange={(e) => setTechConfig(activeCharacter, { negativePrompt: e.target.value })}
+                                className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                              />
                             </div>
                           </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Upscale by</label>
-                            <select value={techConfigByCharacter[activeCharacter]?.upscaleBy ?? 1.5} onChange={(e) => setTechConfig(activeCharacter, { upscaleBy: Number(e.target.value) })} className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200">
-                              <option value={1.0}>1.0x</option>
-                              <option value={1.5}>1.5x</option>
-                              <option value={2.0}>2.0x</option>
-                            </select>
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Denoising Strength <span className="ml-1 font-mono text-[11px] text-slate-300">{configByCharacter[activeCharacter]?.denoising ?? 0.35}</span></label>
-                            <input type="range" min={0} max={1} step={0.01} value={configByCharacter[activeCharacter]?.denoising ?? 0.35} onChange={(e) => setConfigByCharacter((prev) => { const next = { ...prev, [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: Number(e.target.value) } }; localStorage.setItem("planner_config", JSON.stringify(next)); return next; })} className="mt-2 w-full accent-blue-500" />
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Upscaler</label>
-                            <select value={techConfigByCharacter[activeCharacter]?.upscaler ?? ""} onChange={(e) => setTechConfig(activeCharacter, { upscaler: e.target.value })} className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200">
-                              <option value="">(none)</option>
-                              {resources?.upscalers?.map((u) => (<option key={u} value={u}>{u}</option>))}
-                            </select>
-                          </div>
-                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
-                            <label className="text-xs text-slate-400">Checkpoint</label>
-                            <div className="mt-2 flex gap-2">
-                              <select value={techConfigByCharacter[activeCharacter]?.checkpoint ?? ""} onChange={(e) => setTechConfig(activeCharacter, { checkpoint: e.target.value })} className="w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200">
-                                <option value="">(none)</option>
-                                {checkpoints.map((c) => (<option key={c} value={c}>{c}</option>))}
+
+                          {/* Fila 3: Parámetros clave */}
+                          <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
+                            <div className="col-span-2">
+                              <label className="text-xs text-slate-300">Sampler</label>
+                              <select
+                                value={techConfigByCharacter[activeCharacter]?.sampler ?? plannerContext[activeCharacter]?.recommended_params?.sampler ?? "Euler a"}
+                                onChange={(e) => setTechConfig(activeCharacter, { sampler: e.target.value })}
+                                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                              >
+                                <option>Euler a</option>
+                                <option>Euler</option>
+                                <option>DDIM</option>
+                                <option>DPM++ 2M Karras</option>
                               </select>
-                              <button onClick={() => { const cp = techConfigByCharacter[activeCharacter]?.checkpoint; if (cp) { postReforgeSetCheckpoint(cp).then(() => alert("Checkpoint activado")); } }} className="rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-2 text-xs text-indigo-100 hover:bg-indigo-700/30">Activar</button>
                             </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Steps</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="flex-1">{SliderBar({
+                                  value: techConfigByCharacter[activeCharacter]?.steps ?? plannerContext[activeCharacter]?.recommended_params?.steps ?? 30,
+                                  min: 1,
+                                  max: 60,
+                                  step: 1,
+                                  onChange: (v) => setTechConfig(activeCharacter, { steps: v }),
+                                })}</div>
+                                <input
+                                  type="number"
+                                  value={techConfigByCharacter[activeCharacter]?.steps ?? plannerContext[activeCharacter]?.recommended_params?.steps ?? 30}
+                                  onChange={(e) => setTechConfig(activeCharacter, { steps: Number(e.target.value) })}
+                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">CFG</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="flex-1">{SliderBar({
+                                  value: techConfigByCharacter[activeCharacter]?.cfg ?? plannerContext[activeCharacter]?.recommended_params?.cfg ?? 7,
+                                  min: 1,
+                                  max: 20,
+                                  step: 0.5,
+                                  onChange: (v) => setTechConfig(activeCharacter, { cfg: v }),
+                                })}</div>
+                                <input
+                                  type="number"
+                                  step={0.5}
+                                  value={techConfigByCharacter[activeCharacter]?.cfg ?? plannerContext[activeCharacter]?.recommended_params?.cfg ?? 7}
+                                  onChange={(e) => setTechConfig(activeCharacter, { cfg: Number(e.target.value) })}
+                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Fila 4: Sliders */}
+                          <div className="col-span-2 grid grid-cols-3 gap-4">
+                            <div>
+                              <label className="text-xs text-slate-300">Batch Size</label>
+                              <input
+                                type="range"
+                                min={1}
+                                max={4}
+                                value={techConfigByCharacter[activeCharacter]?.batch_size ?? 1}
+                                onChange={(e) => setTechConfig(activeCharacter, { batch_size: Number(e.target.value) })}
+                                className="mt-2 w-full"
+                              />
+                              <div className="mt-1 text-[11px] text-slate-400">{techConfigByCharacter[activeCharacter]?.batch_size ?? 1} imágenes por job</div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Batch Count</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <input
+                                  type="range"
+                                  min={1}
+                                  max={20}
+                                  value={techConfigByCharacter[activeCharacter]?.batch_count ?? 10}
+                                  onChange={(e) => setTechConfig(activeCharacter, { batch_count: Number(e.target.value) })}
+                                  className="flex-1"
+                                />
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={20}
+                                  value={techConfigByCharacter[activeCharacter]?.batch_count ?? 10}
+                                  onChange={(e) => {
+                                    let v = Number(e.target.value);
+                                    if (!Number.isFinite(v)) v = 10;
+                                    if (v < 1) v = 1;
+                                    if (v > 20) v = 20;
+                                    setTechConfig(activeCharacter, { batch_count: v });
+                                  }}
+                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-400">{techConfigByCharacter[activeCharacter]?.batch_count ?? 10} jobs planificados</div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Seed</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  placeholder="Random (-1)"
+                                  value={techConfigByCharacter[activeCharacter]?.seed ?? -1}
+                                  onChange={(e) => setTechConfig(activeCharacter, { seed: Number(e.target.value) })}
+                                  className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                />
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                                  onClick={() => setTechConfig(activeCharacter, { seed: -1 })}
+                                  aria-label="Seed aleatorio"
+                                  title="Seed aleatorio (-1)"
+                                >
+                                  🎲
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Fila 5: Checkboxes y Extras */}
+                          <div className="col-span-2 flex gap-6 pt-2 border-t border-slate-800 items-center">
+                            <label className="flex items-center gap-2 text-slate-300 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={techConfigByCharacter[activeCharacter]?.hiresFix ?? (configByCharacter[activeCharacter]?.hiresFix ?? true)}
+                                onChange={(e) => setTechConfig(activeCharacter, { hiresFix: e.target.checked })}
+                                className="accent-blue-500"
+                              />
+                              Hires. Fix
+                            </label>
+                            <label className="flex items-center gap-2 text-slate-300 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={techConfigByCharacter[activeCharacter]?.adetailer ?? true}
+                                onChange={(e) => setTechConfig(activeCharacter, { adetailer: e.target.checked })}
+                                className="accent-blue-500"
+                              />
+                              ADetailer
+                            </label>
+                            <div className="flex-1" />
+                            {(techConfigByCharacter[activeCharacter]?.hiresFix ?? (configByCharacter[activeCharacter]?.hiresFix ?? true)) && (
+                              <div className="flex items-center gap-4 w-full">
+                                <div className="min-w-[220px]">
+                                  <label className="text-xs text-slate-300">Upscaler</label>
+                                  <select
+                                    value={techConfigByCharacter[activeCharacter]?.upscaler ?? ""}
+                                    onChange={(e) => setTechConfig(activeCharacter, { upscaler: e.target.value })}
+                                    className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                  >
+                                    <option value="">(none)</option>
+                                    {resources?.upscalers?.map((u) => (<option key={u} value={u}>{u}</option>))}
+                                  </select>
+                                </div>
+                                <div className="flex-1">
+                                  <label className="text-xs text-slate-300 flex items-center justify-between">
+                                    <span>Denoise</span>
+                                    <input
+                                      type="number"
+                                      step={0.01}
+                                      value={configByCharacter[activeCharacter]?.denoising ?? 0.35}
+                                      onChange={(e) => setConfigByCharacter((prev) => { const next = { ...prev, [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: Number(e.target.value) } }; localStorage.setItem("planner_config", JSON.stringify(next)); return next; })}
+                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                    />
+                                  </label>
+                                  {SliderBar({
+                                    value: configByCharacter[activeCharacter]?.denoising ?? 0.35,
+                                    min: 0,
+                                    max: 1,
+                                    step: 0.01,
+                                    onChange: (v) => setConfigByCharacter((prev) => { const next = { ...prev, [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: v } }; localStorage.setItem("planner_config", JSON.stringify(next)); return next; }),
+                                  })}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -816,14 +1155,14 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
             <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
               <div className="p-4">
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-medium text-slate-100">Cola de Producción (10 Jobs)</div>
+                  <div className="text-sm font-medium text-slate-100">Cola de Producción ({perCharacter[activeCharacter]?.jobs.length || 0} Jobs)</div>
                   <div className="flex items-center gap-2">
                     <button onClick={toggleAllDetailsGlobal} className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800">Expandir/Colapsar Todos</button>
                     <button onClick={regenerateAllSeeds} className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"><RefreshCw className="h-3 w-3 inline" /> Regenerar Todas las Seeds</button>
                   </div>
                 </div>
                 <ul className="space-y-3">
-                  {perCharacter[activeCharacter]?.jobs.slice(0, 10).map((job, i) => {
+                  {perCharacter[activeCharacter]?.jobs.map((job, i) => {
                     const idx = perCharacter[activeCharacter]!.indices[i];
                     const triplet = extractTriplet(job.prompt);
                     const intensity = getIntensity(job.prompt);
@@ -858,7 +1197,12 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                         <div className="pt-3">
                           <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                             <div>
-                              <label className="text-xs text-slate-400">Outfit</label>
+                              <label className="text-xs text-slate-400 flex items-center gap-1">
+                                <span>Outfit</span>
+                                {job?.ai_meta?.outfit && (
+                                  <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300"><Bot className="h-3 w-3" /></span>
+                                )}
+                              </label>
                               <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={triplet.outfit || ""} onChange={(e) => applyQuickEdit(idx, "outfit", e.target.value)}>
                                 <option value="">(vacío)</option>
                                 {resources && resources.outfits.map((o) => (<option key={o} value={o}>{o}</option>))}
@@ -879,14 +1223,24 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                               </select>
                             </div>
                             <div>
-                              <label className="text-xs text-slate-400">Lighting</label>
+                              <label className="text-xs text-slate-400 flex items-center gap-1">
+                                <span>Lighting</span>
+                                {job?.ai_meta?.lighting && (
+                                  <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300"><Bot className="h-3 w-3" /></span>
+                                )}
+                              </label>
                               <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).lighting || ""} onChange={(e) => applyExtrasEdit(idx, "lighting", e.target.value)}>
                                 <option value="">(vacío)</option>
                                 {resources && resources.lighting?.map((it) => (<option key={it} value={it}>{it}</option>))}
                               </select>
                             </div>
                             <div>
-                              <label className="text-xs text-slate-400">Camera</label>
+                              <label className="text-xs text-slate-400 flex items-center gap-1">
+                                <span>Camera</span>
+                                {job?.ai_meta?.camera && (
+                                  <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300"><Bot className="h-3 w-3" /></span>
+                                )}
+                              </label>
                               <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).camera || ""} onChange={(e) => applyExtrasEdit(idx, "camera", e.target.value)}>
                                 <option value="">(vacío)</option>
                                 {resources && resources.camera?.map((it) => (<option key={it} value={it}>{it}</option>))}
@@ -902,7 +1256,7 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                             <div>
                               <label className="text-xs text-slate-400">Hairstyle</label>
                               <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).hairstyle || ""} onChange={(e) => applyExtrasEdit(idx, "hairstyle", e.target.value)}>
-                                <option value="">(vacío)</option>
+                                <option value="">(Original/Vacío)</option>
                                 {resources && resources.hairstyles?.map((it) => (<option key={it} value={it}>{it}</option>))}
                               </select>
                             </div>

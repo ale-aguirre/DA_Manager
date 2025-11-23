@@ -7,6 +7,9 @@ export interface PlannerJob {
   character_name: string;
   prompt: string;
   seed: number;
+  // Opcionales: integración con A1111 y marcado de IA
+  negative_prompt?: string;
+  ai_meta?: Record<string, string>;
 }
 
 export interface RecommendedParams {

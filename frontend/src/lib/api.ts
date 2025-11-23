@@ -1,12 +1,19 @@
 export interface PlannerDraftItem {
   character_name: string;
   trigger_words: string[];
+  // Opcionales: control explícito de cantidad por intensidad
+  batch_count?: number;
+  safe_count?: number;
+  ecchi_count?: number;
+  nsfw_count?: number;
 }
 
 export interface PlannerJob {
   character_name: string;
   prompt: string;
   seed: number;
+  // Nuevo: negativo por job para A1111
+  negative_prompt?: string;
 }
 
 export interface FactoryStatus {
@@ -18,6 +25,7 @@ export interface FactoryStatus {
   last_image_b64?: string | null;
   logs?: string[];
   current_prompt?: string | null;
+  current_negative_prompt?: string | null;
   current_config?: {
     steps?: number;
     cfg?: number;
@@ -55,8 +63,9 @@ export interface PlannerDraftResponse {
   drafts: PlannerDraftEnriched[];
 }
 
-export async function postPlannerDraft(items: PlannerDraftItem[]): Promise<PlannerDraftResponse> {
-  const res = await fetch(`${BASE_URL}/planner/draft`, {
+export async function postPlannerDraft(items: PlannerDraftItem[], jobCount?: number): Promise<PlannerDraftResponse> {
+  const url = jobCount && jobCount > 0 ? `${BASE_URL}/planner/draft?job_count=${jobCount}` : `${BASE_URL}/planner/draft`;
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(items),
@@ -108,6 +117,33 @@ export interface GroupConfigItem {
   hires_fix?: boolean;
   denoising_strength?: number;
   output_path?: string;
+  extra_loras?: string[];
+  hires_steps?: number;
+  batch_size?: number;
+  adetailer?: boolean;
+  vae?: string;
+  clip_skip?: number;
+  // Nuevos campos técnicos
+  upscale_by?: number;
+  upscaler?: string;
+  sampler?: string;
+  checkpoint?: string;
+}
+
+export async function getReforgeProgress(): Promise<any> {
+  const res = await fetch(`${BASE_URL}/reforge/progress`);
+  if (!res.ok) throw new Error("Error fetching progress");
+  return res.json();
+}
+
+export async function getLocalLoras(): Promise<string[]> {
+  const res = await fetch(`${BASE_URL}/local/loras`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Local LoRAs failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.files) ? data.files : [];
 }
 
 export async function postPlannerExecuteV2(
@@ -199,6 +235,56 @@ export async function postReforgeSetCheckpoint(title: string): Promise<{ status?
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Set checkpoint failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function getReforgeVAEs(): Promise<string[]> {
+  const res = await fetch(`${BASE_URL}/reforge/vaes`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ReForge VAEs failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.names) ? data.names : [];
+}
+
+export interface ReforgeOptionsBrief {
+  current_vae: string;
+  current_clip_skip: number;
+}
+
+export async function getReforgeOptions(): Promise<ReforgeOptionsBrief> {
+  const res = await fetch(`${BASE_URL}/reforge/options`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ReForge options failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function postDownloadLora(url: string, filename?: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/download-lora`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, filename }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Download LoRA failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function postDownloadCheckpoint(url: string, filename?: string): Promise<any> {
+  const res = await fetch(`${BASE_URL}/download-checkpoint`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, filename }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Download Checkpoint failed (${res.status}): ${text}`);
   }
   return res.json();
 }

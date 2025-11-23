@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 
 export interface SessionImage {
-  b64: string;
+  b64?: string;
+  url?: string;
   path?: string;
 }
 
@@ -135,7 +136,7 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
           {/* Imagen grande */}
           <div className="md:w-1/2 p-4 border-b md:border-b-0 md:border-r border-slate-800">
             <img
-              src={`data:image/png;base64,${image.b64}`}
+              src={image.url ? image.url : `data:image/png;base64,${image.b64}`}
               alt="Imagen generada"
               className="w-full h-auto max-h-[75vh] object-contain rounded"
             />
