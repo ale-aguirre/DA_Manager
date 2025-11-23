@@ -149,6 +149,13 @@ export interface PlannerResources {
   outfits: string[];
   poses: string[];
   locations: string[];
+  lighting?: string[];
+  camera?: string[];
+  styles?: string[];
+  concepts?: string[];
+  expressions?: string[];
+  hairstyles?: string[];
+  upscalers?: string[];
 }
 
 export async function getPlannerResources(): Promise<PlannerResources> {
@@ -169,6 +176,29 @@ export async function postPlannerAnalyze(character_name: string, tags: string[] 
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Analyze failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function getReforgeCheckpoints(): Promise<string[]> {
+  const res = await fetch(`${BASE_URL}/reforge/checkpoints`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ReForge checkpoints failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.titles) ? data.titles : [];
+}
+
+export async function postReforgeSetCheckpoint(title: string): Promise<{ status?: string } | any> {
+  const res = await fetch(`${BASE_URL}/reforge/checkpoint`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Set checkpoint failed (${res.status}): ${text}`);
   }
   return res.json();
 }

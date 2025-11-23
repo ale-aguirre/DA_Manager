@@ -43,3 +43,33 @@
   - Senku (Planner)
   - Mei (Factory)
 - [ ] Favoritos: marcar LoRAs/Checkpoints como favoritos y permitir filtrado por favoritos en UI
+
+
+## 🟣 V3 — Precisión y Calidad — 2025-11-23
+
+### Planificador V3
+- Selección de Checkpoint por Job (listado desde `/reforge/checkpoints`).
+- Adición manual de LoRAs extra por Job o por Personaje (estilos/efectos).
+- Configuración detallada de Hires/Upscaler (Hires Fix, Hires Steps, Denoising Strength, Upscaler).
+- Nuevos campos de control de escena: Expression y Hairstyle.
+
+### Recursos V3
+- Nuevas categorías: `visuals/expressions.txt` y `visuals/hairstyles.txt`.
+- Lista técnica: `tech/upscalers.txt`.
+- Endpoints dedicados: `GET /resources/expressions`, `GET /resources/hairstyles`, `GET /resources/upscalers`.
+- Base de conocimiento enriquecida y deduplicada; disciplina `.env` para `RESOURCES_DIR`.
+
+### Lógica de Coherencia (IA)
+- Mejora del System Prompt de Groq: coherencia Outfit/Location.
+  - Ej.: Si `Location` es "dungeon", NO usar "bikini" salvo que se indique explícitamente; preferir "armor" o "rags".
+- Defaults inteligentes cuando falte información: `camera` → "front view"/"cowboy shot" según intensidad; `lighting` → "soft lighting".
+
+### Galería V3 (QC)
+- Preparación para integrar Vision AI (detección de artefactos y fallos).
+- Auto-Tagging para plataformas (DeviantArt, Pixiv) con mapeos consistentes.
+
+### Estado y Próximos Pasos
+- [ ] Implementar endpoints y archivos de recursos.
+- [ ] Extender `/planner/draft` con campos Expression/Hairstyle y coherencia IA.
+- [ ] UI Planner: selectores por Job y panel técnico por personaje.
+- [ ] Validar visualmente en Preview y registrar en `/docs/LEARNING_LOG.md`.

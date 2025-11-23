@@ -473,7 +473,7 @@ QUALITY_TAGS = (
 @app.get("/planner/resources")
 async def planner_resources():
     """Devuelve listas de recursos para planificación.
-    Incluye: outfits, poses, locations y además lighting (styles/lighting.txt) y camera (styles/camera.txt). También styles y concepts legacy.
+    Incluye: outfits, poses, locations y además lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (visuals/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). También styles y concepts legacy.
     """
     # Lectura desde ambas rutas para máxima compatibilidad
     outfits_top = _read_lines("outfits.txt")
@@ -488,6 +488,9 @@ async def planner_resources():
     concepts = _read_lines("concepts.txt")
     lighting = _read_lines("styles/lighting.txt")
     camera = _read_lines("styles/camera.txt")
+    expressions = _read_lines("visuals/expressions.txt")
+    hairstyles = _read_lines("visuals/hairstyles.txt")
+    upscalers = _read_lines("tech/upscalers.txt")
 
     # Unificar y deduplicar
     outfits = list(dict.fromkeys([x for x in (outfits_top + outfits_casual + outfits_lingerie + outfits_cosplay) if x and x.strip()]))
@@ -510,7 +513,25 @@ async def planner_resources():
         "camera": camera,
         "styles": styles,
         "concepts": concepts,
+        "expressions": expressions,
+        "hairstyles": hairstyles,
+        "upscalers": upscalers,
     }
+
+@app.get("/resources/expressions")
+async def resources_expressions():
+    items = _read_lines("visuals/expressions.txt")
+    return {"items": items}
+
+@app.get("/resources/hairstyles")
+async def resources_hairstyles():
+    items = _read_lines("visuals/hairstyles.txt")
+    return {"items": items}
+
+@app.get("/resources/upscalers")
+async def resources_upscalers():
+    items = _read_lines("tech/upscalers.txt")
+    return {"items": items}
 
 async def _get_atmospheres_for_character(character: str) -> List[str]:
     """Intenta obtener 3 descripciones cortas de atmósfera/iluminación vía Groq (70B)."""
@@ -574,6 +595,8 @@ async def planner_draft(payload: List[PlannerDraftItem]):
     outfits_cosplay = _read_lines("wardrobe/cosplay.txt")
     lighting = _read_lines("styles/lighting.txt")
     camera = _read_lines("styles/camera.txt")
+    expressions = _read_lines("visuals/expressions.txt")
+    hairstyles = _read_lines("visuals/hairstyles.txt")
 
     # Unificar outfits y aplicar fallbacks de emergencia
     all_outfits = list(dict.fromkeys([x for x in ([*outfits_casual, *outfits_lingerie, *outfits_cosplay]) if x and x.strip()]))
@@ -586,9 +609,13 @@ async def planner_draft(payload: List[PlannerDraftItem]):
     if not locations:
         locations = FALLBACK_LOCATIONS
     if not lighting:
-        lighting = ["studio lighting", "cinematic lighting"]
+        lighting = ["soft lighting"]
     if not camera:
-        camera = ["portrait shot", "full body shot"]
+        camera = ["front view", "cowboy shot"]
+    if not expressions:
+        expressions = ["smile", "blushing"]
+    if not hairstyles:
+        hairstyles = ["ponytail", "long hair"]
 
     # Filtro simple para SAFE (evitar poses más explícitas).
     banned = {"spread legs", "straddling", "all fours"}
@@ -711,6 +738,7 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             client = Groq(api_key=GROQ_API_KEY)
             system_prompt = (
                 "Eres un planificador de escenas para Stable Diffusion. Sugiere combinaciones coherentes de Outfit+Pose+Location para el personaje dado. "
+                "Asegura coherencia entre Location y Outfit: si Location es 'dungeon', Outfit NO puede ser 'bikini' salvo que se indique explícitamente; prefiere 'armor' o 'rags'. "
                 "Responde SOLO JSON con formato: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\"}] con exactamente 10 elementos."
             )
             user_prompt = (
@@ -787,6 +815,9 @@ async def planner_draft(payload: List[PlannerDraftItem]):
             o = _pick_outfit() if _bad_value(o_raw) or (o_raw.strip() == "") else o_raw.strip()
             p = _pick_pose() if _bad_value(p_raw) or (p_raw.strip() == "") else p_raw.strip()
             l = _pick_location() if _bad_value(l_raw) or (l_raw.strip() == "") else l_raw.strip()
+            # Coherencia básica: evitar bikini en dungeon
+            if "dungeon" in (l or "").lower() and "bikini" in (o or "").lower():
+                o = "armor" if "armor" in [x.lower() for x in all_outfits] else "rags"
             # Garantizar string seguro
             o = o or "casual clothes"
             p = p or "standing pose"
@@ -801,16 +832,20 @@ async def planner_draft(payload: List[PlannerDraftItem]):
         for i, base in enumerate(validated[:10]):
             intensity = "SAFE" if i < 3 else ("ECCHI" if i < 7 else "NSFW")
             rating = "rating_safe" if i < 3 else ("rating_questionable, cleavage" if i < 7 else "rating_explicit, nsfw, explicit")
-            lighting_choice = random.choice(lighting) if lighting else "studio lighting"
+            lighting_choice = random.choice(lighting) if lighting else "soft lighting"
             atmo_choice = random.choice(atmospheres) if atmospheres else ""
-            cam_choice = random.choice(camera) if camera else "portrait shot"
+            cam_choice = random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot")
+            expression_choice = random.choice(expressions) if expressions else "smile"
+            hairstyle_choice = random.choice(hairstyles) if hairstyles else "ponytail"
             quality_end = "masterpiece, best quality, absurdres"
-            # Prompt incluye cámara y estilo/atmósfera además del triplete base
+            # Prompt incluye cámara, expresión, peinado y estilo/atmósfera además del triplete base
             parts = [
                 lora_tag,
                 trigger,
                 cam_choice,
-                (lighting_choice or atmo_choice or "studio lighting"),
+                expression_choice,
+                hairstyle_choice,
+                (lighting_choice or atmo_choice or "soft lighting"),
                 rating,
                 base["outfit"],
                 base["pose"],
@@ -831,6 +866,8 @@ async def planner_draft(payload: List[PlannerDraftItem]):
                 "location": base["location"],
                 "lighting": lighting_choice or atmo_choice,
                 "camera": cam_choice,
+                "expression": expression_choice,
+                "hairstyle": hairstyle_choice,
             })
 
         # Enriquecimiento de contexto por personaje (Civitai)

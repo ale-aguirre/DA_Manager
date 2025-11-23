@@ -2,7 +2,7 @@
 import React from "react";
 import { Wand2, Trash2, RefreshCw, Play, Radar, Search, Cog, Camera, Sun, ChevronDown, ChevronUp } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
-import { magicFixPrompt, getPlannerResources, postPlannerAnalyze } from "../../lib/api";
+import { magicFixPrompt, getPlannerResources, postPlannerAnalyze, getReforgeCheckpoints, postReforgeSetCheckpoint } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import type { ResourceMeta } from "../../lib/api";
 
@@ -60,7 +60,7 @@ function rebuildPromptWithTriplet(original: string, nextTriplet: { outfit?: stri
 }
 
 // Heurística para extraer Lighting y Camera cuando existan en el prompt
-function extractExtras(prompt: string): { lighting?: string; camera?: string } {
+function extractExtras(prompt: string): { lighting?: string; camera?: string; expression?: string; hairstyle?: string } {
   const tokens = splitPrompt(prompt);
   const core: string[] = [];
   for (const t of tokens) {
@@ -82,6 +82,7 @@ function extractExtras(prompt: string): { lighting?: string; camera?: string } {
       "backlight",
       "backlit",
       "studio light",
+      "soft lighting",
     ].some((k) => low.includes(k));
   };
   const isCamera = (s: string) => {
@@ -99,19 +100,33 @@ function extractExtras(prompt: string): { lighting?: string; camera?: string } {
       "wide angle",
       "low angle",
       "high angle",
+      "front view",
+      "cowboy shot",
     ].some((k) => low.includes(k));
   };
+  const EXPRESSION_HINTS = [
+    "smile","blushing","angry","crying","ahegao","wink","shy","confident","surprised","determined","smug","pout","teary eyes","embarrassed","happy"
+  ];
+  const HAIRSTYLE_HINTS = [
+    "ponytail","twintails","bob cut","long hair","braid","side ponytail","messy hair","bun","short hair","wavy hair","curly hair","straight hair","half up","half down"
+  ];
+  const isExpression = (s: string) => EXPRESSION_HINTS.includes(s.toLowerCase());
+  const isHairstyle = (s: string) => HAIRSTYLE_HINTS.includes(s.toLowerCase());
   let lighting: string | undefined;
   let camera: string | undefined;
+  let expression: string | undefined;
+  let hairstyle: string | undefined;
   for (const t of scan) {
     if (!lighting && isLighting(t)) lighting = t;
     if (!camera && isCamera(t)) camera = t;
-    if (lighting && camera) break;
+    if (!expression && isExpression(t)) expression = t;
+    if (!hairstyle && isHairstyle(t)) hairstyle = t;
+    if (lighting && camera && expression && hairstyle) break;
   }
-  return { lighting, camera };
+  return { lighting, camera, expression, hairstyle };
 }
 
-function rebuildPromptWithExtras(original: string, extras: { lighting?: string; camera?: string }) {
+function rebuildPromptWithExtras(original: string, extras: { lighting?: string; camera?: string; expression?: string; hairstyle?: string }) {
   const tokens = splitPrompt(original);
   const core: string[] = [];
   const quality: string[] = [];
@@ -119,15 +134,25 @@ function rebuildPromptWithExtras(original: string, extras: { lighting?: string; 
     if (QUALITY_SET.has(t.toLowerCase())) quality.push(t);
     else core.push(t);
   }
+  const EXPRESSION_HINTS = [
+    "smile","blushing","angry","crying","ahegao","wink","shy","confident","surprised","determined","smug","pout","teary eyes","embarrassed","happy"
+  ];
+  const HAIRSTYLE_HINTS = [
+    "ponytail","twintails","bob cut","long hair","braid","side ponytail","messy hair","bun","short hair","wavy hair","curly hair","straight hair","half up","half down"
+  ];
   const tail = core.slice(-3);
   const head = core.slice(0, Math.max(0, core.length - 3)).filter((t) => {
     const low = t.toLowerCase();
-    const isLight = ["light","lighting","shadow","shadows","glow","ambient","rim light","neon","backlight","backlit","studio light"].some((k) => low.includes(k));
-    const isCam = ["angle","shot","lens","close-up","portrait","fov","zoom","fisheye","bokeh","wide angle","low angle","high angle"].some((k) => low.includes(k));
-    return !(isLight || isCam);
+    const isLight = ["light","lighting","shadow","shadows","glow","ambient","rim light","neon","backlight","backlit","studio light","soft lighting"].some((k) => low.includes(k));
+    const isCam = ["angle","shot","lens","close-up","portrait","fov","zoom","fisheye","bokeh","wide angle","low angle","high angle","front view","cowboy shot"].some((k) => low.includes(k));
+    const isExpr = EXPRESSION_HINTS.includes(low);
+    const isHair = HAIRSTYLE_HINTS.includes(low);
+    return !(isLight || isCam || isExpr || isHair);
   });
   const pre: string[] = [];
   if (extras.camera) pre.push(extras.camera);
+  if (extras.expression) pre.push(extras.expression);
+  if (extras.hairstyle) pre.push(extras.hairstyle);
   if (extras.lighting) pre.push(extras.lighting);
   const nextCore = [...pre, ...head, ...tail];
   return [...nextCore, ...quality].join(", ");
@@ -137,7 +162,7 @@ export default function PlannerView() {
   const [jobs, setJobs] = React.useState<PlannerJob[]>([]);
 const [loading, setLoading] = React.useState(false);
 const [error, setError] = React.useState<string | null>(null);
-const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[]; lighting?: string[]; camera?: string[] } | null>(null);
+const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[]; lighting?: string[]; camera?: string[]; expressions?: string[]; hairstyles?: string[]; upscalers?: string[] } | null>(null);
 const [selected, setSelected] = React.useState<Set<number>>(new Set());
 const [openEditor, setOpenEditor] = React.useState<{ row: number; field: "outfit" | "pose" | "location" } | null>(null);
 const [metaByCharacter, setMetaByCharacter] = React.useState<Record<string, { image_url?: string; trigger_words?: string[]; download_url?: string }>>({});
@@ -145,9 +170,10 @@ const router = useRouter();
 const [loreByCharacter, setLoreByCharacter] = React.useState<Record<string, string>>({});
 const [configOpen, setConfigOpen] = React.useState<Record<string, boolean>>({});
 const [configByCharacter, setConfigByCharacter] = React.useState<Record<string, { hiresFix: boolean; denoising: number; outputPath: string }>>({});
-const [techConfigByCharacter, setTechConfigByCharacter] = React.useState<Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number }>>({});
+const [techConfigByCharacter, setTechConfigByCharacter] = React.useState<Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string }>>({});
 const [plannerContext, setPlannerContext] = React.useState<Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, any> }> }>>({});
-const setTechConfig = (character: string | null, partial: Partial<{ steps: number; cfg: number; sampler: string; seed: number; hiresFix: boolean; upscaleBy: number }>) => {
+const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
+const setTechConfig = (character: string | null, partial: Partial<{ steps: number; cfg: number; sampler: string; seed: number; hiresFix: boolean; upscaleBy: number; upscaler: string; checkpoint: string }>) => {
   if (!character) return;
   setTechConfigByCharacter((prev) => ({ ...prev, [character]: { ...prev[character], ...partial } }));
 };
@@ -190,6 +216,18 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
         setResources(data);
       } catch (e) {
         console.warn("No se pudieron cargar recursos del planner:", e);
+      }
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    // Cargar checkpoints disponibles
+    (async () => {
+      try {
+        const cps = await getReforgeCheckpoints();
+        setCheckpoints(cps);
+      } catch (e) {
+        console.warn("No se pudieron cargar checkpoints:", e);
       }
     })();
   }, []);
@@ -513,7 +551,7 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
     setOpenEditor(null);
   };
 
-  const applyExtrasEdit = (row: number, field: "lighting" | "camera", value: string) => {
+  const applyExtrasEdit = (row: number, field: "lighting" | "camera" | "expression" | "hairstyle", value: string) => {
     const currentExtras = extractExtras(jobs[row].prompt);
     const nextExtras = { ...currentExtras, [field]: value || undefined };
     const next = rebuildPromptWithExtras(jobs[row].prompt, nextExtras);
@@ -745,6 +783,27 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                               <option value={2.0}>2.0x</option>
                             </select>
                           </div>
+                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
+                            <label className="text-xs text-slate-400">Denoising Strength <span className="ml-1 font-mono text-[11px] text-slate-300">{configByCharacter[activeCharacter]?.denoising ?? 0.35}</span></label>
+                            <input type="range" min={0} max={1} step={0.01} value={configByCharacter[activeCharacter]?.denoising ?? 0.35} onChange={(e) => setConfigByCharacter((prev) => { const next = { ...prev, [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: Number(e.target.value) } }; localStorage.setItem("planner_config", JSON.stringify(next)); return next; })} className="mt-2 w-full accent-blue-500" />
+                          </div>
+                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
+                            <label className="text-xs text-slate-400">Upscaler</label>
+                            <select value={techConfigByCharacter[activeCharacter]?.upscaler ?? ""} onChange={(e) => setTechConfig(activeCharacter, { upscaler: e.target.value })} className="mt-2 w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200">
+                              <option value="">(none)</option>
+                              {resources?.upscalers?.map((u) => (<option key={u} value={u}>{u}</option>))}
+                            </select>
+                          </div>
+                          <div className="rounded-md border border-slate-700 bg-slate-950 p-3">
+                            <label className="text-xs text-slate-400">Checkpoint</label>
+                            <div className="mt-2 flex gap-2">
+                              <select value={techConfigByCharacter[activeCharacter]?.checkpoint ?? ""} onChange={(e) => setTechConfig(activeCharacter, { checkpoint: e.target.value })} className="w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-slate-200">
+                                <option value="">(none)</option>
+                                {checkpoints.map((c) => (<option key={c} value={c}>{c}</option>))}
+                              </select>
+                              <button onClick={() => { const cp = techConfigByCharacter[activeCharacter]?.checkpoint; if (cp) { postReforgeSetCheckpoint(cp).then(() => alert("Checkpoint activado")); } }} className="rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-2 text-xs text-indigo-100 hover:bg-indigo-700/30">Activar</button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -833,6 +892,20 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                                 {resources && resources.camera?.map((it) => (<option key={it} value={it}>{it}</option>))}
                               </select>
                             </div>
+                            <div>
+                              <label className="text-xs text-slate-400">Expression</label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).expression || ""} onChange={(e) => applyExtrasEdit(idx, "expression", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.expressions?.map((it) => (<option key={it} value={it}>{it}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400">Hairstyle</label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).hairstyle || ""} onChange={(e) => applyExtrasEdit(idx, "hairstyle", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.hairstyles?.map((it) => (<option key={it} value={it}>{it}</option>))}
+                              </select>
+                            </div>
                           </div>
 
                           {/* Footer acciones */}
@@ -854,7 +927,7 @@ const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null
                           {/* Área Expandible */}
                           {showDetails.has(idx) && (
                             <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
-                              {job.prompt}
+                              <textarea value={job.prompt} onChange={(e) => updatePrompt(idx, e.target.value)} className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200" />
                             </div>
                           )}
                         </div>
