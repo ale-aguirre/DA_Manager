@@ -53,7 +53,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
     if (!iso) return "";
     try {
       const d = new Date(iso);
-      return d.toLocaleDateString("en-US", { day: "2-digit", month: "short" });
+      return d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" });
     } catch {
       return "";
     }
@@ -138,7 +138,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
         {/* Contenedor inferior: título, tags, estadísticas */}
         <div className="p-2 h-24 flex flex-col gap-1">
           {/* Fila 1: Título flexible (hasta 2 líneas) */}
-          <div className="h-10 text-sm leading-tight text-white line-clamp-2">{model.name}</div>
+          <div className="h-12 text-sm leading-tight text-white line-clamp-2">{model.name}</div>
           {/* Fila 2: Tags (máximo 2, con elipsis si no caben) */}
           <div className="flex items-center gap-1 overflow-hidden h-5">
             {model.tags?.slice(0, 2).map((tag) => (
@@ -154,7 +154,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
                 <span className="inline-flex items-center gap-1"><Download className="h-3 w-3" /><span>{formatCount(downloads)}</span></span>
                 <span className="inline-flex items-center gap-1"><Heart className="h-3 w-3" /><span>{formatCount(likes)}</span></span>
               </div>
-              {createdLabel && <span className="hidden xl:inline-flex items-center gap-1"><Calendar className="h-3 w-3" /><span>{createdLabel}</span></span>}
+              {createdLabel && <span className="hidden lg:inline-flex items-center gap-1 whitespace-nowrap"><Calendar className="h-3 w-3" /><span>{createdLabel}</span></span>}
             </div>
           </div>
         </div>

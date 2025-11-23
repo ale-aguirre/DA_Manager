@@ -36,3 +36,10 @@
 - Frontend: `ImageModal` con overlay de imagen, prompt usado, botón “🪄 Generar Info para DeviantArt”, inputs (Title/Description/Tags), “Copiar Todo” en formato `TITLE\n\nDESCRIPTION\n\nTAGS`, y borrado con confirmación nativa.
 - Persistencia: guarda metadatos en `localStorage` usando `marketing_meta::<filename>`; carga automática al abrir modal y escritura automática al editar o generar.
 - Objetivo de flujo: Generate → Inspect (IA Marketing) → Copy & Publish.
+
+## 🟡 Ideas Futuras — 2025-11-22
+- [ ] Sistema de Mascotas UI: integrar asistentes interactivos por área
+  - Hinata (Radar)
+  - Senku (Planner)
+  - Mei (Factory)
+- [ ] Favoritos: marcar LoRAs/Checkpoints como favoritos y permitir filtrado por favoritos en UI

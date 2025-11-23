@@ -1,0 +1,12 @@
+bedroom
+onsen
+dungeon
+spaceship
+classroom
+beach
+bathroom
+kitchen
+library
+rooftop
+alley
+forest

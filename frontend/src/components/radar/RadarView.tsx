@@ -143,6 +143,18 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     try {
       const res = await postPlannerDraft(payload);
       localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
+      // Nuevo: guardar contexto enriquecido por personaje
+      try {
+        const contextByCharacter: Record<string, any> = {};
+        for (const d of res.drafts || []) {
+          contextByCharacter[d.character] = {
+            base_prompt: d.base_prompt,
+            recommended_params: d.recommended_params,
+            reference_images: d.reference_images,
+          };
+        }
+        localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
+      } catch {}
       // Guardar metadatos para la Fábrica (modelId + downloadUrl)
       const meta = selectedModels.map((m) => {
         const versions = m.modelVersions || [];
@@ -153,7 +165,8 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
           if (url) break;
         }
-        return { modelId: m.id, downloadUrl: url, character_name: m.name };
+        const firstImage = (m.images || []).find((it: any) => it?.type === "image")?.url || m.images?.[0]?.url || undefined;
+        return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
       });
       localStorage.setItem("planner_meta", JSON.stringify(meta));
       router.push("/planner");

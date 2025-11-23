@@ -8,3 +8,27 @@ export interface PlannerJob {
   prompt: string;
   seed: number;
 }
+
+export interface RecommendedParams {
+  cfg: number;
+  steps: number;
+  sampler: string;
+}
+
+export interface ReferenceImage {
+  url: string;
+  meta: Record<string, any>;
+}
+
+export interface PlannerDraftEnriched {
+  character: string;
+  base_prompt: string;
+  recommended_params: RecommendedParams;
+  reference_images: ReferenceImage[];
+  jobs: PlannerJob[];
+}
+
+export interface PlannerDraftResponse {
+  jobs: PlannerJob[];
+  drafts: PlannerDraftEnriched[];
+}

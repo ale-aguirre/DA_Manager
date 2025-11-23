@@ -17,11 +17,45 @@ export interface FactoryStatus {
   last_image_url?: string | null;
   last_image_b64?: string | null;
   logs?: string[];
+  current_prompt?: string | null;
+  current_config?: {
+    steps?: number;
+    cfg?: number;
+    batch_size?: number;
+    hires_fix?: boolean;
+    hr_scale?: number;
+    seed?: number;
+    checkpoint?: string;
+  } | null;
 }
 
 const BASE_URL = "http://127.0.0.1:8000";
 
-export async function postPlannerDraft(items: PlannerDraftItem[]): Promise<{ jobs: PlannerJob[] }> {
+export interface RecommendedParams {
+  cfg: number;
+  steps: number;
+  sampler: string;
+}
+
+export interface ReferenceImage {
+  url: string;
+  meta: Record<string, any>;
+}
+
+export interface PlannerDraftEnriched {
+  character: string;
+  base_prompt: string;
+  recommended_params: RecommendedParams;
+  reference_images: ReferenceImage[];
+  jobs: PlannerJob[];
+}
+
+export interface PlannerDraftResponse {
+  jobs: PlannerJob[];
+  drafts: PlannerDraftEnriched[];
+}
+
+export async function postPlannerDraft(items: PlannerDraftItem[]): Promise<PlannerDraftResponse> {
   const res = await fetch(`${BASE_URL}/planner/draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -34,7 +68,7 @@ export async function postPlannerDraft(items: PlannerDraftItem[]): Promise<{ job
   return res.json();
 }
 
-export async function magicFixPrompt(prompt: string): Promise<{ prompt: string }> {
+export async function magicFixPrompt(prompt: string): Promise<{ outfit: string; pose: string; location: string }> {
   const res = await fetch(`${BASE_URL}/planner/magicfix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,6 +96,33 @@ export async function postPlannerExecute(jobs: PlannerJob[], resourcesMeta: Reso
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Planner execute failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+// Nuevo: ejecución v2 con configuración por personaje
+export interface GroupConfigItem {
+  character_name: string;
+  cfg_scale?: number;
+  steps?: number;
+  hires_fix?: boolean;
+  denoising_strength?: number;
+  output_path?: string;
+}
+
+export async function postPlannerExecuteV2(
+  jobs: PlannerJob[],
+  resourcesMeta: ResourceMeta[] = [],
+  groupConfig: GroupConfigItem[] = []
+): Promise<{ status: string; total_jobs: number; version: string }> {
+  const res = await fetch(`${BASE_URL}/planner/execute_v2`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobs, resources_meta: resourcesMeta, group_config: groupConfig }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Planner execute v2 failed (${res.status}): ${text}`);
   }
   return res.json();
 }
@@ -95,6 +156,19 @@ export async function getPlannerResources(): Promise<PlannerResources> {
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Planner resources failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function postPlannerAnalyze(character_name: string, tags: string[] = []): Promise<{ jobs: PlannerJob[]; lore?: string }> {
+  const res = await fetch(`${BASE_URL}/planner/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ character_name, tags }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Analyze failed (${res.status}): ${text}`);
   }
   return res.json();
 }

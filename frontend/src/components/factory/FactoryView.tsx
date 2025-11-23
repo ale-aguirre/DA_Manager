@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import { getFactoryStatus, postFactoryStop } from "../../lib/api";
-import { OctagonX, Square } from "lucide-react";
+import { OctagonX, Square, Eraser } from "lucide-react";
 
 export default function FactoryView() {
   const [isActive, setIsActive] = React.useState(false);
@@ -11,6 +11,8 @@ export default function FactoryView() {
   const [lastImage, setLastImage] = React.useState<string | null>(null);
   const [logs, setLogs] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
+  const [currentPrompt, setCurrentPrompt] = React.useState<string | null>(null);
+  const [currentConfig, setCurrentConfig] = React.useState<any | null>(null);
 
   React.useEffect(() => {
     let mounted = true;
@@ -25,6 +27,8 @@ export default function FactoryView() {
         setCharacter(status.current_character || null);
         setLastImage(status.last_image_b64 || null);
         setLogs(status.logs || []);
+        setCurrentPrompt(status.current_prompt || null);
+        setCurrentConfig(status.current_config || null);
       } catch (e: any) {
         if (!mounted) return;
         setError(e?.message || "Error consultando estado de Fábrica");
@@ -47,6 +51,8 @@ export default function FactoryView() {
       setError(e?.message || "Error al solicitar parada");
     }
   };
+
+  const clearLogs = () => { setLogs([]); };
 
   const severityColor = (line: string) => {
     const s = (line || "").toLowerCase();
@@ -87,6 +93,24 @@ export default function FactoryView() {
         <div className="mt-2 text-xs text-zinc-400">
           {character ? `Objetivo actual: ${character}` : ""}
         </div>
+        {/* Prompt y Configuración debajo de la barra de progreso */}
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="text-xs text-zinc-400">
+            <div className="font-medium text-zinc-300">Prompt enviado</div>
+            <pre className="mt-1 whitespace-pre-wrap break-words">{currentPrompt || "—"}</pre>
+          </div>
+          <div className="text-xs text-zinc-400">
+            <div className="font-medium text-zinc-300">Configuración</div>
+            <ul className="mt-1 space-y-1">
+              <li>Steps: {currentConfig?.steps ?? "—"}</li>
+              <li>CFG: {currentConfig?.cfg ?? "—"}</li>
+              <li>Batch Size: {currentConfig?.batch_size ?? "—"}</li>
+              <li>Hires Fix: {currentConfig?.hires_fix ? `ON (x${currentConfig?.hr_scale ?? ""})` : "OFF"}</li>
+              <li>Seed: {currentConfig?.seed ?? "—"}</li>
+              <li>Checkpoint: {currentConfig?.checkpoint ?? "—"}</li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       {/* Visor en vivo */}
@@ -105,7 +129,17 @@ export default function FactoryView() {
 
         {/* Consola de logs */}
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-          <h2 className="text-sm font-medium mb-3">Consola</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium">Consola</h2>
+            <button
+              onClick={clearLogs}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/40 px-2 py-1 text-xs text-zinc-200 hover:bg-slate-800/60 cursor-pointer transition-all active:scale-95"
+              title="Limpiar consola"
+            >
+              <Eraser className="h-4 w-4" aria-hidden />
+              Limpiar
+            </button>
+          </div>
           <div className="h-[420px] w-full rounded-lg border border-slate-800 bg-slate-900 overflow-auto p-3 text-xs font-mono text-zinc-300">
             {logs && logs.length > 0 ? (
               <ul className="space-y-1">

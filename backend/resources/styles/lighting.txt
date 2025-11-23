@@ -1,0 +1,12 @@
+cinematic lighting
+volumetric lighting
+rim lighting
+backlighting
+bioluminescence
+neon lighting
+soft lighting
+hard lighting
+chiaroscuro
+moonlight
+sunlight rays
+studio lighting
