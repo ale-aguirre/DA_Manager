@@ -41,8 +41,9 @@ export default function ProcessView({ rawItems }: ProcessViewProps) {
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
       setResult(data as AIOutput);
-    } catch (e: any) {
-      setError(e?.message ?? "Error desconocido");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg ?? "Error desconocido");
     } finally {
       setProcessing(false);
     }
@@ -59,8 +60,9 @@ export default function ProcessView({ rawItems }: ProcessViewProps) {
       if (!res.ok) throw new Error(`Error al guardar: ${res.status}`);
       await res.json();
       alert("Guardado en ReForge exitoso.");
-    } catch (e: any) {
-      alert(e?.message ?? "Error desconocido al guardar");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(msg ?? "Error desconocido al guardar");
     }
   };
 

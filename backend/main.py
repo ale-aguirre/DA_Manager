@@ -271,7 +271,7 @@ async def get_gallery(page: int = 1, limit: int = 100, character: Optional[str] 
         raise HTTPException(status_code=500, detail=f"Error escaneando galería: {e}")
 
 @app.get("/scan/civitai")
-async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated"):
+async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated", query: Optional[str] = None):
     """Escanea modelos de Civitai usando cloudscraper.
     Devuelve una lista con los campos necesarios para el Radar:
     id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
@@ -292,11 +292,20 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
     }
     civitai_sort = sort_map.get(sort, "Highest Rated")
     civitai_period = period_map.get(period, "Week")
-    params = {
+    q = (query or "").strip()
+    use_query = bool(q and len(q) >= 3)
+    params_trend = {
         "types": "LORA",
         "sort": civitai_sort,
         "period": civitai_period,
         "page": page,
+        "limit": 100,
+        "nsfw": "true",
+        "include": "tags",
+    }
+    params_search = {
+        "types": "LORA",
+        "query": q,
         "limit": 100,
         "nsfw": "true",
         "include": "tags",
@@ -312,12 +321,24 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         return "video" if u.endswith((".mp4", ".webm")) else "image"
 
     try:
-        def fetch():
-            resp = scraper.get(url, params=params, timeout=20)
-            resp.raise_for_status()
-            return resp.json()
-
-        data = await asyncio.to_thread(fetch)
+        data = None
+        try:
+            def do_req():
+                p = params_search if use_query else params_trend
+                resp = scraper.get(url, params=p, timeout=20)
+                if getattr(resp, "status_code", 0) != 200:
+                    raise RuntimeError(f"HTTP {getattr(resp, 'status_code', None)}")
+                return resp.json()
+            data = await asyncio.to_thread(do_req)
+        except Exception as e:
+            code = None
+            try:
+                code = getattr(e, "response", None)
+                code = getattr(code, "status_code", None)
+            except Exception:
+                code = None
+            print(f"[ERROR] Búsqueda fallida para '{q or ''}': {code}")
+            return JSONResponse(content=[])
         items = data.get("items", [])
         if not isinstance(items, list):
             raise HTTPException(status_code=502, detail="Respuesta inválida de Civitai: 'items' no es lista.")
@@ -378,26 +399,36 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
 
         normalized = [normalize_item(it) for it in items if isinstance(it, dict)]
 
-        # Fallback de página: si hay menos de 12 elementos, solicitar página 2 y completar hasta 12
-        if len(normalized) < 12:
-            params2 = dict(params)
-            params2["page"] = page + 1
-            def fetch2():
-                resp = scraper.get(url, params=params2, timeout=20)
-                resp.raise_for_status()
-                return resp.json()
-            data2 = await asyncio.to_thread(fetch2)
-            items2 = data2.get("items", [])
-            normalized2 = [normalize_item(it) for it in items2 if isinstance(it, dict)]
-            seen_ids = set()
-            merged = []
-            for it in (normalized + normalized2):
-                _id = it.get("id")
-                if _id in seen_ids:
-                    continue
-                seen_ids.add(_id)
-                merged.append(it)
-            normalized = merged
+        def is_non_anime(it: dict) -> bool:
+            tags = [(t or "").lower() for t in (it.get("tags") or [])]
+            name = (it.get("name") or "").lower()
+            bad = {"photorealistic", "photo", "realistic", "cosplay", "3d", "3d render", "render", "hyperreal", "live action"}
+            if any(any(b in t for b in bad) for t in tags):
+                return True
+            return any(b in name for b in bad)
+
+        normalized = [it for it in normalized if not is_non_anime(it)]
+
+        if not use_query:
+            if len(normalized) < 12:
+                params2 = dict(params_trend)
+                params2["page"] = page + 1
+                def fetch2():
+                    resp = scraper.get(url, params=params2, timeout=20)
+                    resp.raise_for_status()
+                    return resp.json()
+                data2 = await asyncio.to_thread(fetch2)
+                items2 = data2.get("items", [])
+                normalized2 = [normalize_item(it) for it in items2 if isinstance(it, dict)]
+                seen_ids = set()
+                merged = []
+                for it in (normalized + normalized2):
+                    _id = it.get("id")
+                    if _id in seen_ids:
+                        continue
+                    seen_ids.add(_id)
+                    merged.append(it)
+                normalized = merged
 
         # Clasificación IA (Groq) de categorías: Character, Pose, Clothing, Style, Concept
         classified = normalized
@@ -428,6 +459,10 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
                     "Analyze this JSON list of Civitai models.\n"
                     "Return a JSON object where keys are Model IDs and values are their CATEGORY.\n"
                     "Categories must be strictly: 'Character', 'Pose', 'Clothing', 'Style', 'Concept'.\n\n"
+                    "Strict Anime-only policy:\n"
+                    "- Discard any item that looks Photorealistic, Cosplay, or 3D Render.\n"
+                    "- Prioritize 2D Anime/Manga style aesthetics.\n"
+                    "- Ignore non-anime items even if they fit a category.\n\n"
                     "Rules:\n"
                     "- If it's a specific named Anime Girl -> 'Character'.\n"
                     "- If it's a pose or action -> 'Pose'.\n"

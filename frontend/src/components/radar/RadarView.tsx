@@ -1,106 +1,18 @@
 "use client";
 import React from "react";
-import { Scan, Loader2, Send, Trash2, ListX, X, Save } from "lucide-react";
+import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft, postDownloadLora, postDownloadCheckpoint } from "../../lib/api";
+import { postPlannerDraft } from "../../lib/api";
 import { useRouter } from "next/navigation";
+import COPY from "../../lib/copy";
 
-function ManualDownloadView() {
-  const [url, setUrl] = React.useState("");
-  const [filename, setFilename] = React.useState("");
-  const [type, setType] = React.useState<"LoRA" | "Checkpoint">("LoRA");
-  const [loading, setLoading] = React.useState(false);
-  const [status, setStatus] = React.useState<{ type: "success" | "error"; msg: string } | null>(null);
-
-  const handleDownload = async () => {
-    if (!url) return;
-    setLoading(true);
-    setStatus(null);
-    try {
-      if (type === "LoRA") {
-        await postDownloadLora(url, filename || undefined);
-      } else {
-        await postDownloadCheckpoint(url, filename || undefined);
-      }
-      setStatus({ type: "success", msg: "Descarga completada correctamente." });
-      setUrl("");
-      setFilename("");
-    } catch (e: any) {
-      setStatus({ type: "error", msg: e.message || "Error en descarga" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="mx-auto max-w-xl rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h3 className="mb-4 text-lg font-medium text-zinc-200">Descarga Manual</h3>
-      <div className="space-y-4">
-        <div>
-          <label className="mb-1 block text-xs text-zinc-400">Tipo de Recurso</label>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-              <input type="radio" name="dtype" checked={type === "LoRA"} onChange={() => setType("LoRA")} className="accent-violet-500" />
-              LoRA (.safetensors)
-            </label>
-            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-              <input type="radio" name="dtype" checked={type === "Checkpoint"} onChange={() => setType("Checkpoint")} className="accent-violet-500" />
-              Checkpoint (SDXL/SD1.5)
-            </label>
-          </div>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-zinc-400">URL de Descarga (Civitai/HuggingFace)</label>
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://civitai.com/api/download/models/..."
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-zinc-400">Nombre de Archivo (Opcional)</label>
-          <input
-            type="text"
-            value={filename}
-            onChange={(e) => setFilename(e.target.value)}
-            placeholder="ej: mi_modelo_v1"
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none"
-          />
-          <p className="mt-1 text-[10px] text-zinc-500">Si se deja vacío, se intentará deducir o usar un nombre genérico.</p>
-        </div>
-
-        {status && (
-          <div className={`rounded-lg p-3 text-xs ${status.type === "success" ? "bg-green-900/30 text-green-300 border border-green-800" : "bg-red-900/30 text-red-300 border border-red-800"}`}>
-            {status.msg}
-          </div>
-        )}
-
-        <button
-          onClick={handleDownload}
-          disabled={loading || !url}
-          className="w-full rounded-lg bg-violet-600 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> Descargando...
-            </span>
-          ) : (
-            "Iniciar Descarga"
-          )}
-        </button>
-      </div>
-    </div>
-  );
-}
 
 export interface RadarViewProps {
   items: CivitaiModel[];
   loading: boolean;
   error: string | null;
-  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads") => void;
+  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string) => void;
 }
 
 function SkeletonCard() {
@@ -128,7 +40,8 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [showBlacklist, setShowBlacklist] = React.useState(false);
   const [blacklist, setBlacklist] = React.useState<string[]>([]);
   const [blacklistInput, setBlacklistInput] = React.useState("");
-  const [showManual, setShowManual] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const lastFiredRef = React.useRef<string>("");
 
   React.useEffect(() => {
     try {
@@ -169,6 +82,17 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     setBlacklistInput((prev) => parseInputToList(prev).filter((t) => t !== tag.toLowerCase()).join(", "));
   };
 
+  React.useEffect(() => {
+    const h = setTimeout(() => {
+      const q = query.trim();
+      if (q.length >= 3 && q !== lastFiredRef.current) {
+        onScan(period, sort, q);
+        lastFiredRef.current = q;
+      }
+    }, 800);
+    return () => clearTimeout(h);
+  }, [query, onScan, period, sort]);
+
   const toggleSelect = (id: number) => {
     const m = items.find((x) => x.id === id);
     if (!m) return;
@@ -206,15 +130,22 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       return items.filter((m) => matchers[tab](m));
     })();
     if (blacklist.length === 0) return byTab;
-    const blocked = new Set(blacklist.map((t) => t.toLowerCase()));
-    const hasBlocked = (m: CivitaiModel) => {
-      const tags = (m.tags || []).map((t) => t.toLowerCase());
-      for (const t of tags) {
-        if (blocked.has(t)) return true;
+    const rules = blacklist.map((entry) => {
+      const [rawTag, rawCat] = entry.split(":");
+      return { tag: (rawTag || "").trim().toLowerCase(), cat: (rawCat || "").trim().toLowerCase() || null };
+    }).filter((r) => r.tag.length > 0);
+
+    const isBlocked = (m: CivitaiModel) => {
+      const tags = (m.tags || []).map((t) => (t || "").toLowerCase());
+      const cat = (m.ai_category || "").toLowerCase();
+      for (const r of rules) {
+        if (tags.includes(r.tag)) {
+          if (!r.cat || r.cat === cat) return true;
+        }
       }
       return false;
     };
-    return byTab.filter((m) => !hasBlocked(m));
+    return byTab.filter((m) => !isBlocked(m));
   }, [items, tab, blacklist]);
 
   const deriveTriggerWords = (m: CivitaiModel): string[] => {
@@ -247,7 +178,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
       // Nuevo: guardar contexto enriquecido por personaje
       try {
-        const contextByCharacter: Record<string, any> = {};
+        const contextByCharacter: Record<string, unknown> = {};
         for (const d of res.drafts || []) {
           contextByCharacter[d.character] = {
             base_prompt: d.base_prompt,
@@ -267,14 +198,15 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
           if (url) break;
         }
-        const firstImage = (m.images || []).find((it: any) => it?.type === "image")?.url || m.images?.[0]?.url || undefined;
+        const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
         return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
       });
       localStorage.setItem("planner_meta", JSON.stringify(meta));
       router.push("/planner");
-    } catch (e) {
-      console.error("Failed to draft planner", e);
-      alert("Error al generar plan: " + (e as any)?.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Failed to draft planner", msg);
+      alert("Error al generar plan: " + msg);
     }
   };
 
@@ -288,7 +220,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           <label className="text-xs text-zinc-300">Periodo</label>
           <select
             value={period}
-            onChange={(e) => setPeriod(e.target.value as any)}
+            onChange={(e) => setPeriod(e.target.value as "Day" | "Week" | "Month")}
             className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1 text-xs text-zinc-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-700"
           >
             <option value="Day">Day</option>
@@ -298,7 +230,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           <label className="text-xs text-zinc-300">Sort</label>
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as any)}
+            onChange={(e) => setSort(e.target.value as "Rating" | "Downloads")}
             className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1 text-xs text-zinc-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-700"
           >
             <option value="Rating">Rating</option>
@@ -306,8 +238,24 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" aria-hidden />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={COPY.radar.searchPlaceholder}
+              className="w-[220px] rounded-lg border border-slate-800 bg-slate-900 pl-8 pr-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-slate-700"
+            />
+          </div>
           <button
-            onClick={() => onScan(period, sort)}
+            onClick={() => {
+              const q = query.trim();
+              if (q.length >= 3) {
+                onScan(period, sort, q);
+                lastFiredRef.current = q;
+              }
+            }}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-600/30 hover:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-600 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
           >
@@ -316,14 +264,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             ) : (
               <Scan className="h-4 w-4" aria-hidden />
             )}
-            {loading ? "Escaneando..." : "Escanear Tendencias"}
-          </button>
-          <button
-            onClick={() => setShowManual(true)}
-            className="inline-flex items-center gap-2 rounded-lg border border-blue-600 bg-blue-600/20 px-3 py-2 text-sm text-blue-100 hover:bg-blue-600/30 hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-600 cursor-pointer transition-all active:scale-95"
-          >
-            <Send className="h-4 w-4" />
-            Descarga Manual
+            {loading ? "Escaneando..." : "Buscar / Escanear"}
           </button>
           <button
             onClick={openBlacklist}
@@ -335,18 +276,6 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
         </div>
       </div>
       {error && <p className="-mt-4 mb-4 text-xs text-red-400">{error}</p>}
-
-      {/* Modal Manual Download */}
-      {showManual && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
-          <div className="w-[92vw] max-w-xl relative">
-            <button onClick={() => setShowManual(false)} className="absolute -top-10 right-0 text-zinc-400 hover:text-white">
-              <X className="h-6 w-6" />
-            </button>
-            <ManualDownloadView />
-          </div>
-        </div>
-      )}
 
       {/* Modal Blacklist */}
       {showBlacklist && (
@@ -389,10 +318,10 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
       {/* Tabs de categoría */}
       <div className="mb-4 flex flex-wrap gap-2">
-        {[("Todo"), ("Personajes"), ("Poses/Ropa"), ("Estilo"), ("Conceptos/Otros")].map((t) => (
+        {(["Todo", "Personajes", "Poses/Ropa", "Estilo", "Conceptos/Otros"] as Array<"Todo" | "Personajes" | "Poses/Ropa" | "Estilo" | "Conceptos/Otros">).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t as any)}
+            onClick={() => setTab(t)}
             className={`inline-flex items-center rounded-full border px-3 py-1 text-xs cursor-pointer transition-all active:scale-95 ${tab === t
               ? "border-violet-500 bg-violet-500/20 text-violet-200"
               : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
@@ -406,7 +335,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       {/* Estado vacío si no hay datos y no está cargando */}
       {!loading && items.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-sm text-zinc-300">
-          Sin datos. Pulsa Escanear.
+          {query.trim().length >= 3 ? `No se encontraron resultados para '${query.trim()}'` : "Sin datos. Pulsa Escanear."}
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 w-full">

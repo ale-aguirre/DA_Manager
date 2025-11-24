@@ -88,8 +88,9 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
           localStorage.setItem(key, JSON.stringify(payload));
         }
       } catch (_) {}
-    } catch (e: any) {
-      setError(e?.message || "Error generando metadata");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error generando metadata");
     } finally {
       setLoading(false);
     }
@@ -102,7 +103,7 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
+    } catch {
       setError("No se pudo copiar al portapapeles");
     }
   };
@@ -123,8 +124,9 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
         throw new Error(msg || `HTTP ${res.status}`);
       }
       onDeleted();
-    } catch (e: any) {
-      setError(e?.message || "Error al borrar la imagen");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error al borrar la imagen");
     }
   };
 

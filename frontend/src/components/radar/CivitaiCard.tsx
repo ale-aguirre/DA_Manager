@@ -11,8 +11,11 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
   selected?: boolean;
   onToggle?: (modelId: number) => void;
 }) {
-  const [mediaError, setMediaError] = React.useState(false);
+  const [videoError, setVideoError] = React.useState(false);
+  const [imageError, setImageError] = React.useState(false);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const hoverRef = React.useRef(false);
+  const playPromiseRef = React.useRef<Promise<void> | null>(null);
 
   const primaryImage: CivitaiImage | undefined = model.images?.[0];
   const imageUrl = primaryImage?.url;
@@ -33,15 +36,41 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
   const civitaiUrl = `https://civitai.com/models/${model.id}`;
 
   const handleMouseEnter = () => {
-    if (videoRef.current) {
-      try { videoRef.current.play(); } catch {}
+    hoverRef.current = true;
+    const v = videoRef.current;
+    if (v) {
+      const p = v.play();
+      playPromiseRef.current = p as Promise<void> | null;
+      if (p) {
+        (p as Promise<void>).catch(() => {});
+      }
     }
   };
   const handleMouseLeave = () => {
-    if (videoRef.current) {
-      try { videoRef.current.pause(); } catch {}
+    hoverRef.current = false;
+    const v = videoRef.current;
+    const p = playPromiseRef.current;
+    if (v) {
+      if (p) {
+        (p as Promise<void>).then(() => {
+          if (!hoverRef.current) {
+            try { v.pause(); } catch {}
+          }
+        }).catch(() => {});
+      } else {
+        try { v.pause(); } catch {}
+      }
     }
   };
+
+  React.useEffect(() => {
+    const videoEl = videoRef.current;
+    return () => {
+      if (videoEl) {
+        try { videoEl.pause(); } catch {}
+      }
+    };
+  }, []);
 
   const formatCount = (n?: number) => {
     const v = typeof n === "number" ? n : 0;
@@ -67,7 +96,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
     <div
       className={`group relative cursor-pointer rounded-xl p-[4px] ${selected ? "ring-1 ring-pink-500" : ""} ${wrapperBorderClass} ${neonClass}`}
       onClick={() => onToggle?.(model.id)}
-      style={isTop3 ? ({ ["--spin" as any]: "8s" } as React.CSSProperties) : undefined}
+      style={isTop3 ? (({ ["--spin"]: "8s" } as unknown as React.CSSProperties)) : undefined}
       aria-selected={!!selected}
     >
       <div
@@ -82,29 +111,27 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
 
         {/* Media */}
         <div className="relative aspect-[2/3] w-full overflow-hidden rounded-t-xl">
-          {imageUrl && !mediaError ? (
-            isVideo ? (
-              <video
-                ref={videoRef}
-                className={`h-full w-full object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
-                src={imageUrl}
-                muted
-                playsInline
-                loop
-                preload="metadata"
-                onError={() => setMediaError(true)}
-              />
-            ) : (
-              <Image
-                src={imageUrl}
-                alt={model.name || "Civitai preview"}
-                fill
-                className={`object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
-                sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
-                priority={index <= 8}
-                onError={() => setMediaError(true)}
-              />
-            )
+          {isVideo && !videoError && imageUrl ? (
+            <video
+              ref={videoRef}
+              className={`h-full w-full object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
+              src={imageUrl}
+              muted={true}
+              playsInline
+              loop
+              preload="metadata"
+              onError={() => setVideoError(true)}
+            />
+          ) : imageUrl && !imageError ? (
+            <Image
+              src={imageUrl}
+              alt={model.name || "Civitai preview"}
+              fill
+              className={`object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
+              sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
+              priority={index <= 8}
+              onError={() => setImageError(true)}
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-slate-800">
               <div className="flex items-center gap-2 text-zinc-400">

@@ -175,7 +175,7 @@ export default function PlannerView() {
   const [configOpen, setConfigOpen] = React.useState<Record<string, boolean>>({});
   const [configByCharacter, setConfigByCharacter] = React.useState<Record<string, { hiresFix: boolean; denoising: number; outputPath: string }>>({});
   const [techConfigByCharacter, setTechConfigByCharacter] = React.useState<Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string; extraLoras?: string[]; hiresSteps?: number; batch_size?: number; batch_count?: number; adetailer?: boolean; vae?: string; clipSkip?: number; negativePrompt?: string }>>({});
-  const [plannerContext, setPlannerContext] = React.useState<Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, any> }> }>>({});
+  const [plannerContext, setPlannerContext] = React.useState<Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> }>>({});
   const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
   const [localLoras, setLocalLoras] = React.useState<string[]>([]);
   const [vaes, setVaes] = React.useState<string[]>([]);
@@ -214,7 +214,7 @@ export default function PlannerView() {
   React.useEffect(() => {
     if (!activeCharacter) return;
     const tech = techConfigByCharacter[activeCharacter] || {};
-    let preset: any = null;
+    let preset: Record<string, unknown> | null = null;
     try {
       const raw = localStorage.getItem("planner_preset_global");
       if (raw) preset = JSON.parse(raw);
@@ -270,7 +270,7 @@ export default function PlannerView() {
     try {
       const rawTech = localStorage.getItem("planner_tech");
       if (!rawTech) return;
-      const parsed = JSON.parse(rawTech) as Record<string, any>;
+      const parsed = JSON.parse(rawTech) as Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string; extraLoras?: string[]; hiresSteps?: number; batch_size?: number; batch_count?: number; adetailer?: boolean; vae?: string; clipSkip?: number; negativePrompt?: string }>;
       if (parsed && typeof parsed === "object") {
         setTechConfigByCharacter(parsed);
       }
@@ -368,15 +368,16 @@ export default function PlannerView() {
     try {
       const rawMeta = localStorage.getItem("planner_meta");
       if (!rawMeta) return;
-      const parsed = JSON.parse(rawMeta) as any[];
+      const parsed = JSON.parse(rawMeta) as unknown[];
       const map: Record<string, { image_url?: string; trigger_words?: string[]; download_url?: string }> = {};
-      parsed.forEach((m: any) => {
-        const key = m.character_name || m.name;
+      parsed.forEach((m) => {
+        const obj = m as { character_name?: string; name?: string; image_url?: string; trigger_words?: string[]; download_url?: string; downloadUrl?: string };
+        const key = obj.character_name || obj.name;
         if (!key) return;
         map[key] = {
-          image_url: m.image_url,
-          trigger_words: m.trigger_words,
-          download_url: m.download_url || m.downloadUrl,
+          image_url: obj.image_url,
+          trigger_words: obj.trigger_words,
+          download_url: obj.download_url || obj.downloadUrl,
         };
       });
       setMetaByCharacter(map);
@@ -390,7 +391,7 @@ export default function PlannerView() {
     try {
       const rawCtx = localStorage.getItem("planner_context");
       if (!rawCtx) return;
-      const parsed = JSON.parse(rawCtx) as Record<string, any>;
+      const parsed = JSON.parse(rawCtx) as Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> }>;
       setPlannerContext(parsed || {});
     } catch (e) {
       console.warn("planner_context inválido o ausente", e);
@@ -457,7 +458,7 @@ export default function PlannerView() {
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const p = Math.max(0, Math.min(1, x / rect.width));
-      let raw = min + p * (max - min);
+      const raw = min + p * (max - min);
       // Ajuste por step (soporta decimales)
       const scaled = Math.round(raw / step) * step;
       const fixed = Number(scaled.toFixed(2));
@@ -513,8 +514,9 @@ export default function PlannerView() {
         });
       }
       setSelected(new Set());
-    } catch (e: any) {
-      setError(e?.message || "Error al analizar lore");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error al analizar lore");
     } finally {
       setLoading(false);
     }
@@ -552,12 +554,14 @@ export default function PlannerView() {
       try {
         const rawMeta = localStorage.getItem("planner_meta");
         if (rawMeta) {
-          const parsed = JSON.parse(rawMeta) as any[];
-          resourcesMeta = parsed.map((m: any) => ({
-            character_name: m.character_name || m.name || "",
-            download_url: m.download_url || m.downloadUrl || undefined,
-            filename: m.filename || (m.character_name || m.name || "").toLowerCase().replace(/\s+/g, "_"),
-          }));
+          const parsed = JSON.parse(rawMeta) as unknown[];
+          resourcesMeta = parsed.map((m) => {
+            const obj = m as { character_name?: string; name?: string; download_url?: string; downloadUrl?: string; filename?: string };
+            const character = obj.character_name || obj.name || "";
+            const download = obj.download_url || obj.downloadUrl || undefined;
+            const filename = obj.filename || character.toLowerCase().replace(/\s+/g, "_");
+            return { character_name: character, download_url: download, filename };
+          });
           // Sanitización: no enviar entradas sin character_name o sin download_url
           resourcesMeta = resourcesMeta.filter((m) =>
             typeof m.character_name === "string" && m.character_name.trim().length > 0 &&
@@ -568,15 +572,15 @@ export default function PlannerView() {
         console.warn("planner_meta inválido o ausente", e);
       }
       // Asegurar que outfit/pose/location no estén vacíos, prefijar Prompt Base y aplicar seed/negative desde panel técnico
-      const preparedJobs = jobs.map((j) => {
+      const preparedJobs: PlannerJob[] = jobs.map((j) => {
         const tech = techConfigByCharacter[j.character_name];
         const base = plannerContext[j.character_name]?.base_prompt || "";
         const bodyPrompt = ensureTriplet(j.prompt);
         const finalPrompt = base && base.trim().length > 0 ? `${base.trim()}, ${bodyPrompt}` : bodyPrompt;
-        return { ...j, prompt: finalPrompt, seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1), negative_prompt: tech?.negativePrompt } as any;
+        return { ...j, prompt: finalPrompt, seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1), negative_prompt: tech?.negativePrompt };
       });
       // Construir group_config por personaje desde Config Avanzada, recomendado y panel técnico
-      const groupConfig = Object.keys(perCharacter).map((character) => {
+      const groupConfig: import("../../lib/api").GroupConfigItem[] = Object.keys(perCharacter).map((character) => {
         const conf = configByCharacter[character] ?? { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${character}/` };
         const rec = plannerContext[character]?.recommended_params;
         const tech = techConfigByCharacter[character] || {};
@@ -597,7 +601,7 @@ export default function PlannerView() {
           adetailer: tech.adetailer ?? true,
           vae: tech.vae,
           clip_skip: tech.clipSkip,
-        } as any;
+        };
       });
       try {
         const { postPlannerExecuteV2 } = await import("../../lib/api");
@@ -607,8 +611,9 @@ export default function PlannerView() {
         throw err;
       }
       router.push("/factory");
-    } catch (e: any) {
-      setError(e?.message || "Error iniciando producción");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error iniciando producción");
     } finally {
       setLoading(false);
     }
@@ -761,7 +766,7 @@ export default function PlannerView() {
     });
   };
 
-  const copyParams = async (meta: Record<string, any>) => {
+  const copyParams = async (meta: Record<string, unknown>) => {
     try {
       const lines = [
         meta?.Prompt ? `Prompt: ${meta.Prompt}` : meta?.prompt ? `Prompt: ${meta.prompt}` : undefined,
@@ -779,7 +784,7 @@ export default function PlannerView() {
     }
   };
 
-  const cloneStyle = (character: string, meta: Record<string, any>) => {
+  const cloneStyle = (character: string, meta: Record<string, unknown>) => {
     const base = plannerContext[character]?.base_prompt || jobs.find((j) => j.character_name === character)?.prompt || "";
     const extras = extractExtras((meta?.prompt as string) || (meta?.Prompt as string) || "");
     // Elegir outfit/pose/location aleatoriamente
@@ -1176,7 +1181,7 @@ export default function PlannerView() {
                           </div>
                           {/* Zona Centro: Selector Intensidad (no colapsa) */}
                           <div className="flex items-center">
-                            <select value={intensity.label} onClick={(e) => e.stopPropagation()} onChange={(e) => setIntensity(idx, e.target.value as any)} className={`rounded px-2 py-0.5 text-xs text-white ${intensity.className.replace("/30", "")}`}>
+                            <select value={intensity.label} onClick={(e) => e.stopPropagation()} onChange={(e) => setIntensity(idx, e.target.value as "Safe" | "Ecchi" | "NSFW")} className={`rounded px-2 py-0.5 text-xs text-white ${intensity.className.replace("/30", "")}`}>
                               <option value="Safe">Safe</option>
                               <option value="Ecchi">Ecchi</option>
                               <option value="NSFW">NSFW</option>

@@ -1,9 +1,8 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 interface CheckpointsResponse { titles: string[] }
 
-interface DreamRequest { character: string; tags?: string }
 
 interface GenerateRequest { prompt?: string; batch_size?: number; cfg_scale?: number }
 
@@ -55,8 +54,9 @@ export default function StudioView() {
         return (data?.titles ?? [])[0] || "";
       });
       setReforgeWarning(false);
-    } catch (e: any) {
-      console.error("Error cargando checkpoints:", e?.message ?? e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Error cargando checkpoints:", msg);
       setReforgeWarning(true);
     }
   }, [baseUrl]);
@@ -80,8 +80,9 @@ export default function StudioView() {
       }
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       // opcionalmente mostrar feedback
-    } catch (e: any) {
-      console.error("Error cambiando checkpoint:", e?.message ?? e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Error cambiando checkpoint:", msg);
     } finally {
       setLoading(false);
     }
@@ -103,8 +104,9 @@ export default function StudioView() {
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const text = await res.text();
       setPrompt(text);
-    } catch (e: any) {
-      console.error("Error generando prompt IA:", e?.message ?? e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Error generando prompt IA:", msg);
     } finally {
       setLoading(false);
     }
@@ -173,9 +175,10 @@ export default function StudioView() {
         const items: SessionImage[] = images.map((img, idx) => ({ b64: img, path: paths[idx] }));
         setSessionImages((prev) => [...items, ...prev]);
       }
-    } catch (e: any) {
-      console.error("Error en generación:", e?.message ?? e);
-      setGenerateError(e?.message ? String(e.message) : "Error en generación");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Error en generación:", msg);
+      setGenerateError(msg || "Error en generación");
     } finally {
       setIsGenerating(false);
       stopProgressPolling();

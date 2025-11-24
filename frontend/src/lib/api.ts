@@ -47,7 +47,7 @@ export interface RecommendedParams {
 
 export interface ReferenceImage {
   url: string;
-  meta: Record<string, any>;
+  meta: Record<string, unknown>;
 }
 
 export interface PlannerDraftEnriched {
@@ -130,7 +130,12 @@ export interface GroupConfigItem {
   checkpoint?: string;
 }
 
-export async function getReforgeProgress(): Promise<any> {
+export interface ReforgeProgress {
+  progress?: number;
+  [k: string]: unknown;
+}
+
+export async function getReforgeProgress(): Promise<ReforgeProgress> {
   const res = await fetch(`${BASE_URL}/reforge/progress`);
   if (!res.ok) throw new Error("Error fetching progress");
   return res.json();
@@ -226,7 +231,7 @@ export async function getReforgeCheckpoints(): Promise<string[]> {
   return Array.isArray(data?.titles) ? data.titles : [];
 }
 
-export async function postReforgeSetCheckpoint(title: string): Promise<{ status?: string } | any> {
+export async function postReforgeSetCheckpoint(title: string): Promise<{ status?: string } | Record<string, unknown>> {
   const res = await fetch(`${BASE_URL}/reforge/checkpoint`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -263,7 +268,7 @@ export async function getReforgeOptions(): Promise<ReforgeOptionsBrief> {
   return res.json();
 }
 
-export async function postDownloadLora(url: string, filename?: string): Promise<any> {
+export async function postDownloadLora(url: string, filename?: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE_URL}/download-lora`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -276,7 +281,7 @@ export async function postDownloadLora(url: string, filename?: string): Promise<
   return res.json();
 }
 
-export async function postDownloadCheckpoint(url: string, filename?: string): Promise<any> {
+export async function postDownloadCheckpoint(url: string, filename?: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${BASE_URL}/download-checkpoint`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

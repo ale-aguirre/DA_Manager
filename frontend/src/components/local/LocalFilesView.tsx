@@ -18,8 +18,9 @@ export default function LocalFilesView() {
       const data = await res.json();
       const list = Array.isArray(data?.files) ? (data.files as string[]) : [];
       setLoras(list);
-    } catch (e: any) {
-      setError(e?.message ?? "Error desconocido");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg ?? "Error desconocido");
     } finally {
       setLoading(false);
     }
@@ -41,8 +42,9 @@ export default function LocalFilesView() {
       });
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       await fetchLoras();
-    } catch (e: any) {
-      setError(e?.message ?? "Error desconocido");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg ?? "Error desconocido");
     } finally {
       setDeleting(null);
     }

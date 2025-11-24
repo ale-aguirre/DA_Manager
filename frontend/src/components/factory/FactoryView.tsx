@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { getFactoryStatus, postFactoryStop, getReforgeProgress } from "../../lib/api";
+import type { FactoryStatus } from "../../lib/api";
 import { OctagonX, Square, Eraser } from "lucide-react";
 
 export default function FactoryView() {
@@ -13,12 +14,11 @@ export default function FactoryView() {
   const [error, setError] = React.useState<string | null>(null);
   const [currentPrompt, setCurrentPrompt] = React.useState<string | null>(null);
   const [currentNegativePrompt, setCurrentNegativePrompt] = React.useState<string | null>(null);
-  const [currentConfig, setCurrentConfig] = React.useState<any | null>(null);
+  const [currentConfig, setCurrentConfig] = React.useState<FactoryStatus["current_config"]>(null);
   const [realProgress, setRealProgress] = React.useState(0);
 
   React.useEffect(() => {
     let mounted = true;
-    let interval: any;
     const poll = async () => {
       try {
         const status = await getFactoryStatus();
@@ -46,13 +46,14 @@ export default function FactoryView() {
         } else {
           setRealProgress(0);
         }
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (!mounted) return;
-        setError(e?.message || "Error consultando estado de Fábrica");
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg || "Error consultando estado de Fábrica");
       }
     };
+    const interval = setInterval(poll, 1000);
     poll();
-    interval = setInterval(poll, 1000); // Polling más rápido para fluidez
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -66,8 +67,9 @@ export default function FactoryView() {
   const stop = async () => {
     try {
       await postFactoryStop();
-    } catch (e: any) {
-      setError(e?.message || "Error al solicitar parada");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error al solicitar parada");
     }
   };
 

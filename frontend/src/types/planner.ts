@@ -20,7 +20,7 @@ export interface RecommendedParams {
 
 export interface ReferenceImage {
   url: string;
-  meta: Record<string, any>;
+  meta: Record<string, unknown>;
 }
 
 export interface PlannerDraftEnriched {

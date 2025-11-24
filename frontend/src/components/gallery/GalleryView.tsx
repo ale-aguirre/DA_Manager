@@ -44,8 +44,9 @@ export default function GalleryView() {
       // recolectar personajes
       const chars = Array.from(new Set([...(reset ? data : [...items, ...data])].map((it) => it.character))).sort();
       setAvailableCharacters(chars);
-    } catch (e: any) {
-      setError(e?.message || "Error cargando galería");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error cargando galería");
     } finally {
       setLoading(false);
     }
