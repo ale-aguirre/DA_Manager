@@ -120,7 +120,7 @@ async def root():
     }
 
 @app.get("/scan/civitai")
-async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated"):
+async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated", query: Optional[str] = None):
     """Escanea modelos de Civitai usando cloudscraper.
     Devuelve una lista con los campos necesarios para el Radar:
     id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
@@ -141,7 +141,9 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
     }
     civitai_sort = sort_map.get(sort, "Highest Rated")
     civitai_period = period_map.get(period, "Week")
-    params = {
+    q = (query or "").strip()
+    use_query = bool(q and len(q) >= 3)
+    params_trend = {
         "types": "LORA",
         "sort": civitai_sort,
         "period": civitai_period,
@@ -150,9 +152,17 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         "nsfw": "true",
         "include": "tags",
     }
+    params_search = {
+        "types": "LORA",
+        "query": q,
+        "limit": 100,
+        "nsfw": "true",
+        "include": "tags",
+    }
     token = os.getenv("CIVITAI_API_KEY")
     if token:
-        params["token"] = token
+        params_trend["token"] = token
+        params_search["token"] = token
 
     scraper = cloudscraper.create_scraper()
 
@@ -162,7 +172,12 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
 
     try:
         def fetch():
-            resp = scraper.get(url, params=params, timeout=20)
+            p = params_search if use_query else params_trend
+            resp = scraper.get(url, params=p, timeout=20)
+            # Manejo de errores: en modo búsqueda, no reventar la app
+            if getattr(resp, "status_code", 0) != 200:
+                print(f"[ERROR] Búsqueda fallida para '{q or ''}': {getattr(resp, 'status_code', None)}")
+                return {"items": []}
             resp.raise_for_status()
             return resp.json()
 
@@ -326,6 +341,10 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         print(f"[scan_civitai] HTTPException: {getattr(he, 'detail', he)}")
         raise
     except Exception as e:
+        # En modo búsqueda, devolver vacío para no romper la UI
+        if use_query:
+            print(f"[ERROR] Búsqueda fallida para '{q or ''}': {repr(e)}")
+            return JSONResponse(content=[])
         print(f"[scan_civitai] Error de conexión/parseo: {repr(e)}")
         raise HTTPException(status_code=502, detail=f"Error al consultar Civitai: {str(e)}")
 
