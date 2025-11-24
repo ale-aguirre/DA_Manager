@@ -1157,14 +1157,6 @@ export default function PlannerView() {
     if (goRadar) router.push("/radar");
   };
 
-  const toggleSelected = (idx: number) => {
-    setSelected((prev) => {
-      const s = new Set(prev);
-      if (s.has(idx)) s.delete(idx);
-      else s.add(idx);
-      return s;
-    });
-  };
 
   const deleteSelected = () => {
     setJobs((prev) => {
@@ -1217,12 +1209,6 @@ export default function PlannerView() {
     });
   };
 
-  const openQuickEdit = (
-    row: number,
-    field: "outfit" | "pose" | "location"
-  ) => {
-    setOpenEditor({ row, field });
-  };
 
   const applyQuickEdit = (
     row: number,
@@ -1420,67 +1406,7 @@ export default function PlannerView() {
     });
   };
 
-  const copyParams = async (meta: Record<string, unknown>) => {
-    try {
-      const lines = [
-        meta?.Prompt
-          ? `Prompt: ${meta.Prompt}`
-          : meta?.prompt
-          ? `Prompt: ${meta.prompt}`
-          : undefined,
-        meta?.negativePrompt ? `Negative: ${meta.negativePrompt}` : undefined,
-        meta?.Steps !== undefined ? `Steps: ${meta.Steps}` : undefined,
-        meta?.["CFG scale"] !== undefined
-          ? `CFG: ${meta["CFG scale"]}`
-          : undefined,
-        meta?.Sampler ? `Sampler: ${meta.Sampler}` : undefined,
-        meta?.Seed !== undefined ? `Seed: ${meta.Seed}` : undefined,
-      ].filter(Boolean) as string[];
-      const text = lines.join("\n");
-      await navigator.clipboard?.writeText(text);
-      alert("Parámetros copiados al portapapeles");
-    } catch (e) {
-      console.warn("No se pudieron copiar parámetros", e);
-    }
-  };
 
-  const cloneStyle = (character: string, meta: Record<string, unknown>) => {
-    const base =
-      plannerContext[character]?.base_prompt ||
-      jobs.find((j) => j.character_name === character)?.prompt ||
-      "";
-    const extras = extractExtras(
-      (meta?.prompt as string) || (meta?.Prompt as string) || ""
-    );
-    // Elegir outfit/pose/location aleatoriamente
-    const outfit = resources
-      ? resources.outfits[Math.floor(Math.random() * resources.outfits.length)]
-      : "";
-    const pose = resources
-      ? resources.poses[Math.floor(Math.random() * resources.poses.length)]
-      : "";
-    const location = resources
-      ? resources.locations[
-          Math.floor(Math.random() * resources.locations.length)
-        ]
-      : "";
-    // Construir prompt mezclando base + extras + tripleta
-    const pre = [base];
-    if (extras.camera) pre.push(extras.camera);
-    if (extras.lighting) pre.push(extras.lighting);
-    const prompt = rebuildPromptWithTriplet(pre.join(", "), {
-      outfit,
-      pose,
-      location,
-    });
-    const seed = Math.floor(Math.random() * 2_147_483_647);
-    const newJob: PlannerJob = { character_name: character, prompt, seed };
-    setJobs((prev) => {
-      const next = [...prev, newJob];
-      localStorage.setItem("planner_jobs", JSON.stringify(next));
-      return next;
-    });
-  };
 
   if (jobs.length === 0) {
     return (
