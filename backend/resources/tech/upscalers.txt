@@ -1,0 +1,3 @@
+R-ESRGAN 4x+ Anime6B
+Latent
+4x-UltraSharp

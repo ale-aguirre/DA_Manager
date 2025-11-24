@@ -21,8 +21,9 @@ export default function FactoryControl() {
       if (images.length === 0) throw new Error("Respuesta sin imágenes.");
       setLastImage(images[0]);
       setInfo(typeof data?.info === "string" ? data.info : JSON.stringify(data?.info ?? {}, null, 2));
-    } catch (e: any) {
-      setError(e?.message ?? "Error desconocido");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg ?? "Error desconocido");
     } finally {
       setIsGenerating(false);
     }

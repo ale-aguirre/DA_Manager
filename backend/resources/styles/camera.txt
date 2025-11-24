@@ -1,0 +1,12 @@
+dutch angle
+fisheye
+from below
+from above
+low angle
+high angle
+close-up
+extreme close-up
+wide shot
+cowboy shot
+over-the-shoulder
+tilt-shift

@@ -1,8 +1,8 @@
 "use client";
 import React from "react";
-import { Wand2, Trash2, RefreshCw, Play, Radar, Search } from "lucide-react";
+import { Wand2, Trash2, RefreshCw, Play, Radar, Search, Cog, Camera, Sun, ChevronDown, ChevronUp, Bot } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
-import { magicFixPrompt, getPlannerResources } from "../../lib/api";
+import { magicFixPrompt, getPlannerResources, postPlannerAnalyze, getReforgeCheckpoints, postReforgeSetCheckpoint, getLocalLoras, getReforgeVAEs, getReforgeOptions } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import type { ResourceMeta } from "../../lib/api";
 
@@ -13,6 +13,10 @@ const QUALITY_SET = new Set([
   "absurdres",
   "nsfw",
 ]);
+
+// Estándar de oro para Negative Prompt (Anime)
+// Nota: NO incluir "nsfw" aquí para no bloquear contenidos NSFW cuando la intensidad lo requiera.
+const DEFAULT_NEGATIVE_ANIME = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name";
 
 function splitPrompt(prompt: string): string[] {
   return (prompt || "")
@@ -59,14 +63,140 @@ function rebuildPromptWithTriplet(original: string, nextTriplet: { outfit?: stri
   return all.join(", ");
 }
 
+// Heurística para extraer Lighting y Camera cuando existan en el prompt
+function extractExtras(prompt: string): { lighting?: string; camera?: string; expression?: string; hairstyle?: string } {
+  const tokens = splitPrompt(prompt);
+  const core: string[] = [];
+  for (const t of tokens) {
+    if (!QUALITY_SET.has(t.toLowerCase())) core.push(t);
+  }
+  // Ignorar las últimas 3 posiciones (Outfit, Pose, Location)
+  const scan = core.slice(0, Math.max(0, core.length - 3));
+  const isLighting = (s: string) => {
+    const low = s.toLowerCase();
+    return [
+      "light",
+      "lighting",
+      "shadow",
+      "shadows",
+      "glow",
+      "ambient",
+      "rim light",
+      "neon",
+      "backlight",
+      "backlit",
+      "studio light",
+      "soft lighting",
+    ].some((k) => low.includes(k));
+  };
+  const isCamera = (s: string) => {
+    const low = s.toLowerCase();
+    return [
+      "angle",
+      "shot",
+      "lens",
+      "close-up",
+      "portrait",
+      "fov",
+      "zoom",
+      "fisheye",
+      "bokeh",
+      "wide angle",
+      "low angle",
+      "high angle",
+      "front view",
+      "cowboy shot",
+    ].some((k) => low.includes(k));
+  };
+  const EXPRESSION_HINTS = [
+    "smile", "blushing", "angry", "crying", "ahegao", "wink", "shy", "confident", "surprised", "determined", "smug", "pout", "teary eyes", "embarrassed", "happy"
+  ];
+  const HAIRSTYLE_HINTS = [
+    "ponytail", "twintails", "bob cut", "long hair", "braid", "side ponytail", "messy hair", "bun", "short hair", "wavy hair", "curly hair", "straight hair", "half up", "half down"
+  ];
+  const isExpression = (s: string) => EXPRESSION_HINTS.includes(s.toLowerCase());
+  const isHairstyle = (s: string) => HAIRSTYLE_HINTS.includes(s.toLowerCase());
+  let lighting: string | undefined;
+  let camera: string | undefined;
+  let expression: string | undefined;
+  let hairstyle: string | undefined;
+  for (const t of scan) {
+    if (!lighting && isLighting(t)) lighting = t;
+    if (!camera && isCamera(t)) camera = t;
+    if (!expression && isExpression(t)) expression = t;
+    if (!hairstyle && isHairstyle(t)) hairstyle = t;
+    if (lighting && camera && expression && hairstyle) break;
+  }
+  return { lighting, camera, expression, hairstyle };
+}
+
+function rebuildPromptWithExtras(original: string, extras: { lighting?: string; camera?: string; expression?: string; hairstyle?: string }) {
+  const tokens = splitPrompt(original);
+  const core: string[] = [];
+  const quality: string[] = [];
+  for (const t of tokens) {
+    if (QUALITY_SET.has(t.toLowerCase())) quality.push(t);
+    else core.push(t);
+  }
+  const EXPRESSION_HINTS = [
+    "smile", "blushing", "angry", "crying", "ahegao", "wink", "shy", "confident", "surprised", "determined", "smug", "pout", "teary eyes", "embarrassed", "happy"
+  ];
+  const HAIRSTYLE_HINTS = [
+    "ponytail", "twintails", "bob cut", "long hair", "braid", "side ponytail", "messy hair", "bun", "short hair", "wavy hair", "curly hair", "straight hair", "half up", "half down"
+  ];
+  const tail = core.slice(-3);
+  const head = core.slice(0, Math.max(0, core.length - 3)).filter((t) => {
+    const low = t.toLowerCase();
+    const isLight = ["light", "lighting", "shadow", "shadows", "glow", "ambient", "rim light", "neon", "backlight", "backlit", "studio light", "soft lighting"].some((k) => low.includes(k));
+    const isCam = ["angle", "shot", "lens", "close-up", "portrait", "fov", "zoom", "fisheye", "bokeh", "wide angle", "low angle", "high angle", "front view", "cowboy shot"].some((k) => low.includes(k));
+    const isExpr = EXPRESSION_HINTS.includes(low);
+    const isHair = HAIRSTYLE_HINTS.includes(low);
+    return !(isLight || isCam || isExpr || isHair);
+  });
+  const pre: string[] = [];
+  if (extras.camera) pre.push(extras.camera);
+  if (extras.expression) pre.push(extras.expression);
+  if (extras.hairstyle) pre.push(extras.hairstyle);
+  if (extras.lighting) pre.push(extras.lighting);
+  const nextCore = [...pre, ...head, ...tail];
+  return [...nextCore, ...quality].join(", ");
+}
+
 export default function PlannerView() {
   const [jobs, setJobs] = React.useState<PlannerJob[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[] } | null>(null);
+  const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[]; lighting?: string[]; camera?: string[]; expressions?: string[]; hairstyles?: string[]; upscalers?: string[] } | null>(null);
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [openEditor, setOpenEditor] = React.useState<{ row: number; field: "outfit" | "pose" | "location" } | null>(null);
+  const [metaByCharacter, setMetaByCharacter] = React.useState<Record<string, { image_url?: string; trigger_words?: string[]; download_url?: string }>>({});
   const router = useRouter();
+  const [loreByCharacter, setLoreByCharacter] = React.useState<Record<string, string>>({});
+  const [configOpen, setConfigOpen] = React.useState<Record<string, boolean>>({});
+  const [configByCharacter, setConfigByCharacter] = React.useState<Record<string, { hiresFix: boolean; denoising: number; outputPath: string }>>({});
+  const [techConfigByCharacter, setTechConfigByCharacter] = React.useState<Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string; extraLoras?: string[]; hiresSteps?: number; batch_size?: number; batch_count?: number; adetailer?: boolean; vae?: string; clipSkip?: number; negativePrompt?: string }>>({});
+  const [plannerContext, setPlannerContext] = React.useState<Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> }>>({});
+  const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
+  const [localLoras, setLocalLoras] = React.useState<string[]>([]);
+  const [vaes, setVaes] = React.useState<string[]>([]);
+  const [reforgeOptions, setReforgeOptionsState] = React.useState<{ current_vae: string; current_clip_skip: number } | null>(null);
+  const setTechConfig = (character: string | null, partial: Partial<{ steps: number; cfg: number; sampler: string; seed: number; hiresFix: boolean; upscaleBy: number; upscaler: string; checkpoint: string; extraLoras: string[]; hiresSteps: number; batch_size: number; batch_count: number; adetailer: boolean; vae: string; clipSkip: number; negativePrompt: string }>) => {
+    if (!character) return;
+    setTechConfigByCharacter((prev) => {
+      const next = { ...prev, [character]: { ...prev[character], ...partial } };
+      try { localStorage.setItem("planner_tech", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const [showDetails, setShowDetails] = React.useState<Set<number>>(new Set());
+  const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    // Abrir prompt por defecto para todos los jobs existentes
+    const s = new Set<number>();
+    for (let i = 0; i < jobs.length; i++) s.add(i);
+    setShowDetails(s);
+  }, [jobs.length]);
 
   React.useEffect(() => {
     try {
@@ -80,6 +210,111 @@ export default function PlannerView() {
     }
   }, []);
 
+  // Aplicar defaults (Negative/Steps/CFG y más) y preset global al cambiar de personaje
+  React.useEffect(() => {
+    if (!activeCharacter) return;
+    const tech = techConfigByCharacter[activeCharacter] || {};
+    let preset: Record<string, unknown> | null = null;
+    try {
+      const raw = localStorage.getItem("planner_preset_global");
+      if (raw) preset = JSON.parse(raw);
+    } catch {}
+    const patchTech: Partial<{ steps: number; cfg: number; negativePrompt: string; batch_size: number; batch_count: number; hiresFix: boolean; adetailer: boolean; upscaler: string }> = {};
+    const neg = (tech.negativePrompt ?? "").trim();
+    if (!neg) {
+      const presetNeg = (preset && typeof preset.negativePrompt === "string" && preset.negativePrompt.trim()) ? preset.negativePrompt.trim() : DEFAULT_NEGATIVE_ANIME;
+      patchTech.negativePrompt = presetNeg;
+    }
+    if (typeof tech.steps !== "number") {
+      patchTech.steps = (preset && typeof preset.steps === "number") ? preset.steps : 30;
+    }
+    if (typeof tech.cfg !== "number") {
+      patchTech.cfg = (preset && typeof preset.cfg === "number") ? preset.cfg : 7;
+    }
+    // Nuevos campos del preset global
+    if (typeof tech.batch_size !== "number") {
+      patchTech.batch_size = (preset && typeof preset.batch_size === "number") ? preset.batch_size : 1;
+    }
+    if (typeof tech.batch_count !== "number") {
+      patchTech.batch_count = (preset && typeof preset.batch_count === "number") ? preset.batch_count : 10;
+    }
+    if (typeof tech.hiresFix !== "boolean") {
+      patchTech.hiresFix = (preset && typeof preset.hiresFix === "boolean") ? preset.hiresFix : true;
+    }
+    if (typeof tech.adetailer !== "boolean") {
+      patchTech.adetailer = (preset && typeof preset.adetailer === "boolean") ? preset.adetailer : true;
+    }
+    if ((tech.upscaler ?? "").trim().length === 0) {
+      patchTech.upscaler = (preset && typeof preset.upscaler === "string") ? preset.upscaler : "";
+    }
+    if (Object.keys(patchTech).length > 0) {
+      setTechConfig(activeCharacter, patchTech);
+    }
+    // Denoise vive en planner_config, no en tech
+    const cfg = configByCharacter[activeCharacter] || {};
+    if (typeof cfg.denoising !== "number") {
+      const nextDenoise = (preset && typeof preset.denoising === "number") ? preset.denoising : 0.35;
+      setConfigByCharacter((prev) => {
+        const next = {
+          ...prev,
+          [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: nextDenoise },
+        };
+        try { localStorage.setItem("planner_config", JSON.stringify(next)); } catch {}
+        return next;
+      });
+    }
+  }, [activeCharacter]);
+
+  // Cargar configuración técnica (incluye Prompt Negativo) desde localStorage
+  React.useEffect(() => {
+    try {
+      const rawTech = localStorage.getItem("planner_tech");
+      if (!rawTech) return;
+      const parsed = JSON.parse(rawTech) as Record<string, { steps?: number; cfg?: number; sampler?: string; seed?: number; hiresFix?: boolean; upscaleBy?: number; upscaler?: string; checkpoint?: string; extraLoras?: string[]; hiresSteps?: number; batch_size?: number; batch_count?: number; adetailer?: boolean; vae?: string; clipSkip?: number; negativePrompt?: string }>;
+      if (parsed && typeof parsed === "object") {
+        setTechConfigByCharacter(parsed);
+      }
+    } catch (e) {
+      console.warn("planner_tech inválido o ausente", e);
+    }
+  }, []);
+
+  // Cargar VAEs y opciones actuales de ReForge
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const [vNames, opts] = await Promise.all([
+          getReforgeVAEs().catch(() => []),
+          getReforgeOptions().catch(() => ({ current_vae: "Automatic", current_clip_skip: 1 })),
+        ]);
+        setVaes(Array.isArray(vNames) ? vNames : []);
+        setReforgeOptionsState(opts || null);
+      } catch (e) {
+        console.warn("Error cargando VAEs/opciones", e);
+      }
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    // Si no hay lore para el personaje activo, cargarlo automáticamente
+    if (!activeCharacter) return;
+    const existing = loreByCharacter[activeCharacter];
+    if (!existing) {
+      analyzeLore(activeCharacter);
+    }
+  }, [activeCharacter]);
+
+  // Auto-ajuste de Clip Skip = 2 para checkpoints Anime/Pony si el usuario aún no lo definió
+  React.useEffect(() => {
+    if (!activeCharacter) return;
+    const tech = techConfigByCharacter[activeCharacter] || {};
+    const ckpt = (tech.checkpoint || "").toLowerCase();
+    const clipSet = typeof tech.clipSkip === "number";
+    if (!clipSet && (ckpt.includes("pony") || ckpt.includes("anime"))) {
+      setTechConfig(activeCharacter, { clipSkip: 2 });
+    }
+  }, [activeCharacter, techConfigByCharacter]);
+
   React.useEffect(() => {
     // Cargar recursos para edición rápida
     (async () => {
@@ -91,6 +326,96 @@ export default function PlannerView() {
       }
     })();
   }, []);
+
+  React.useEffect(() => {
+    // Cargar checkpoints disponibles
+    (async () => {
+      try {
+        const cps = await getReforgeCheckpoints();
+        setCheckpoints(cps);
+      } catch (e) {
+        console.warn("No se pudieron cargar checkpoints:", e);
+      }
+    })();
+  }, []);
+
+  React.useEffect(() => {
+    // Cargar LoRAs locales
+    (async () => {
+      try {
+        const loras = await getLocalLoras();
+        setLocalLoras(loras);
+      } catch (e) {
+        console.warn("No se pudieron cargar LoRAs locales:", e);
+      }
+    })();
+  }, []);
+
+  // Cargar lore por personaje desde localStorage
+  React.useEffect(() => {
+    try {
+      const rawLore = localStorage.getItem("planner_lore");
+      if (!rawLore) return;
+      const parsed = JSON.parse(rawLore) as Record<string, string>;
+      setLoreByCharacter(parsed || {});
+    } catch (e) {
+      console.warn("planner_lore inválido o ausente", e);
+    }
+  }, []);
+
+  // Cargar perfil/meta por personaje desde localStorage
+  React.useEffect(() => {
+    try {
+      const rawMeta = localStorage.getItem("planner_meta");
+      if (!rawMeta) return;
+      const parsed = JSON.parse(rawMeta) as unknown[];
+      const map: Record<string, { image_url?: string; trigger_words?: string[]; download_url?: string }> = {};
+      parsed.forEach((m) => {
+        const obj = m as { character_name?: string; name?: string; image_url?: string; trigger_words?: string[]; download_url?: string; downloadUrl?: string };
+        const key = obj.character_name || obj.name;
+        if (!key) return;
+        map[key] = {
+          image_url: obj.image_url,
+          trigger_words: obj.trigger_words,
+          download_url: obj.download_url || obj.downloadUrl,
+        };
+      });
+      setMetaByCharacter(map);
+    } catch (e) {
+      console.warn("planner_meta inválido o ausente", e);
+    }
+  }, []);
+
+  // Cargar contexto enriquecido por personaje
+  React.useEffect(() => {
+    try {
+      const rawCtx = localStorage.getItem("planner_context");
+      if (!rawCtx) return;
+      const parsed = JSON.parse(rawCtx) as Record<string, { base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> }>;
+      setPlannerContext(parsed || {});
+    } catch (e) {
+      console.warn("planner_context inválido o ausente", e);
+    }
+  }, []);
+
+  // Agrupar jobs por personaje (indices + jobs)
+  const perCharacter = React.useMemo(() => {
+    const m: Record<string, { indices: number[]; jobs: PlannerJob[] }> = {};
+    jobs.forEach((job, idx) => {
+      if (!m[job.character_name]) m[job.character_name] = { indices: [], jobs: [] };
+      m[job.character_name].indices.push(idx);
+      m[job.character_name].jobs.push(job);
+    });
+    return m;
+  }, [jobs]);
+
+  // Establecer personaje activo por defecto cuando lleguen los jobs
+  React.useEffect(() => {
+    const names = Object.keys(perCharacter);
+    if (!activeCharacter && names.length > 0) {
+      setActiveCharacter(names[0]);
+    }
+  }, [perCharacter, activeCharacter]);
 
   const updatePrompt = (idx: number, value: string) => {
     setJobs((prev) => {
@@ -123,17 +448,100 @@ export default function PlannerView() {
     });
   };
 
+  // Slider visual personalizado (barra gris con relleno azul). No usa input range.
+  // Calcula porcentaje y permite clic para ajustar valor. Reusa para Steps, CFG, Denoise, Hires Steps.
+  const SliderBar = (
+    { value, min, max, step = 1, onChange }: { value: number; min: number; max: number; step?: number; onChange: (v: number) => void }
+  ) => {
+    const pct = Math.max(0, Math.min(100, ((value - min) / Math.max(1, (max - min))) * 100));
+    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const p = Math.max(0, Math.min(1, x / rect.width));
+      const raw = min + p * (max - min);
+      // Ajuste por step (soporta decimales)
+      const scaled = Math.round(raw / step) * step;
+      const fixed = Number(scaled.toFixed(2));
+      onChange(Math.max(min, Math.min(max, fixed)));
+    };
+    return (
+      <div className="mt-2 w-full h-4 bg-slate-700 rounded cursor-pointer" onClick={handleClick}>
+        <div style={{ width: `${pct}%` }} className="h-4 bg-blue-600 rounded" />
+      </div>
+    );
+  };
+
   const magicFix = async (idx: number) => {
     try {
       setLoading(true);
-      setError(null);
       const res = await magicFixPrompt(jobs[idx].prompt);
-      updatePrompt(idx, res.prompt);
-    } catch (e: any) {
-      setError(e?.message || "Error en MagicFix");
+      // Si Magic Fix falla o devuelve vacío, rellenar aleatorio
+      const outfit = res?.outfit || (resources ? resources.outfits[Math.floor(Math.random() * resources.outfits.length)] : "");
+      const pose = res?.pose || (resources ? resources.poses[Math.floor(Math.random() * resources.poses.length)] : "");
+      const location = res?.location || (resources ? resources.locations[Math.floor(Math.random() * resources.locations.length)] : "");
+      const next = rebuildPromptWithTriplet(jobs[idx].prompt, { outfit, pose, location });
+      updatePrompt(idx, next);
+    } catch (e) {
+      console.warn("Magic Fix fallo, aplicando relleno aleatorio", e);
+      const outfit = resources ? resources.outfits[Math.floor(Math.random() * resources.outfits.length)] : "";
+      const pose = resources ? resources.poses[Math.floor(Math.random() * resources.poses.length)] : "";
+      const location = resources ? resources.locations[Math.floor(Math.random() * resources.locations.length)] : "";
+      const next = rebuildPromptWithTriplet(jobs[idx].prompt, { outfit, pose, location });
+      updatePrompt(idx, next);
     } finally {
       setLoading(false);
     }
+  };
+
+  const analyzeLore = async (character: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const tags = metaByCharacter[character]?.trigger_words || [];
+      const { jobs: newJobs, lore } = await postPlannerAnalyze(character, tags);
+      if (Array.isArray(newJobs) && newJobs.length > 0) {
+        setJobs((prev) => {
+          const next = [...prev, ...newJobs];
+          localStorage.setItem("planner_jobs", JSON.stringify(next));
+          return next;
+        });
+      }
+      if (lore) {
+        setLoreByCharacter((prev) => {
+          const next = { ...prev, [character]: lore };
+          localStorage.setItem("planner_lore", JSON.stringify(next));
+          return next;
+        });
+      }
+      setSelected(new Set());
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error al analizar lore");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Eliminar todos los trabajos de un personaje y limpiar selección
+  const deleteCharacter = (character: string) => {
+    setJobs((prev) => {
+      const next = prev.filter((j) => j.character_name !== character);
+      localStorage.setItem("planner_jobs", JSON.stringify(next));
+      return next;
+    });
+    setSelected(new Set());
+  };
+
+  const ensureTriplet = (prompt: string): string => {
+    const t = extractTriplet(prompt);
+    const pick = <T extends string>(arr?: T[], def: T = "casual" as T): T => {
+      if (!arr || arr.length === 0) return def;
+      return arr[Math.floor(Math.random() * arr.length)] as T;
+    };
+    const outfit = t.outfit && t.outfit.length > 0 ? t.outfit : pick(resources?.outfits, "casual");
+    const pose = t.pose && t.pose.length > 0 ? t.pose : pick(resources?.poses, "standing");
+    const location = t.location && t.location.length > 0 ? t.location : pick(resources?.locations, "studio");
+    return rebuildPromptWithTriplet(prompt, { outfit, pose, location });
   };
 
   const startProduction = async () => {
@@ -146,23 +554,92 @@ export default function PlannerView() {
       try {
         const rawMeta = localStorage.getItem("planner_meta");
         if (rawMeta) {
-          const parsed = JSON.parse(rawMeta) as any[];
-          resourcesMeta = parsed.map((m: any) => ({
-            character_name: m.character_name || m.name || "",
-            download_url: m.download_url || m.downloadUrl || undefined,
-            filename: m.filename || (m.character_name || m.name || "").toLowerCase().replace(/\s+/g, "_"),
-          }));
+          const parsed = JSON.parse(rawMeta) as unknown[];
+          resourcesMeta = parsed.map((m) => {
+            const obj = m as { character_name?: string; name?: string; download_url?: string; downloadUrl?: string; filename?: string };
+            const character = obj.character_name || obj.name || "";
+            const download = obj.download_url || obj.downloadUrl || undefined;
+            const filename = obj.filename || character.toLowerCase().replace(/\s+/g, "_");
+            return { character_name: character, download_url: download, filename };
+          });
+          // Sanitización: no enviar entradas sin character_name o sin download_url
+          resourcesMeta = resourcesMeta.filter((m) =>
+            typeof m.character_name === "string" && m.character_name.trim().length > 0 &&
+            typeof m.download_url === "string" && m.download_url.trim().length > 0
+          );
         }
       } catch (e) {
         console.warn("planner_meta inválido o ausente", e);
       }
-      await postPlannerExecute(jobs, resourcesMeta);
+      // Asegurar que outfit/pose/location no estén vacíos, prefijar Prompt Base y aplicar seed/negative desde panel técnico
+      const preparedJobs: PlannerJob[] = jobs.map((j) => {
+        const tech = techConfigByCharacter[j.character_name];
+        const base = plannerContext[j.character_name]?.base_prompt || "";
+        const bodyPrompt = ensureTriplet(j.prompt);
+        const finalPrompt = base && base.trim().length > 0 ? `${base.trim()}, ${bodyPrompt}` : bodyPrompt;
+        return { ...j, prompt: finalPrompt, seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1), negative_prompt: tech?.negativePrompt };
+      });
+      // Construir group_config por personaje desde Config Avanzada, recomendado y panel técnico
+      const groupConfig: import("../../lib/api").GroupConfigItem[] = Object.keys(perCharacter).map((character) => {
+        const conf = configByCharacter[character] ?? { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${character}/` };
+        const rec = plannerContext[character]?.recommended_params;
+        const tech = techConfigByCharacter[character] || {};
+        return {
+          character_name: character,
+          hires_fix: (tech.hiresFix ?? conf.hiresFix ?? true),
+          denoising_strength: conf.denoising,
+          output_path: conf.outputPath,
+          steps: tech.steps ?? rec?.steps ?? 30,
+          cfg_scale: tech.cfg ?? rec?.cfg ?? 7,
+          sampler: tech.sampler ?? rec?.sampler,
+          upscale_by: tech.upscaleBy,
+          upscaler: tech.upscaler,
+          checkpoint: tech.checkpoint,
+          extra_loras: tech.extraLoras,
+          hires_steps: tech.hiresSteps,
+          batch_size: tech.batch_size ?? 1,
+          adetailer: tech.adetailer ?? true,
+          vae: tech.vae,
+          clip_skip: tech.clipSkip,
+        };
+      });
+      try {
+        const { postPlannerExecuteV2 } = await import("../../lib/api");
+        await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
+      } catch (err) {
+        console.warn("Planner execute v2 falló", err);
+        throw err;
+      }
       router.push("/factory");
-    } catch (e: any) {
-      setError(e?.message || "Error iniciando producción");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error iniciando producción");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReset = () => {
+    const ok = window.confirm("¿Borrar todo el plan actual y limpiar caché?");
+    if (!ok) return;
+    try {
+      localStorage.removeItem("planner_jobs");
+      localStorage.removeItem("planner_meta");
+      localStorage.removeItem("planner_lore");
+      localStorage.removeItem("planner_config");
+    } catch (e) {
+      console.warn("No se pudo limpiar localStorage", e);
+    }
+    setJobs([]);
+    setSelected(new Set());
+    setMetaByCharacter({});
+    setLoreByCharacter({});
+    setPlannerContext({});
+    setConfigByCharacter({});
+    setTechConfigByCharacter({});
+    setActiveCharacter(null);
+    const goRadar = window.confirm("¿Ir al Radar para empezar de cero?");
+    if (goRadar) router.push("/radar");
   };
 
   const toggleSelected = (idx: number) => {
@@ -194,14 +671,138 @@ export default function PlannerView() {
     });
   };
 
+  // Controles globales
+  const toggleAllDetailsGlobal = () => {
+    if (!activeCharacter) return;
+    const indices = perCharacter[activeCharacter]?.indices || [];
+    setShowDetails((prev) => {
+      if (prev.size === indices.length) return new Set();
+      const s = new Set<number>();
+      for (const idx of indices) {
+        if (typeof idx === "number") s.add(idx);
+      }
+      return s;
+    });
+  };
+
+  const regenerateAllSeeds = () => {
+    if (!activeCharacter) return;
+    const indices = perCharacter[activeCharacter]?.indices || [];
+    setJobs((prev) => {
+      const next = [...prev];
+      for (const idx of indices) {
+        if (typeof idx === "number") next[idx] = { ...next[idx], seed: Math.floor(Math.random() * 2_147_483_647) };
+      }
+      localStorage.setItem("planner_jobs", JSON.stringify(next));
+      return next;
+    });
+  };
+
   const openQuickEdit = (row: number, field: "outfit" | "pose" | "location") => {
     setOpenEditor({ row, field });
   };
 
   const applyQuickEdit = (row: number, field: "outfit" | "pose" | "location", value: string) => {
-    const next = rebuildPromptWithTriplet(jobs[row].prompt, { [field]: value });
-    updatePrompt(row, next);
+    // Aplicar cambio y rellenar automáticamente cualquier otro campo vacío para evitar "(vacío)"
+    const provisional = rebuildPromptWithTriplet(jobs[row].prompt, { [field]: value });
+    const ensured = ensureTriplet(provisional);
+    updatePrompt(row, ensured);
     setOpenEditor(null);
+  };
+
+  const applyExtrasEdit = (row: number, field: "lighting" | "camera" | "expression" | "hairstyle", value: string) => {
+    const currentExtras = extractExtras(jobs[row].prompt);
+    const nextExtras = { ...currentExtras, [field]: value || undefined };
+    const next = rebuildPromptWithExtras(jobs[row].prompt, nextExtras);
+    updatePrompt(row, next);
+  };
+
+  const handleDeleteJob = (character: string, localIndex: number) => {
+    const idx = perCharacter[character]?.indices[localIndex];
+    if (typeof idx === "number") deleteRow(idx);
+  };
+
+  const getIntensity = (prompt: string): { label: "Safe" | "Ecchi" | "NSFW"; className: string } => {
+    const low = (prompt || "").toLowerCase();
+    if (low.includes("rating_explicit") || low.includes("nsfw")) return { label: "NSFW", className: "bg-red-600/30 border-red-600" };
+    if (low.includes("rating_questionable") || low.includes("cleavage")) return { label: "Ecchi", className: "bg-orange-600/30 border-orange-600" };
+    return { label: "Safe", className: "bg-emerald-600/30 border-emerald-600" };
+  };
+
+  const setIntensity = (idx: number, nextLabel: "Safe" | "Ecchi" | "NSFW") => {
+    // Remover tags de rating existentes y aplicar nuevos según la intensidad
+    const tokens = splitPrompt(jobs[idx].prompt);
+    const core: string[] = [];
+    const quality: string[] = [];
+    for (const t of tokens) {
+      if (QUALITY_SET.has(t.toLowerCase())) quality.push(t);
+      else core.push(t);
+    }
+    const isRating = (s: string) => {
+      const low = s.toLowerCase();
+      return low === "rating_safe" || low === "rating_questionable" || low === "rating_explicit" || low === "explicit" || low === "nsfw" || low === "safe" || low === "questionable";
+    };
+    const coreFiltered = core.filter((t) => !isRating(t));
+    const qualityFiltered = quality.filter((t) => t.toLowerCase() !== "nsfw");
+
+    let newRatings: string[] = [];
+    if (nextLabel === "Safe") newRatings = ["rating_safe", "best quality", "masterpiece"];
+    if (nextLabel === "Ecchi") newRatings = ["rating_questionable", "cleavage", "swimsuit", "(ecchi:1.2)", "best quality", "masterpiece"];
+    if (nextLabel === "NSFW") newRatings = ["rating_explicit", "nsfw", "nipple", "pussy", "nude", "best quality", "masterpiece"];
+
+    // Unir todo: ratings + core + quality
+    // Filtrar duplicados simples
+    const combined = [...newRatings, ...coreFiltered, ...qualityFiltered];
+    const unique = Array.from(new Set(combined));
+    updatePrompt(idx, unique.join(", "));
+  };
+
+  const toggleDetails = (idx: number) => {
+    setShowDetails((prev) => {
+      const s = new Set(prev);
+      if (s.has(idx)) s.delete(idx);
+      else s.add(idx);
+      return s;
+    });
+  };
+
+  const copyParams = async (meta: Record<string, unknown>) => {
+    try {
+      const lines = [
+        meta?.Prompt ? `Prompt: ${meta.Prompt}` : meta?.prompt ? `Prompt: ${meta.prompt}` : undefined,
+        meta?.negativePrompt ? `Negative: ${meta.negativePrompt}` : undefined,
+        meta?.Steps !== undefined ? `Steps: ${meta.Steps}` : undefined,
+        meta?.["CFG scale"] !== undefined ? `CFG: ${meta["CFG scale"]}` : undefined,
+        meta?.Sampler ? `Sampler: ${meta.Sampler}` : undefined,
+        meta?.Seed !== undefined ? `Seed: ${meta.Seed}` : undefined,
+      ].filter(Boolean) as string[];
+      const text = lines.join("\n");
+      await navigator.clipboard?.writeText(text);
+      alert("Parámetros copiados al portapapeles");
+    } catch (e) {
+      console.warn("No se pudieron copiar parámetros", e);
+    }
+  };
+
+  const cloneStyle = (character: string, meta: Record<string, unknown>) => {
+    const base = plannerContext[character]?.base_prompt || jobs.find((j) => j.character_name === character)?.prompt || "";
+    const extras = extractExtras((meta?.prompt as string) || (meta?.Prompt as string) || "");
+    // Elegir outfit/pose/location aleatoriamente
+    const outfit = resources ? resources.outfits[Math.floor(Math.random() * resources.outfits.length)] : "";
+    const pose = resources ? resources.poses[Math.floor(Math.random() * resources.poses.length)] : "";
+    const location = resources ? resources.locations[Math.floor(Math.random() * resources.locations.length)] : "";
+    // Construir prompt mezclando base + extras + tripleta
+    const pre = [base];
+    if (extras.camera) pre.push(extras.camera);
+    if (extras.lighting) pre.push(extras.lighting);
+    const prompt = rebuildPromptWithTriplet(pre.join(", "), { outfit, pose, location });
+    const seed = Math.floor(Math.random() * 2_147_483_647);
+    const newJob: PlannerJob = { character_name: character, prompt, seed };
+    setJobs((prev) => {
+      const next = [...prev, newJob];
+      localStorage.setItem("planner_jobs", JSON.stringify(next));
+      return next;
+    });
   };
 
   if (jobs.length === 0) {
@@ -211,9 +812,9 @@ export default function PlannerView() {
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/20">
             <Radar className="h-8 w-8 text-violet-400" aria-hidden />
           </div>
-          <h2 className="text-lg font-semibold">Tu plan de batalla está vacío</h2>
+          <h2 className="text-lg font-semibold">Plan vacío</h2>
           <p className="mt-2 text-sm text-zinc-400">
-            Selecciona objetivos en el Radar y envíalos al Planificador para comenzar.
+            Aún no hay jobs generados. Usa el analizador de lore para construir un plan.
           </p>
           <div className="mt-6">
             <button
@@ -230,164 +831,475 @@ export default function PlannerView() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8">
+    <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-semibold bg-gradient-to-r from-pink-500 to-violet-600 bg-clip-text text-transparent">
-          Planificador de Batalla
-        </h1>
-        <button
-          onClick={startProduction}
-          disabled={jobs.length === 0}
-          className="inline-flex items-center gap-2 rounded-lg border border-emerald-600 bg-emerald-600/20 px-4 py-2 text-sm text-emerald-100 hover:bg-emerald-600/30 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
-        >
-          <Play className="h-4 w-4" aria-hidden />
-          Iniciar producción
-        </button>
+        <h1 className="text-xl font-semibold text-slate-100">Planificador</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleReset}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-700 bg-transparent px-4 py-2 text-sm text-red-100 hover:bg-red-700/10 cursor-pointer transition-all active:scale-95"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+            Reset Cache/Debug
+          </button>
+          <button
+            onClick={startProduction}
+            disabled={jobs.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-white hover:bg-green-500 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
+          >
+            <Play className="h-4 w-4" aria-hidden />
+            Iniciar producción
+          </button>
+        </div>
       </div>
 
       {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950 shadow-xl">
-        <table className="min-w-full divide-y divide-slate-800">
-          <thead className="bg-slate-900">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Sel</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Personaje</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Outfit</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Pose</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Location</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Prompt</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Seed</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-300">Acciones</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800">
-            {jobs.map((job, idx) => {
-              const triplet = extractTriplet(job.prompt);
-              return (
-                <tr key={`${job.character_name}-${idx}`} className="hover:bg-slate-900/40">
-                  <td className="px-4 py-3 align-top">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(idx)}
-                      onChange={() => toggleSelected(idx)}
-                      className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-violet-600 focus:ring-violet-600"
-                      aria-label={`Seleccionar fila ${idx + 1}`}
-                    />
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <span className="text-sm text-zinc-200">{job.character_name}</span>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openQuickEdit(idx, "outfit")}
-                        className="rounded-full border border-pink-600 bg-pink-600/20 px-2 py-1 text-xs text-pink-100 hover:bg-pink-600/30 cursor-pointer transition-all"
-                      >
-                        {triplet.outfit || "—"}
-                      </button>
-                      {openEditor && openEditor.row === idx && openEditor.field === "outfit" && resources && (
-                        <select
-                          className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-zinc-100 focus:ring-violet-600"
-                          defaultValue={triplet.outfit}
-                          onChange={(e) => applyQuickEdit(idx, "outfit", e.target.value)}
-                        >
-                          <option value="">(vacío)</option>
-                          {resources.outfits.map((o) => (
-                            <option key={o} value={o}>{o}</option>
-                          ))}
-                        </select>
+      <div className="space-y-6">
+        {activeCharacter ? (
+          <>
+            {/* Sección Superior (Contexto & Config) */}
+            <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
+              <div className="p-4">
+                <div className="grid grid-cols-12 gap-6 items-start">
+                  {/* Col 1-3: Perfil */}
+                  <div className="col-span-12 md:col-span-3">
+                    <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                      {metaByCharacter[activeCharacter]?.image_url ? (
+                        <img src={metaByCharacter[activeCharacter]!.image_url!} alt={activeCharacter} className="aspect-[2/3] w-full rounded-lg object-cover shadow-lg" />
+                      ) : (
+                        <div className="aspect-[2/3] w-full rounded-lg border border-slate-800 bg-slate-800/40 flex items-center justify-center text-xs text-slate-400">Sin imagen</div>
                       )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex items-center gap-2">
+                      <h2 className="mt-3 text-lg font-bold text-slate-100">{activeCharacter}</h2>
                       <button
-                        onClick={() => openQuickEdit(idx, "pose")}
-                        className="rounded-full border border-violet-600 bg-violet-600/20 px-2 py-1 text-xs text-violet-100 hover:bg-violet-600/30 cursor-pointer transition-all"
+                        onClick={() => deleteCharacter(activeCharacter)}
+                        className="mt-3 w-full rounded-md border border-red-700 bg-red-700/20 px-3 py-2 text-sm font-medium text-red-100 hover:bg-red-700/30"
                       >
-                        {triplet.pose || "—"}
-                      </button>
-                      {openEditor && openEditor.row === idx && openEditor.field === "pose" && resources && (
-                        <select
-                          className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-zinc-100 focus:ring-violet-600"
-                          defaultValue={triplet.pose}
-                          onChange={(e) => applyQuickEdit(idx, "pose", e.target.value)}
-                        >
-                          <option value="">(vacío)</option>
-                          {resources.poses.map((p) => (
-                            <option key={p} value={p}>{p}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openQuickEdit(idx, "location")}
-                        className="rounded-full border border-emerald-600 bg-emerald-600/20 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-600/30 cursor-pointer transition-all"
-                      >
-                        {triplet.location || "—"}
-                      </button>
-                      {openEditor && openEditor.row === idx && openEditor.field === "location" && resources && (
-                        <select
-                          className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-zinc-100 focus:ring-violet-600"
-                          defaultValue={triplet.location}
-                          onChange={(e) => applyQuickEdit(idx, "location", e.target.value)}
-                        >
-                          <option value="">(vacío)</option>
-                          {resources.locations.map((l) => (
-                            <option key={l} value={l}>{l}</option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <textarea
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-600"
-                      value={job.prompt}
-                      rows={3}
-                      onChange={(e) => updatePrompt(idx, e.target.value)}
-                    />
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-zinc-200">{job.seed}</span>
-                      <button
-                        onClick={() => regenerateSeed(idx)}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-zinc-300 hover:bg-slate-800 cursor-pointer transition-all active:scale-95"
-                      >
-                        <RefreshCw className="h-3 w-3" aria-hidden />
-                        Regenerar
+                        <Trash2 className="mr-2 inline-block h-4 w-4" /> Eliminar Personaje
                       </button>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => magicFix(idx)}
-                        disabled={loading}
-                        className="inline-flex items-center gap-1 rounded-md border border-violet-600 bg-violet-600/20 px-2 py-1 text-xs text-violet-100 hover:bg-violet-600/30 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
-                      >
-                        <Wand2 className="h-3 w-3" aria-hidden />
-                        Magic Fix
-                      </button>
-                      <button
-                        onClick={() => deleteRow(idx)}
-                        className="inline-flex items-center gap-1 rounded-md border border-red-600 bg-red-600/20 px-2 py-1 text-xs text-red-100 hover:bg-red-600/30 cursor-pointer transition-all active:scale-95"
-                      >
-                        <Trash2 className="h-3 w-3" aria-hidden />
-                        Borrar
-                      </button>
+                  </div>
+
+                  {/* Col 4-12: Lore, Prompt Base, Config Técnica */}
+                  <div className="col-span-12 md:col-span-9">
+                    <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                      {/* Lore Context */}
+                      <div>
+                        <label className="text-xs uppercase tracking-wide text-slate-400">Lore Context</label>
+                        <div className="mt-1 flex gap-2">
+                          <textarea
+                            value={loreByCharacter[activeCharacter] || ""}
+                            onChange={(e) => setLoreByCharacter((prev) => { const next = { ...prev, [activeCharacter]: e.target.value }; localStorage.setItem("planner_lore", JSON.stringify(next)); return next; })}
+                            className="h-20 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                          />
+                          <button onClick={() => analyzeLore(activeCharacter)} className="inline-flex items-center gap-2 rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-2 text-indigo-100 hover:bg-indigo-700/30">
+                            <Search className="h-4 w-4" /> Analizar
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* CONFIG A1111 (TÉCNICA) - diseño denso estilo A1111 real */}
+                      <div className="mt-4">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="text-xs uppercase tracking-wide text-slate-400">CONFIG A1111 (TÉCNICA)</div>
+                            <button
+                              type="button"
+                              className="text-[11px] rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 hover:bg-slate-700"
+                              onClick={() => {
+                                const t = techConfigByCharacter[activeCharacter!] || {};
+                              const c = configByCharacter[activeCharacter!] || {};
+                              const preset = {
+                                steps: typeof t.steps === "number" ? t.steps : 30,
+                                cfg: typeof t.cfg === "number" ? t.cfg : 7,
+                                negativePrompt: (t.negativePrompt && t.negativePrompt.trim().length > 0) ? t.negativePrompt : DEFAULT_NEGATIVE_ANIME,
+                                batch_size: typeof t.batch_size === "number" ? t.batch_size : 1,
+                                batch_count: typeof t.batch_count === "number" ? t.batch_count : 10,
+                                hiresFix: typeof t.hiresFix === "boolean" ? t.hiresFix : true,
+                                adetailer: typeof t.adetailer === "boolean" ? t.adetailer : true,
+                                upscaler: typeof t.upscaler === "string" ? t.upscaler : "",
+                                denoising: typeof c.denoising === "number" ? c.denoising : 0.35,
+                              };
+                              try { localStorage.setItem("planner_preset_global", JSON.stringify(preset)); } catch {}
+                              }}
+                              title="Guardar Configuración"
+                              aria-label="Guardar Configuración"
+                            >
+                              💾 Guardar Configuración
+                            </button>
+                          </div>
+                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
+                          {/* Fila 1: Modelos */}
+                          <div className="col-span-2">
+                            <label className="text-xs text-slate-300">Stable Diffusion Checkpoint</label>
+                            <select
+                              value={techConfigByCharacter[activeCharacter]?.checkpoint ?? ""}
+                              onChange={async (e) => {
+                                const title = e.target.value;
+                                setTechConfig(activeCharacter, { checkpoint: title });
+                                try { if (title) await postReforgeSetCheckpoint(title); } catch (err) { console.warn("No se pudo aplicar checkpoint", err); }
+                              }}
+                              className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                            >
+                              <option value="">(Sin cambio)</option>
+                              {checkpoints.map((c) => (<option key={c} value={c}>{c}</option>))}
+                            </select>
+                          </div>
+
+                          {/* Fila 2: Prompts Base */}
+                          <div className="col-span-2 grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-xs text-slate-300">Prompt Base (Positivo)</label>
+                              <textarea
+                                value={plannerContext[activeCharacter]?.base_prompt || ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setPlannerContext((prev) => {
+                                    const next = { ...prev, [activeCharacter!]: { ...(prev[activeCharacter!] || {}), base_prompt: v } };
+                                    try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Escribe el prefijo de calidad/estilo..."
+                                className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Prompt Negativo</label>
+                              <textarea
+                                value={techConfigByCharacter[activeCharacter]?.negativePrompt ?? ""}
+                                onChange={(e) => setTechConfig(activeCharacter, { negativePrompt: e.target.value })}
+                                className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Fila 3: Parámetros clave */}
+                          <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
+                            <div className="col-span-2">
+                              <label className="text-xs text-slate-300">Sampler</label>
+                              <select
+                                value={techConfigByCharacter[activeCharacter]?.sampler ?? plannerContext[activeCharacter]?.recommended_params?.sampler ?? "Euler a"}
+                                onChange={(e) => setTechConfig(activeCharacter, { sampler: e.target.value })}
+                                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                              >
+                                <option>Euler a</option>
+                                <option>Euler</option>
+                                <option>DDIM</option>
+                                <option>DPM++ 2M Karras</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Steps</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="flex-1">{SliderBar({
+                                  value: techConfigByCharacter[activeCharacter]?.steps ?? plannerContext[activeCharacter]?.recommended_params?.steps ?? 30,
+                                  min: 1,
+                                  max: 60,
+                                  step: 1,
+                                  onChange: (v) => setTechConfig(activeCharacter, { steps: v }),
+                                })}</div>
+                                <input
+                                  type="number"
+                                  value={techConfigByCharacter[activeCharacter]?.steps ?? plannerContext[activeCharacter]?.recommended_params?.steps ?? 30}
+                                  onChange={(e) => setTechConfig(activeCharacter, { steps: Number(e.target.value) })}
+                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">CFG</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="flex-1">{SliderBar({
+                                  value: techConfigByCharacter[activeCharacter]?.cfg ?? plannerContext[activeCharacter]?.recommended_params?.cfg ?? 7,
+                                  min: 1,
+                                  max: 20,
+                                  step: 0.5,
+                                  onChange: (v) => setTechConfig(activeCharacter, { cfg: v }),
+                                })}</div>
+                                <input
+                                  type="number"
+                                  step={0.5}
+                                  value={techConfigByCharacter[activeCharacter]?.cfg ?? plannerContext[activeCharacter]?.recommended_params?.cfg ?? 7}
+                                  onChange={(e) => setTechConfig(activeCharacter, { cfg: Number(e.target.value) })}
+                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Fila 4: Sliders */}
+                          <div className="col-span-2 grid grid-cols-3 gap-4">
+                            <div>
+                              <label className="text-xs text-slate-300">Batch Size</label>
+                              <input
+                                type="range"
+                                min={1}
+                                max={4}
+                                value={techConfigByCharacter[activeCharacter]?.batch_size ?? 1}
+                                onChange={(e) => setTechConfig(activeCharacter, { batch_size: Number(e.target.value) })}
+                                className="mt-2 w-full"
+                              />
+                              <div className="mt-1 text-[11px] text-slate-400">{techConfigByCharacter[activeCharacter]?.batch_size ?? 1} imágenes por job</div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Batch Count</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <input
+                                  type="range"
+                                  min={1}
+                                  max={20}
+                                  value={techConfigByCharacter[activeCharacter]?.batch_count ?? 10}
+                                  onChange={(e) => setTechConfig(activeCharacter, { batch_count: Number(e.target.value) })}
+                                  className="flex-1"
+                                />
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={20}
+                                  value={techConfigByCharacter[activeCharacter]?.batch_count ?? 10}
+                                  onChange={(e) => {
+                                    let v = Number(e.target.value);
+                                    if (!Number.isFinite(v)) v = 10;
+                                    if (v < 1) v = 1;
+                                    if (v > 20) v = 20;
+                                    setTechConfig(activeCharacter, { batch_count: v });
+                                  }}
+                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-400">{techConfigByCharacter[activeCharacter]?.batch_count ?? 10} jobs planificados</div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Seed</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  placeholder="Random (-1)"
+                                  value={techConfigByCharacter[activeCharacter]?.seed ?? -1}
+                                  onChange={(e) => setTechConfig(activeCharacter, { seed: Number(e.target.value) })}
+                                  className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                />
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                                  onClick={() => setTechConfig(activeCharacter, { seed: -1 })}
+                                  aria-label="Seed aleatorio"
+                                  title="Seed aleatorio (-1)"
+                                >
+                                  🎲
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Fila 5: Checkboxes y Extras */}
+                          <div className="col-span-2 flex gap-6 pt-2 border-t border-slate-800 items-center">
+                            <label className="flex items-center gap-2 text-slate-300 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={techConfigByCharacter[activeCharacter]?.hiresFix ?? (configByCharacter[activeCharacter]?.hiresFix ?? true)}
+                                onChange={(e) => setTechConfig(activeCharacter, { hiresFix: e.target.checked })}
+                                className="accent-blue-500"
+                              />
+                              Hires. Fix
+                            </label>
+                            <label className="flex items-center gap-2 text-slate-300 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={techConfigByCharacter[activeCharacter]?.adetailer ?? true}
+                                onChange={(e) => setTechConfig(activeCharacter, { adetailer: e.target.checked })}
+                                className="accent-blue-500"
+                              />
+                              ADetailer
+                            </label>
+                            <div className="flex-1" />
+                            {(techConfigByCharacter[activeCharacter]?.hiresFix ?? (configByCharacter[activeCharacter]?.hiresFix ?? true)) && (
+                              <div className="flex items-center gap-4 w-full">
+                                <div className="min-w-[220px]">
+                                  <label className="text-xs text-slate-300">Upscaler</label>
+                                  <select
+                                    value={techConfigByCharacter[activeCharacter]?.upscaler ?? ""}
+                                    onChange={(e) => setTechConfig(activeCharacter, { upscaler: e.target.value })}
+                                    className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                  >
+                                    <option value="">(none)</option>
+                                    {resources?.upscalers?.map((u) => (<option key={u} value={u}>{u}</option>))}
+                                  </select>
+                                </div>
+                                <div className="flex-1">
+                                  <label className="text-xs text-slate-300 flex items-center justify-between">
+                                    <span>Denoise</span>
+                                    <input
+                                      type="number"
+                                      step={0.01}
+                                      value={configByCharacter[activeCharacter]?.denoising ?? 0.35}
+                                      onChange={(e) => setConfigByCharacter((prev) => { const next = { ...prev, [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: Number(e.target.value) } }; localStorage.setItem("planner_config", JSON.stringify(next)); return next; })}
+                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                    />
+                                  </label>
+                                  {SliderBar({
+                                    value: configByCharacter[activeCharacter]?.denoising ?? 0.35,
+                                    min: 0,
+                                    max: 1,
+                                    step: 0.01,
+                                    onChange: (v) => setConfigByCharacter((prev) => { const next = { ...prev, [activeCharacter]: { ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35, outputPath: `OUTPUTS_DIR/${activeCharacter}/` }), denoising: v } }; localStorage.setItem("planner_config", JSON.stringify(next)); return next; }),
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Sección Inferior: Cola de Producción */}
+            <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
+              <div className="p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-100">Cola de Producción ({perCharacter[activeCharacter]?.jobs.length || 0} Jobs)</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={toggleAllDetailsGlobal} className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800">Expandir/Colapsar Todos</button>
+                    <button onClick={regenerateAllSeeds} className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"><RefreshCw className="h-3 w-3 inline" /> Regenerar Todas las Seeds</button>
+                  </div>
+                </div>
+                <ul className="space-y-3">
+                  {perCharacter[activeCharacter]?.jobs.map((job, i) => {
+                    const idx = perCharacter[activeCharacter]!.indices[i];
+                    const triplet = extractTriplet(job.prompt);
+                    const intensity = getIntensity(job.prompt);
+                    return (
+                      <li key={`${activeCharacter}-${i}`} className="rounded-lg border border-slate-700 bg-slate-900 p-3">
+                        {/* Header */}
+                        <div onClick={() => toggleDetails(idx)} className="flex items-center justify-between border-b border-slate-700 pb-2 cursor-pointer">
+                          {/* Zona Izquierda: Título */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-slate-200">Job #{i + 1}</span>
+                          </div>
+                          {/* Zona Centro: Selector Intensidad (no colapsa) */}
+                          <div className="flex items-center">
+                            <select value={intensity.label} onClick={(e) => e.stopPropagation()} onChange={(e) => setIntensity(idx, e.target.value as "Safe" | "Ecchi" | "NSFW")} className={`rounded px-2 py-0.5 text-xs text-white ${intensity.className.replace("/30", "")}`}>
+                              <option value="Safe">Safe</option>
+                              <option value="Ecchi">Ecchi</option>
+                              <option value="NSFW">NSFW</option>
+                            </select>
+                          </div>
+                          {/* Zona Derecha: Acciones */}
+                          <div className="flex items-center gap-2">
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteJob(activeCharacter, i); }} className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30">
+                              <Trash2 className="h-3 w-3" aria-hidden />
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); toggleDetails(idx); }} className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800">
+                              {showDetails.has(idx) ? (<ChevronUp className="h-3 w-3" aria-hidden />) : (<ChevronDown className="h-3 w-3" aria-hidden />)}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Body: selectores */}
+                        <div className="pt-3">
+                          <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                            <div>
+                              <label className="text-xs text-slate-400 flex items-center gap-1">
+                                <span>Outfit</span>
+                                {job?.ai_meta?.outfit && (
+                                  <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300"><Bot className="h-3 w-3" /></span>
+                                )}
+                              </label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={triplet.outfit || ""} onChange={(e) => applyQuickEdit(idx, "outfit", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.outfits.map((o) => (<option key={o} value={o}>{o}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400">Pose</label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={triplet.pose || ""} onChange={(e) => applyQuickEdit(idx, "pose", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.poses.map((p) => (<option key={p} value={p}>{p}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400">Location</label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={triplet.location || ""} onChange={(e) => applyQuickEdit(idx, "location", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.locations.map((l) => (<option key={l} value={l}>{l}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400 flex items-center gap-1">
+                                <span>Lighting</span>
+                                {job?.ai_meta?.lighting && (
+                                  <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300"><Bot className="h-3 w-3" /></span>
+                                )}
+                              </label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).lighting || ""} onChange={(e) => applyExtrasEdit(idx, "lighting", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.lighting?.map((it) => (<option key={it} value={it}>{it}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400 flex items-center gap-1">
+                                <span>Camera</span>
+                                {job?.ai_meta?.camera && (
+                                  <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300"><Bot className="h-3 w-3" /></span>
+                                )}
+                              </label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).camera || ""} onChange={(e) => applyExtrasEdit(idx, "camera", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.camera?.map((it) => (<option key={it} value={it}>{it}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400">Expression</label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).expression || ""} onChange={(e) => applyExtrasEdit(idx, "expression", e.target.value)}>
+                                <option value="">(vacío)</option>
+                                {resources && resources.expressions?.map((it) => (<option key={it} value={it}>{it}</option>))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-400">Hairstyle</label>
+                              <select className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200" value={extractExtras(job.prompt).hairstyle || ""} onChange={(e) => applyExtrasEdit(idx, "hairstyle", e.target.value)}>
+                                <option value="">(Original/Vacío)</option>
+                                {resources && resources.hairstyles?.map((it) => (<option key={it} value={it}>{it}</option>))}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Footer acciones */}
+                          <div className="mt-3 flex items-center justify-end gap-2">
+                            <button onClick={() => magicFix(idx)} disabled={loading} className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60">
+                              <Wand2 className="h-4 w-4" /> <span>Magic Fix</span>
+                            </button>
+                            <button onClick={() => { const ensured = ensureTriplet(jobs[idx].prompt); updatePrompt(idx, ensured); }} className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40">
+                              <Cog className="h-4 w-4" /> <span>Aplicar</span>
+                            </button>
+                            <button onClick={() => regenerateSeed(idx)} className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">
+                              <RefreshCw className="h-4 w-4" /> <span>Regenerar</span>
+                            </button>
+                            <button onClick={() => toggleDetails(idx)} className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">
+                              <Camera className="h-4 w-4" /> <span>Ver Prompt</span>
+                            </button>
+                          </div>
+
+                          {/* Área Expandible */}
+                          {showDetails.has(idx) && (
+                            <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
+                              <textarea value={job.prompt} onChange={(e) => updatePrompt(idx, e.target.value)} className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200" />
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </section>
+          </>
+        ) : (
+          <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-slate-300">Selecciona un personaje</div>
+        )}
       </div>
 
       {selected.size > 0 && (

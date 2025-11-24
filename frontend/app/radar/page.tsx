@@ -10,21 +10,29 @@ export default function RadarPage() {
 
   const onScan = async (
     period: "Day" | "Week" | "Month" = "Week",
-    sort: "Rating" | "Downloads" = "Rating"
+    sort: "Rating" | "Downloads" = "Rating",
+    query?: string
   ) => {
     setLoading(true);
     setError(null);
     try {
       const sortParam = sort === "Rating" ? "Highest Rated" : "Most Downloaded";
       const periodParam = period;
-      const res = await fetch(`http://127.0.0.1:8000/scan/civitai?period=${encodeURIComponent(periodParam)}&sort=${encodeURIComponent(sortParam)}`);
+      const base = `http://127.0.0.1:8000/scan/civitai`;
+      const u = new URL(base);
+      u.searchParams.set("period", periodParam);
+      u.searchParams.set("sort", sortParam);
+      if (query && query.trim().length > 0) {
+        u.searchParams.set("query", query.trim());
+      }
+      const res = await fetch(u.toString());
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
       setItems(list);
       try { localStorage.setItem('radar_cache', JSON.stringify(list)); } catch (e) {}
-    } catch (e: any) {
-      const msg = e?.message ?? "Error desconocido";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
     } finally {
       setLoading(false);
@@ -37,7 +45,7 @@ export default function RadarPage() {
       const cached = localStorage.getItem('radar_cache');
       if (cached) {
         const list = JSON.parse(cached);
-        if (Array.isArray(list)) setItems(list as any);
+        if (Array.isArray(list)) setItems(list as CivitaiModel[]);
       }
     } catch (e) {
       // noop

@@ -1,0 +1,10 @@
+sweater
+hoodie
+sundress
+t-shirt
+jeans
+shorts
+cardigan
+skirt
+tank top
+blouse

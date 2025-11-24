@@ -1,16 +1,18 @@
 "use client";
 import React from "react";
-import { Scan, Loader2, Send, Trash2, ListX, X, Save } from "lucide-react";
+import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
 import { postPlannerDraft } from "../../lib/api";
 import { useRouter } from "next/navigation";
+import COPY from "../../lib/copy";
+
 
 export interface RadarViewProps {
   items: CivitaiModel[];
   loading: boolean;
   error: string | null;
-  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads") => void;
+  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string) => void;
 }
 
 function SkeletonCard() {
@@ -38,6 +40,8 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [showBlacklist, setShowBlacklist] = React.useState(false);
   const [blacklist, setBlacklist] = React.useState<string[]>([]);
   const [blacklistInput, setBlacklistInput] = React.useState("");
+  const [query, setQuery] = React.useState("");
+  const lastFiredRef = React.useRef<string>("");
 
   React.useEffect(() => {
     try {
@@ -49,13 +53,13 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       }
       setBlacklist(list);
       setBlacklistInput(list.join(", "));
-    } catch {}
+    } catch { }
   }, []);
 
   React.useEffect(() => {
     try {
       localStorage.setItem("radar_blacklist", JSON.stringify(blacklist));
-    } catch {}
+    } catch { }
   }, [blacklist]);
 
   const parseInputToList = (input: string): string[] => {
@@ -77,6 +81,17 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     setBlacklist((prev) => prev.filter((t) => t !== tag.toLowerCase()));
     setBlacklistInput((prev) => parseInputToList(prev).filter((t) => t !== tag.toLowerCase()).join(", "));
   };
+
+  React.useEffect(() => {
+    const h = setTimeout(() => {
+      const q = query.trim();
+      if (q.length >= 3 && q !== lastFiredRef.current) {
+        onScan(period, sort, q);
+        lastFiredRef.current = q;
+      }
+    }, 800);
+    return () => clearTimeout(h);
+  }, [query, onScan, period, sort]);
 
   const toggleSelect = (id: number) => {
     const m = items.find((x) => x.id === id);
@@ -115,15 +130,22 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       return items.filter((m) => matchers[tab](m));
     })();
     if (blacklist.length === 0) return byTab;
-    const blocked = new Set(blacklist.map((t) => t.toLowerCase()));
-    const hasBlocked = (m: CivitaiModel) => {
-      const tags = (m.tags || []).map((t) => t.toLowerCase());
-      for (const t of tags) {
-        if (blocked.has(t)) return true;
+    const rules = blacklist.map((entry) => {
+      const [rawTag, rawCat] = entry.split(":");
+      return { tag: (rawTag || "").trim().toLowerCase(), cat: (rawCat || "").trim().toLowerCase() || null };
+    }).filter((r) => r.tag.length > 0);
+
+    const isBlocked = (m: CivitaiModel) => {
+      const tags = (m.tags || []).map((t) => (t || "").toLowerCase());
+      const cat = (m.ai_category || "").toLowerCase();
+      for (const r of rules) {
+        if (tags.includes(r.tag)) {
+          if (!r.cat || r.cat === cat) return true;
+        }
       }
       return false;
     };
-    return byTab.filter((m) => !hasBlocked(m));
+    return byTab.filter((m) => !isBlocked(m));
   }, [items, tab, blacklist]);
 
   const deriveTriggerWords = (m: CivitaiModel): string[] => {
@@ -141,8 +163,31 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       trigger_words: deriveTriggerWords(m),
     }));
     try {
-      const res = await postPlannerDraft(payload);
+      // Leer batch_count desde preset global si existe
+      let jobCount: number | undefined = undefined;
+      try {
+        const raw = localStorage.getItem("planner_preset_global");
+        if (raw) {
+          const preset = JSON.parse(raw);
+          if (preset && typeof preset.batch_count === "number" && preset.batch_count > 0) {
+            jobCount = preset.batch_count;
+          }
+        }
+      } catch {}
+      const res = await postPlannerDraft(payload, jobCount);
       localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
+      // Nuevo: guardar contexto enriquecido por personaje
+      try {
+        const contextByCharacter: Record<string, unknown> = {};
+        for (const d of res.drafts || []) {
+          contextByCharacter[d.character] = {
+            base_prompt: d.base_prompt,
+            recommended_params: d.recommended_params,
+            reference_images: d.reference_images,
+          };
+        }
+        localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
+      } catch { }
       // Guardar metadatos para la Fábrica (modelId + downloadUrl)
       const meta = selectedModels.map((m) => {
         const versions = m.modelVersions || [];
@@ -153,13 +198,15 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
           if (url) break;
         }
-        return { modelId: m.id, downloadUrl: url, character_name: m.name };
+        const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
+        return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
       });
       localStorage.setItem("planner_meta", JSON.stringify(meta));
       router.push("/planner");
-    } catch (e) {
-      console.error("Failed to draft planner", e);
-      alert("Error al generar plan: " + (e as any)?.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Failed to draft planner", msg);
+      alert("Error al generar plan: " + msg);
     }
   };
 
@@ -173,7 +220,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           <label className="text-xs text-zinc-300">Periodo</label>
           <select
             value={period}
-            onChange={(e) => setPeriod(e.target.value as any)}
+            onChange={(e) => setPeriod(e.target.value as "Day" | "Week" | "Month")}
             className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1 text-xs text-zinc-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-700"
           >
             <option value="Day">Day</option>
@@ -183,7 +230,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           <label className="text-xs text-zinc-300">Sort</label>
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as any)}
+            onChange={(e) => setSort(e.target.value as "Rating" | "Downloads")}
             className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1 text-xs text-zinc-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-700"
           >
             <option value="Rating">Rating</option>
@@ -191,8 +238,24 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" aria-hidden />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={COPY.radar.searchPlaceholder}
+              className="w-[220px] rounded-lg border border-slate-800 bg-slate-900 pl-8 pr-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-slate-700"
+            />
+          </div>
           <button
-            onClick={() => onScan(period, sort)}
+            onClick={() => {
+              const q = query.trim();
+              if (q.length >= 3) {
+                onScan(period, sort, q);
+                lastFiredRef.current = q;
+              }
+            }}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-600/30 hover:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-600 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
           >
@@ -201,7 +264,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             ) : (
               <Scan className="h-4 w-4" aria-hidden />
             )}
-            {loading ? "Escaneando..." : "Escanear Tendencias"}
+            {loading ? "Escaneando..." : "Buscar / Escanear"}
           </button>
           <button
             onClick={openBlacklist}
@@ -255,15 +318,14 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
       {/* Tabs de categoría */}
       <div className="mb-4 flex flex-wrap gap-2">
-        {[("Todo"), ("Personajes"), ("Poses/Ropa"), ("Estilo"), ("Conceptos/Otros")].map((t) => (
+        {(["Todo", "Personajes", "Poses/Ropa", "Estilo", "Conceptos/Otros"] as Array<"Todo" | "Personajes" | "Poses/Ropa" | "Estilo" | "Conceptos/Otros">).map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t as any)}
-            className={`inline-flex items-center rounded-full border px-3 py-1 text-xs cursor-pointer transition-all active:scale-95 ${
-              tab === t
-                ? "border-violet-500 bg-violet-500/20 text-violet-200"
-                : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
-            }`}
+            onClick={() => setTab(t)}
+            className={`inline-flex items-center rounded-full border px-3 py-1 text-xs cursor-pointer transition-all active:scale-95 ${tab === t
+              ? "border-violet-500 bg-violet-500/20 text-violet-200"
+              : "border-slate-800 bg-slate-900 text-zinc-300 hover:bg-slate-800"
+              }`}
           >
             {t}
           </button>
@@ -273,21 +335,21 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       {/* Estado vacío si no hay datos y no está cargando */}
       {!loading && items.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-sm text-zinc-300">
-          Sin datos. Pulsa Escanear.
+          {query.trim().length >= 3 ? `No se encontraron resultados para '${query.trim()}'` : "Sin datos. Pulsa Escanear."}
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 w-full">
           {loading
             ? Array.from({ length: 12 }).map((_, idx) => <SkeletonCard key={idx} />)
             : filtered.map((item, idx) => (
-                <CivitaiCard
-                  key={item.id}
-                  model={item}
-                  index={idx + 1}
-                  selected={selectedItems.some((s) => s.modelId === item.id)}
-                  onToggle={toggleSelect}
-                />
-              ))}
+              <CivitaiCard
+                key={item.id}
+                model={item}
+                index={idx + 1}
+                selected={selectedItems.some((s) => s.modelId === item.id)}
+                onToggle={toggleSelect}
+              />
+            ))}
         </div>
       )}
 

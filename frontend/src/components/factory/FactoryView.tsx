@@ -1,7 +1,8 @@
 "use client";
 import React from "react";
-import { getFactoryStatus, postFactoryStop } from "../../lib/api";
-import { OctagonX, Square } from "lucide-react";
+import { getFactoryStatus, postFactoryStop, getReforgeProgress } from "../../lib/api";
+import type { FactoryStatus } from "../../lib/api";
+import { OctagonX, Square, Eraser } from "lucide-react";
 
 export default function FactoryView() {
   const [isActive, setIsActive] = React.useState(false);
@@ -11,10 +12,13 @@ export default function FactoryView() {
   const [lastImage, setLastImage] = React.useState<string | null>(null);
   const [logs, setLogs] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
+  const [currentPrompt, setCurrentPrompt] = React.useState<string | null>(null);
+  const [currentNegativePrompt, setCurrentNegativePrompt] = React.useState<string | null>(null);
+  const [currentConfig, setCurrentConfig] = React.useState<FactoryStatus["current_config"]>(null);
+  const [realProgress, setRealProgress] = React.useState(0);
 
   React.useEffect(() => {
     let mounted = true;
-    let interval: any;
     const poll = async () => {
       try {
         const status = await getFactoryStatus();
@@ -25,28 +29,51 @@ export default function FactoryView() {
         setCharacter(status.current_character || null);
         setLastImage(status.last_image_b64 || null);
         setLogs(status.logs || []);
-      } catch (e: any) {
+        setCurrentPrompt(status.current_prompt || null);
+        setCurrentConfig(status.current_config || null);
+        setCurrentNegativePrompt(status.current_negative_prompt || null);
+
+        // Si está activo, consultar progreso real a ReForge
+        if (status.is_active) {
+          try {
+            const prog = await getReforgeProgress();
+            if (mounted && prog && typeof prog.progress === 'number') {
+              setRealProgress(Math.round(prog.progress * 100));
+            }
+          } catch (e) {
+            // Ignorar error de progreso para no spamear
+          }
+        } else {
+          setRealProgress(0);
+        }
+      } catch (e: unknown) {
         if (!mounted) return;
-        setError(e?.message || "Error consultando estado de Fábrica");
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg || "Error consultando estado de Fábrica");
       }
     };
+    const interval = setInterval(poll, 1000);
     poll();
-    interval = setInterval(poll, 2000);
     return () => {
       mounted = false;
       clearInterval(interval);
     };
   }, []);
 
-  const progressPercent = total > 0 ? Math.min(100, Math.max(0, Math.round((currentIndex / total) * 100))) : 0;
+  // Usar progreso real si está disponible, sino fallback a jobs
+  const jobProgress = total > 0 ? Math.min(100, Math.max(0, Math.round((currentIndex / total) * 100))) : 0;
+  const displayProgress = isActive ? realProgress : jobProgress;
 
   const stop = async () => {
     try {
       await postFactoryStop();
-    } catch (e: any) {
-      setError(e?.message || "Error al solicitar parada");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error al solicitar parada");
     }
   };
+
+  const clearLogs = () => { setLogs([]); };
 
   const severityColor = (line: string) => {
     const s = (line || "").toLowerCase();
@@ -82,10 +109,32 @@ export default function FactoryView() {
       {/* Barra de progreso */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
         <div className="h-2 w-full rounded-full bg-slate-800">
-          <div style={{ width: `${progressPercent}%` }} className="h-2 rounded-full bg-emerald-500 transition-all" />
+          <div style={{ width: `${displayProgress}%` }} className="h-2 rounded-full bg-emerald-500 transition-all" />
         </div>
         <div className="mt-2 text-xs text-zinc-400">
           {character ? `Objetivo actual: ${character}` : ""}
+        </div>
+        {/* Orden solicitado: Base Prompt, Negative Prompt y Configuración */}
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="text-xs text-zinc-400">
+            <div className="font-medium text-zinc-300">Prompt enviado</div>
+            <pre className="mt-1 whitespace-pre-wrap break-words">{currentPrompt || "—"}</pre>
+            <div className="mt-3">
+              <div className="font-medium text-zinc-300">Prompt negativo</div>
+              <pre className="mt-1 whitespace-pre-wrap break-words">{currentNegativePrompt || "—"}</pre>
+            </div>
+          </div>
+          <div className="text-xs text-zinc-400">
+            <div className="font-medium text-zinc-300">Configuración</div>
+            <ul className="mt-1 space-y-1">
+              <li>Steps: {currentConfig?.steps ?? "—"}</li>
+              <li>CFG: {currentConfig?.cfg ?? "—"}</li>
+              <li>Batch Size: {currentConfig?.batch_size ?? "—"}</li>
+              <li>Hires Fix: {currentConfig?.hires_fix ? `ON (x${currentConfig?.hr_scale ?? ""})` : "OFF"}</li>
+              <li>Seed: {currentConfig?.seed ?? "—"}</li>
+              <li>Checkpoint: {currentConfig?.checkpoint ?? "—"}</li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -105,7 +154,17 @@ export default function FactoryView() {
 
         {/* Consola de logs */}
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-          <h2 className="text-sm font-medium mb-3">Consola</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium">Consola</h2>
+            <button
+              onClick={clearLogs}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/40 px-2 py-1 text-xs text-zinc-200 hover:bg-slate-800/60 cursor-pointer transition-all active:scale-95"
+              title="Limpiar consola"
+            >
+              <Eraser className="h-4 w-4" aria-hidden />
+              Limpiar
+            </button>
+          </div>
           <div className="h-[420px] w-full rounded-lg border border-slate-800 bg-slate-900 overflow-auto p-3 text-xs font-mono text-zinc-300">
             {logs && logs.length > 0 ? (
               <ul className="space-y-1">

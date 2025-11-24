@@ -38,3 +38,9 @@
 - Cause: Definiciones separadas de `View` sin la nueva opción `studio`; estilos de interacción omitidos.
 - Fix: Se unificó el literal `View` añadiendo "studio" en ambos archivos y se integró la vista `StudioView` en `page.tsx`. Se actualizaron clases de botones en Sidebar, RadarView, ProcessView y FactoryControl.
 - Prevention: Centralizar tipos de navegación en `src/types` para evitar divergencias; checklist UI para interacción mínima (`cursor-pointer`, `transition-all`, `active:scale-95`) antes de cerrar PR.
+
+## 2025-11-23
+- Issue: Errores de TypeScript al actualizar `PlannerView.tsx` (propiedades desconocidas en `setTechConfig`: `upscaler`, `checkpoint`).
+- Cause: Se añadieron nuevos controles al panel técnico sin extender el tipo del helper `setTechConfig`.
+- Fix: Extender el tipo de `setTechConfig` para incluir `{ upscaler: string; checkpoint: string }` y persistir correctamente en `techConfigByCharacter`.
+- Prevention: Cada vez que se agreguen controles o propiedades nuevas en el estado técnico, actualizar los tipos y ejecutar ESLint/TS antes del commit. Añadir verificación en PR checklist.

@@ -1,0 +1,15 @@
+soft ambient light
+cinematic lighting
+rim lighting
+neon backlight
+volumetric light rays
+moonlit night
+sunset golden hour
+backlit silhouette
+film grain texture
+depth of field (bokeh)
+low-angle shot
+high-angle shot
+portrait close-up
+wide-angle composition
+rule of thirds framing
