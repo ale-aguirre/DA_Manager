@@ -659,6 +659,8 @@ export default function PlannerView() {
         }
       } catch (e) {
         console.warn("No se pudieron cargar checkpoints:", e);
+        setToast({ message: "❌ Error: no se pudieron cargar checkpoints" });
+        setTimeout(() => setToast(null), 2500);
       }
     })();
   }, []);
@@ -692,6 +694,8 @@ export default function PlannerView() {
       setCheckpointVersion((v) => v + 1);
     } catch (e) {
       console.warn("Refresh checkpoints falló", e);
+      setToast({ message: "❌ Error al actualizar checkpoints" });
+      setTimeout(() => setToast(null), 2500);
     } finally {
       setRefreshingCheckpoints(false);
     }
@@ -706,6 +710,8 @@ export default function PlannerView() {
         setLorasPath(path || null);
       } catch (e) {
         console.warn("No se pudieron cargar LoRAs locales:", e);
+        setToast({ message: "❌ Error: no se pudieron cargar LoRAs locales" });
+        setTimeout(() => setToast(null), 2500);
       }
     })();
   }, []);
@@ -717,6 +723,8 @@ export default function PlannerView() {
       setLorasPath(path || null);
     } catch (e) {
       console.warn("Refresh LoRAs falló", e);
+      setToast({ message: "❌ Error al actualizar LoRAs" });
+      setTimeout(() => setToast(null), 2500);
     }
   };
 
@@ -1728,11 +1736,12 @@ export default function PlannerView() {
 
                       {/* CONFIG A1111 (TÉCNICA) - diseño denso estilo A1111 real */}
                       <div className="mt-4">
-                        <div className="mb-2 flex items-center justify-between">
-                          <div className="text-xs uppercase tracking-wide text-slate-400">
-                            CONFIG A1111 (TÉCNICA)
-                          </div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-3">
+                          <span>CONFIG A1111 (TÉCNICA)</span>
+                          <EngineHealthIndicator />
                         </div>
+                      </div>
                         <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
                           {/* Fila 1: Modelos */}
                           <div className="col-span-2">
@@ -2943,5 +2952,33 @@ export default function PlannerView() {
         </div>
       )}
     </div>
+  );
+}
+
+function EngineHealthIndicator() {
+  const [status, setStatus] = React.useState<"ok" | "error" | null>(null);
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${API_BASE}/reforge/health`, { cache: "no-store" });
+        if (!res.ok) throw new Error(String(res.status));
+        const j = await res.json();
+        setStatus(j?.status === "ok" ? "ok" : "error");
+      } catch {
+        setStatus("error");
+      }
+    })();
+  }, []);
+  if (status === null) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[11px]">
+      {status === "ok" ? (
+        <span className="inline-block h-3 w-3 rounded-full bg-green-400" />
+      ) : (
+        <span className="inline-block h-3 w-3 rounded-full bg-red-400" />
+      )}
+      {status === "ok" ? "Motor: Online" : "Motor: Offline"}
+    </span>
   );
 }

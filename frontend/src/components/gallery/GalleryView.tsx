@@ -27,8 +27,6 @@ export default function GalleryView() {
     null
   );
   const [overrideBase, setOverrideBase] = React.useState<string>("");
-  const [showOverrideInput, setShowOverrideInput] =
-    React.useState<boolean>(false);
   const [folders, setFolders] = React.useState<string[]>([]);
   const [selectedFolder, setSelectedFolder] = React.useState<string>("");
 
