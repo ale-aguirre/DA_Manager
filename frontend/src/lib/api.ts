@@ -63,8 +63,11 @@ export interface PlannerDraftResponse {
   drafts: PlannerDraftEnriched[];
 }
 
-export async function postPlannerDraft(items: PlannerDraftItem[], jobCount?: number): Promise<PlannerDraftResponse> {
-  const url = jobCount && jobCount > 0 ? `${BASE_URL}/planner/draft?job_count=${jobCount}` : `${BASE_URL}/planner/draft`;
+export async function postPlannerDraft(items: PlannerDraftItem[], jobCount?: number, allowExtraLoras?: boolean): Promise<PlannerDraftResponse> {
+  const params: string[] = [];
+  if (jobCount && jobCount > 0) params.push(`job_count=${jobCount}`);
+  if (typeof allowExtraLoras === "boolean") params.push(`allow_extra_loras=${allowExtraLoras ? "1" : "0"}`);
+  const url = params.length > 0 ? `${BASE_URL}/planner/draft?${params.join("&")}` : `${BASE_URL}/planner/draft`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -77,7 +80,7 @@ export async function postPlannerDraft(items: PlannerDraftItem[], jobCount?: num
   return res.json();
 }
 
-export async function magicFixPrompt(prompt: string): Promise<{ outfit: string; pose: string; location: string }> {
+export async function magicFixPrompt(prompt: string): Promise<{ outfit: string; pose: string; location: string; ai_reasoning?: string }> {
   const res = await fetch(`${BASE_URL}/planner/magicfix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -132,6 +135,7 @@ export interface GroupConfigItem {
 
 export interface ReforgeProgress {
   progress?: number;
+  current_image?: string;
   [k: string]: unknown;
 }
 
@@ -141,14 +145,14 @@ export async function getReforgeProgress(): Promise<ReforgeProgress> {
   return res.json();
 }
 
-export async function getLocalLoras(): Promise<string[]> {
+export async function getLocalLoras(): Promise<{ files: string[]; path?: string }> {
   const res = await fetch(`${BASE_URL}/local/loras`, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Local LoRAs failed (${res.status}): ${text}`);
   }
   const data = await res.json();
-  return Array.isArray(data?.files) ? data.files : [];
+  return { files: Array.isArray(data?.files) ? data.files : [], path: typeof data?.path === "string" ? data.path : undefined };
 }
 
 export async function postPlannerExecuteV2(
@@ -208,11 +212,13 @@ export async function getPlannerResources(): Promise<PlannerResources> {
   return res.json();
 }
 
-export async function postPlannerAnalyze(character_name: string, tags: string[] = []): Promise<{ jobs: PlannerJob[]; lore?: string }> {
+export async function postPlannerAnalyze(character_name: string, tags: string[] = [], batchCount?: number): Promise<{ jobs: PlannerJob[]; lore?: string; ai_reasoning?: string }> {
+  const payload: Record<string, unknown> = { character_name, tags };
+  if (typeof batchCount === "number" && batchCount > 0) payload.batch_count = batchCount;
   const res = await fetch(`${BASE_URL}/planner/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ character_name, tags }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -229,6 +235,15 @@ export async function getReforgeCheckpoints(): Promise<string[]> {
   }
   const data = await res.json();
   return Array.isArray(data?.titles) ? data.titles : [];
+}
+
+export async function postReforgeRefresh(): Promise<{ status?: string } | Record<string, unknown>> {
+  const res = await fetch(`${BASE_URL}/reforge/refresh`, { method: "POST" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ReForge refresh failed (${res.status}): ${text}`);
+  }
+  return res.json();
 }
 
 export async function postReforgeSetCheckpoint(title: string): Promise<{ status?: string } | Record<string, unknown>> {

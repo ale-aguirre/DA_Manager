@@ -148,11 +148,15 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return byTab.filter((m) => !isBlocked(m));
   }, [items, tab, blacklist]);
 
-  const deriveTriggerWords = (m: CivitaiModel): string[] => {
-    const base = [m.name];
-    const tags = (m.tags || []).slice(0, 3);
-    return [...base, ...tags].filter((t) => !!t && t.trim().length > 0);
-  };
+const deriveTriggerWords = (m: CivitaiModel): string[] => {
+  const base = [m.name];
+  const banned = new Set(["character", "hentai", "anime", "high quality", "masterpiece"]);
+  const tags = (m.tags || []).filter((t) => {
+    const v = (t || "").trim().toLowerCase();
+    return v.length > 0 && !banned.has(v);
+  }).slice(0, 5);
+  return [...base, ...tags];
+};
 
 
   const handleSendToPlanning = async () => {

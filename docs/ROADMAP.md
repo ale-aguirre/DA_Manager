@@ -1,6 +1,6 @@
 # 🗺️ LadyManager Roadmap 
  
- ## 🟢 Fase 1: Infraestructura y Radar (Actual) 
+## 🟢 Fase 1: Infraestructura y Radar (Actual) 
  - [ ] Configuración de Monorepo (Back/Front). 
  - [ ] Variables de entorno dinámicas (.env). 
  - [ ] Endpoint de Scraping a Civitai (usando cloudscraper). 
@@ -112,3 +112,92 @@
 - [x] Set default **Hires Steps** to 15 in Planner.
 - [x] Set default **Upscaler** to "R-ESRGAN 4x+" in Planner.
 - [x] Set default **Hairstyle** to "(Original/Vacío)" to respect LoRA tags.
+## 🟢 Hotfix & IA Enhancements — 2025-11-24
+
+### Generación Estable (Forge)
+- [x] Validación Hires Fix en `build_txt2img_payload` (coerción de `hr_scale` a float, default `2.0`; `hr_upscaler` default `Latent`).
+- [x] Inclusión de `hr_additional_modules` a nivel raíz del payload: `["Use same choices"]`.
+- [x] Logs de depuración: `[DEBUG] Hires Payload: scale=..., upscaler=..., modules=[...]]` y dump completo del payload antes del POST.
+  - Backend: `backend/services/reforge.py`.
+
+### Planner UX
+- [x] Selector de Intensidad: botón hereda color (SFW=verde, ECCHI=amarillo, NSFW=rojo), menú oscuro y opciones coloreadas.
+- [x] Reescritura de tags en cambio de intensidad (`rating_safe`/`rating_questionable`/`rating_explicit+nsfw`) y re-render forzado.
+- [x] Spinner breve sobre el área del prompt mientras se recalculan los tags.
+- [x] Toasts de IA y ThinkingBadge (`Brain`) en Analyze/Magic Fix.
+  - Frontend: `frontend/src/components/planner/PlannerView.tsx`.
+
+### Metadatos y Triggers Oficiales
+- [x] Guardado `.civitai.info` junto a `.safetensors` (trainedWords/baseModel/id/description/hash) tras descarga.
+- [x] Script retroactivo: `scripts/fetch_missing_meta.py` para completar metadatos por hash.
+- [x] Inyección de triggers oficiales desde `.civitai.info` en `/planner/draft` y prompts.
+  - Backend: `backend/services/lora.py`, `backend/main.py`.
+
+### Estilos de Alta Calidad (Style Learning)
+- [x] Archivo `backend/resources/learning/user_styles.txt` con ejemplos de estilo.
+- [x] Inyección de “STYLE EXAMPLES” en System Prompt de Groq dentro de `/planner/draft`.
+
+### LoRAs Extra (Toggle)
+- [x] Switch “Permitir Sugerencias de LoRAs Extra” por personaje (persistido en `localStorage`).
+- [x] `/planner/draft` acepta `allow_extra_loras` y puede incluir `<lora:NAME:0.6>` si el toggle está activo.
+
+### Galería Operativa
+- [x] Static mount robusto de `/files` con `OUTPUTS_DIR` absoluto.
+- [x] `/gallery` devuelve URLs absolutas y codificadas (quote) para manejar espacios.
+- [x] `GalleryView.tsx` muestra `title` y `onError` con URL para diagnóstico.
+
+### Nombres de Archivo Informativos
+- [x] Guardado con `[Timestamp]_[HR]_[AD]_[Seed].png` y log `[INFO] Imagen guardada en: ...`.
+  - Backend: `backend/main.py`.
+
+### Limpieza de Prompts
+- [x] Deduplicación de `<lora:NAME:weight>` y tags repetidos en producción.
+  - Backend: `backend/main.py`.
+
+### Verificación de Calidad
+- [x] ESLint y TypeScript OK en frontend (warnings no críticos).
+- [x] Compilación de Python OK (`py_compile`).
+
+### Próximos pasos (propuestos)
+- [ ] Mover toasts y mensajes IA a `copy_blocks/site_settings`.
+- [ ] Añadir pruebas unitarias para dedupe de LoRA/tags y `/gallery` encoding.
+- [ ] Revisar sampler/checkpoint defaults desde Planner → Backend para consistencia.
+
+## 🟢 Fix Checkpoints & Galería UX — 2025-11-24
+
+- Backend: `GET /reforge/checkpoints` ahora devuelve `{"titles": []}` ante cualquier fallo (sin 500) para cumplir UI sin estados vacíos críticos.
+- Backend: `POST /reforge/refresh` que invoca `services.reforge.refresh_checkpoints()` (Forge: `/sdapi/v1/refresh-checkpoints`).
+- Frontend Planner: botón “Actualizar” muestra spinner “Escaneando disco...” y espera 2s reales antes de reconsultar; autoselecciona el primer checkpoint si no hay actual.
+- Backend: `GET /gallery/folders` lista subcarpetas de `OUTPUTS_DIR`.
+- Frontend Galería: Sidebar de carpetas (estilo explorador), persistencia en `localStorage` de la última carpeta, carga automática al entrar.
+- Backend: `POST /system/open-folder` (Windows) abre carpeta relativa a `OUTPUTS_DIR` con `os.startfile`.
+- Frontend Galería: botón 📂 junto al título para abrir la carpeta actual.
+
+## 🟢 Correcciones Críticas (Compatibilidad y UX) — 2025-11-24
+
+### Compatibilidad Windows/Mac
+- [x] Auditoría y normalización de rutas en Backend usando `pathlib.Path` y `os.path.join` donde aplica.
+- [x] Guardado de imágenes con tokens (`OUTPUTS_DIR`, `{Character}`) resueltos sin concatenación manual.
+
+### Lógica de Batch Count
+- [x] Generación exacta de `job_count` con distribución SFW/Ecchi/NSFW proporcional sin excedentes.
+
+### Botón de Refresh de Recursos
+- [x] Botón “Actualizar” para Checkpoints en Planner (consulta `/reforge/checkpoints`).
+- [x] Botón “LoRAs” para refrescar lista local (consulta `/local/loras`).
+
+### Debugger de Payload (Dry Run)
+- [x] Botón “Simular Envío” en header del Planificador con modal que muestra `jobs`, `resources_meta` y `group_config` exactamente como se enviaría.
+
+### Inyección de Trigger Words
+- [x] Lectura de `trainedWords` desde `.civitai.info` y colocación al inicio del prompt tras `<lora:...>`.
+
+### Visor en Vivo
+- [x] Spinner “Cargando Preview...” en `FactoryView.tsx` cuando la fábrica está activa y aún no hay imagen.
+## 🔎 Informe de Estado — 2025-11-24
+- Front/Back reiniciados y operativos en `3000/8000`.
+- Checkpoints vacíos: backend devuelve `[]` si Forge/API no responde (`backend/main.py:1972-1978`).
+- LoRAs backend OK (`backend/main.py:2327-2340`), UI dependiente del estado del backend.
+- Duplicación detectada de `_save_image` (`backend/main.py:1467-1509` y `2362-2399`); requiere unificación.
+- BASE_URL de ReForge hardcodeada (`backend/services/reforge.py:5-7`); pendiente parametrizar en `.env`.
+- Se agregó `docs/STATUS_REPORT_2025-11-24.md` con detalles, riesgos y plan de mejora.

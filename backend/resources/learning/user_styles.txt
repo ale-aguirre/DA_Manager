@@ -1,0 +1,2 @@
+STYLE_EXAMPLE_1: highres, very detailed, amazing quality, masterpiece, very aesthetic, glitter, particle effect, tan skin, warrior, knight, enchanted armor, engraved armor, greatsword, ominous, eerie, best quality, absurdres.
+STYLE_EXAMPLE_2: 8k, render, ultra detailed, masterpiece, clean lines, absurdres, textless version, best detail, vibrant, wet skin, hyper realistic lighting.

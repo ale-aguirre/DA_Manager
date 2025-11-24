@@ -1,9 +1,10 @@
 from typing import Any, Dict, Optional, List
 import httpx
 import json
+import os
 
-# Instrucción del usuario: URL base de ReForge hardcodeada por ahora
-BASE_URL = "http://127.0.0.1:7860"
+# URL base de ReForge parametrizada por .env
+BASE_URL = os.getenv("REFORGE_API_BASE_URL", "http://127.0.0.1:7860")
 TXT2IMG_ENDPOINT = "/sdapi/v1/txt2img"
 MODELS_ENDPOINT = "/sdapi/v1/sd-models"
 OPTIONS_ENDPOINT = "/sdapi/v1/options"
@@ -69,6 +70,9 @@ def build_txt2img_payload(prompt: Optional[str] = None,
             set_upscaler = "Latent"
         if set_upscaler:
             payload["hr_upscaler"] = set_upscaler
+        # Forge requiere este campo cuando enable_hr=True para evitar TypeError por valores None
+        if enable_hr:
+            payload["hr_additional_modules"] = ["Use same choices"]
 
     return payload
 
@@ -129,6 +133,10 @@ async def call_txt2img(prompt: Optional[str] = None,
     # Timeout ampliado a 600s para evitar 502 por Mac M2
     # Sanitizar None y log de depuración del payload completo
     payload = {k: v for k, v in payload.items() if v is not None}
+    try:
+        print(f"[DEBUG] Hires Payload: scale={payload.get('hr_scale')}, upscaler={payload.get('hr_upscaler')}, modules={payload.get('hr_additional_modules')}")
+    except Exception:
+        pass
     try:
         print(f"[ReForge/txt2img] Payload: {json.dumps(payload, ensure_ascii=False)}")
     except Exception:
@@ -197,6 +205,16 @@ async def set_active_checkpoint(title: str) -> Dict[str, Any]:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
         return {"status": "ok", "applied": title}
+
+async def refresh_checkpoints() -> Dict[str, Any]:
+    url = f"{BASE_URL}/sdapi/v1/refresh-checkpoints"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url)
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except Exception:
+            return {"status": "ok"}
 
 
 async def get_options() -> Dict[str, Any]:

@@ -3,12 +3,12 @@ import asyncio
 import random
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 import httpx
-from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint, get_options, interrupt_generation, list_vaes, list_upscalers
+from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint, get_options, interrupt_generation, list_vaes, list_upscalers, refresh_checkpoints
 from services.lora import ensure_lora
 import cloudscraper
 from pydantic import BaseModel
@@ -166,8 +166,10 @@ app.add_middleware(
 # Montar directorio estático para servir imágenes generadas
 try:
     if OUTPUTS_DIR and Path(OUTPUTS_DIR).exists():
-        app.mount("/files", StaticFiles(directory=str(OUTPUTS_DIR)), name="files")
+        abs_out = str(Path(OUTPUTS_DIR).resolve())
+        app.mount("/files", StaticFiles(directory=abs_out), name="files")
         print(f"[Static] Mounted OUTPUTS_DIR at /files: {OUTPUTS_DIR}")
+        print(f"[Static] OUTPUTS_DIR absolute path: {abs_out}")
     else:
         print("[Static] OUTPUTS_DIR no configurado o no existe; no se monta /files")
 except Exception as e:
@@ -212,7 +214,7 @@ class GalleryItem(BaseModel):
     timestamp: int
 
 @app.get("/gallery")
-async def get_gallery(page: int = 1, limit: int = 100, character: Optional[str] = None):
+async def get_gallery(request: Request, page: int = 1, limit: int = 100, character: Optional[str] = None, override_base: Optional[str] = None):
     """Explora OUTPUTS_DIR y devuelve lista paginada de imágenes.
     - filename: nombre del archivo
     - path: ruta relativa dentro de OUTPUTS_DIR (usada para DELETE)
@@ -223,6 +225,16 @@ async def get_gallery(page: int = 1, limit: int = 100, character: Optional[str] 
     if not OUTPUTS_DIR:
         raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
     base = Path(OUTPUTS_DIR)
+    try:
+        raw = (override_base or "").strip()
+        if raw:
+            resolved = raw.replace("OUTPUTS_DIR", str(base))
+            candidate = Path(resolved).resolve()
+            root = base.resolve()
+            if candidate.exists() and candidate.is_dir() and (candidate == root or root in candidate.parents):
+                base = candidate
+    except Exception:
+        pass
     if not base.exists():
         raise HTTPException(status_code=404, detail="OUTPUTS_DIR no existe en el sistema")
     exts = {".png", ".jpg", ".jpeg", ".webp"}
@@ -238,8 +250,8 @@ async def get_gallery(page: int = 1, limit: int = 100, character: Optional[str] 
                     fpath = Path(root) / fname
                     rel = fpath.relative_to(base)
                     rel_str = str(rel).replace("\\", "/")
-                    # Importante: codificar URL para manejar espacios y caracteres especiales
-                    url = f"/files/{quote(rel_str)}"
+                    base_url = str(request.base_url).rstrip("/")
+                    url = f"{base_url}/files/{quote(rel_str)}"
                     # derivar personaje desde primer segmento
                     parts = rel_str.split("/")
                     char_name = parts[0] if parts else "unknown"
@@ -269,6 +281,96 @@ async def get_gallery(page: int = 1, limit: int = 100, character: Optional[str] 
         return JSONResponse(content=[it.dict() for it in all_items[start:end]])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error escaneando galería: {e}")
+
+@app.get("/gallery/folders")
+async def get_gallery_folders():
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    base = Path(OUTPUTS_DIR).resolve()
+    if not base.exists():
+        return []
+    try:
+        def scan():
+            out = []
+            for p in base.iterdir():
+                if p.is_dir():
+                    out.append(p.name)
+            return sorted(out)
+        items = await asyncio.to_thread(scan)
+        return items
+    except Exception:
+        return []
+
+@app.post("/files/open")
+async def files_open(payload: dict):
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    base = Path(OUTPUTS_DIR).resolve()
+    target_rel = (payload.get("dir") or payload.get("path") or "").strip()
+    if not target_rel:
+        raise HTTPException(status_code=400, detail="path/dir requerido")
+    try:
+        target = (base / target_rel).resolve()
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="Ruta no encontrada")
+        if base not in target.parents and target != base:
+            raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+        open_dir = target if target.is_dir() else target.parent
+        try:
+            import platform, subprocess, os as _os
+            system = platform.system().lower()
+            if system.startswith("win"):
+                try:
+                    _os.startfile(str(open_dir))
+                except Exception:
+                    subprocess.Popen(["explorer", str(open_dir)])
+            elif system == "darwin":
+                subprocess.Popen(["open", str(open_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(open_dir)])
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error procesando ruta: {e}")
+
+@app.post("/system/open-folder")
+async def system_open_folder(payload: dict):
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    base = Path(OUTPUTS_DIR).resolve()
+    rel = (payload.get("path") or "").strip()
+    # Permitir vacío o '.' para abrir el directorio base
+    if not rel or rel == ".":
+        try:
+            import os as _os
+            _os.startfile(str(base))
+            return {"status": "ok"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
+    target = (base / rel).resolve()
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Ruta no encontrada")
+    if base not in target.parents and target != base:
+        raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+    try:
+        import os as _os
+        _os.startfile(str(target if target.is_dir() else target.parent))
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
+
+@app.get("/system/outputs-dir")
+async def system_outputs_dir():
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
+    try:
+        base = Path(OUTPUTS_DIR).resolve()
+        return {"path": str(base), "exists": base.exists()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error resolviendo OUTPUTS_DIR: {e}")
 
 @app.get("/scan/civitai")
 async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated", query: Optional[str] = None):
@@ -727,7 +829,7 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
         ]
 
 @app.post("/planner/draft")
-async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int] = None):
+async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int] = None, allow_extra_loras: Optional[bool] = False):
     """Genera 10 jobs por personaje con relleno INFALIBLE y enriquece contexto:
     - Intento IA (Groq) para sugerir combinaciones Outfit+Pose+Location.
     - Validación y Fallback determinista: si IA falla o hay vacíos, se eligen aleatorios.
@@ -772,7 +874,10 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     # Helper: enriquecer con Civitai
     async def civitai_enrich(character_name: str, trigger_words: List[str]) -> dict:
         lora_tag = f"<lora:{sanitize_filename(character_name)}:0.8>"
-        triggers = ", ".join([t for t in (trigger_words or []) if t.strip()]) or sanitize_filename(character_name)
+        def _clean_tags(tags: List[str]) -> List[str]:
+            banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
+            return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
+        triggers = ", ".join(_clean_tags(trigger_words or [])) or sanitize_filename(character_name)
         # Fallback base prompt cuando Civitai no está disponible
         fallback_quality = "masterpiece, best quality, absurdres"
         base_prompt = f"{lora_tag}, {triggers}, {fallback_quality}"
@@ -878,6 +983,27 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             "recommended_params": recommended_params,
         }
 
+    # Aprendizaje de estilo (STYLE_EXAMPLES)
+    try:
+        styles_examples = " ".join(_read_lines("learning/user_styles.txt"))
+    except Exception:
+        styles_examples = ""
+
+    # Loras locales
+    local_lora_names: List[str] = []
+    try:
+        d = get_lora_dir()
+        if d:
+            for f in d.glob("*.safetensors"):
+                try:
+                    name = f.stem.strip()
+                    if name:
+                        local_lora_names.append(name)
+                except Exception:
+                    pass
+    except Exception:
+        local_lora_names = []
+
     async def groq_suggest_combos(character_name: str, trigger_words: List[str], preferred_location: Optional[str] = None, count: int = 10) -> List[dict]:
         """Solicita a Groq una lista de combinaciones. Devuelve [{outfit, pose, location, lighting, camera}]"""
         if not GROQ_API_KEY or Groq is None:
@@ -887,7 +1013,10 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             system_prompt = (
                 "You are an Anime Art Director. Based on the character '{name}' and location '{location}', select the BEST matching Outfit, Lighting, and Camera angle from the provided lists. "
                 "Ensure visual coherence (e.g., dark lighting for dungeons, torchlight for caves, armor for dangerous areas). "
-                "Return ONLY JSON array with format: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\",\"lighting\":\"...\",\"camera\":\"...\"}] with up to 10 elements."
+                "Use these STYLE EXAMPLES as a reference for quality tags and sentence structure. Mimic this level of detail. "
+                f"STYLE EXAMPLES: {styles_examples} "
+                + ("When allowed, you may suggest extra LoRAs from the provided list. Return them in an optional 'extra_loras' array with up to 2 names." if allow_extra_loras else "Do not suggest any extra LoRAs; strictly use the character LoRA only.")
+                + " Return ONLY JSON array with format: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\",\"lighting\":\"...\",\"camera\":\"...\"}] with up to 10 elements."
             )
             user_prompt = (
                 f"Character: {character_name}\n"
@@ -898,7 +1027,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 f"Location list (examples): {', '.join(locations[:15])}\n"
                 f"Lighting list (examples): {', '.join(lighting[:15])}\n"
                 f"Camera list (examples): {', '.join(camera[:15])}\n"
-                "Return ONLY JSON array with the specified format."
+                + (f"Local LoRAs (names): {', '.join(local_lora_names[:30])}\n" if allow_extra_loras and local_lora_names else "")
+                + "Return ONLY JSON array with the specified format."
             )
             completion = await groq_chat_with_fallbacks(
                 client,
@@ -923,6 +1053,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                             "location": str(it["location"]),
                             "lighting": str(it.get("lighting") or ""),
                             "camera": str(it.get("camera") or ""),
+                            "extra_loras": it.get("extra_loras") if allow_extra_loras else None,
                         })
             return combos[:count]
         except Exception:
@@ -963,12 +1094,37 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
 
     for char in payload:
         lora_tag = f"<lora:{sanitize_filename(char.character_name)}:0.8>"
-        trigger = ", ".join([t for t in (char.trigger_words or []) if t.strip()]) or sanitize_filename(char.character_name)
+        # Triggers oficiales desde .civitai.info si existe
+        def _lora_dir() -> Path:
+            le = os.getenv("LORA_PATH")
+            re = os.getenv("REFORGE_PATH")
+            if le and str(le).strip():
+                return Path(le).resolve()
+            return Path(re).resolve().parents[3] / "models" / "Lora"
+        info_path = (_lora_dir() / f"{sanitize_filename(char.character_name)}.civitai.info").resolve()
+        official_triggers: list[str] = []
+        try:
+            if info_path.exists():
+                content = info_path.read_text(encoding="utf-8")
+                j = json.loads(content)
+                tw = j.get("trainedWords")
+                if isinstance(tw, list):
+                    official_triggers = [str(x) for x in tw if isinstance(x, (str, int, float))]
+                else:
+                    tr = j.get("triggers")
+                    if isinstance(tr, list):
+                        official_triggers = [str(x) for x in tr if isinstance(x, (str, int, float))]
+        except Exception:
+            official_triggers = []
+        def _clean_tags(tags: List[str]) -> List[str]:
+            banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
+            return [t for t in (tags or []) if (t and str(t).strip() and str(t).strip().lower() not in banned)]
+        trigger = ", ".join(_clean_tags(official_triggers or (char.trigger_words or []))) or sanitize_filename(char.character_name)
         # Determinar cantidad de jobs solicitada
         requested_n = job_count if (isinstance(job_count, int) and job_count > 0) else (char.batch_count if (hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count and char.batch_count > 0) else 10)
 
         # 1) Intentar combos con IA
-        combos = await groq_suggest_combos(char.character_name, char.trigger_words or [], None, requested_n)
+        combos = await groq_suggest_combos(char.character_name, official_triggers or (char.trigger_words or []), None, requested_n)
         # 2) Validación y fallback determinista
         while len(combos) < requested_n:
             combos.append(random_combo())
@@ -1054,6 +1210,15 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 base["location"],
                 quality_end,
             ]
+            if allow_extra_loras:
+                try:
+                    extra_list = c.get("extra_loras") if isinstance(c, dict) else None
+                    if isinstance(extra_list, list):
+                        for nm in extra_list[:2]:
+                            if isinstance(nm, str) and nm.strip():
+                                parts.insert(0, f"<lora:{sanitize_filename(nm.strip())}:0.6>")
+                except Exception:
+                    pass
             prompt = ", ".join([p for p in parts if p and str(p).strip()])
             # Debug: registrar valores generados
             print(f"[planner/draft] Generando Job: Outfit={base['outfit']}, Pose={base['pose']}, Location={base['location']}")
@@ -1083,7 +1248,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             })
 
         # Enriquecimiento de contexto por personaje (Civitai)
-        enrich = await civitai_enrich(char.character_name, char.trigger_words or [])
+        enrich = await civitai_enrich(char.character_name, official_triggers or (char.trigger_words or []))
         drafts.append({
             "character": char.character_name,
             "base_prompt": enrich.get("base_prompt"),
@@ -1118,10 +1283,14 @@ async def planner_magicfix(req: MagicFixRequest):
 
     # Fallback sin Groq: sugerir combinación aleatoria válida
     if not GROQ_API_KEY or Groq is None:
+        o = random.choice(outfits)
+        p = random.choice(poses)
+        l = random.choice(locations)
         return {
-            "outfit": random.choice(outfits),
-            "pose": random.choice(poses),
-            "location": random.choice(locations),
+            "outfit": o,
+            "pose": p,
+            "location": l,
+            "ai_reasoning": f"✨ IA: Fallback aplicado con combinación aleatoria coherente ({o} / {p} / {l}).",
         }
 
     # Con Groq: sugerir combinación coherente basada en el prompt y recursos
@@ -1158,17 +1327,23 @@ async def planner_magicfix(req: MagicFixRequest):
         try:
             data = json.loads(json_str)
             if isinstance(data, dict) and data.get("outfit") and data.get("pose") and data.get("location"):
+                o = str(data["outfit"]) ; p = str(data["pose"]) ; l = str(data["location"]) 
                 return {
-                    "outfit": str(data["outfit"]),
-                    "pose": str(data["pose"]),
-                    "location": str(data["location"]),
+                    "outfit": o,
+                    "pose": p,
+                    "location": l,
+                    "ai_reasoning": f"✨ IA: Combinación sugerida por contexto del prompt ({o} / {p} / {l}).",
                 }
         except Exception:
             pass
+        o = random.choice(outfits)
+        p = random.choice(poses)
+        l = random.choice(locations)
         return {
-            "outfit": random.choice(outfits),
-            "pose": random.choice(poses),
-            "location": random.choice(locations),
+            "outfit": o,
+            "pose": p,
+            "location": l,
+            "ai_reasoning": f"✨ IA: Fallback aplicado con combinación aleatoria coherente ({o} / {p} / {l}).",
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
@@ -1176,6 +1351,7 @@ async def planner_magicfix(req: MagicFixRequest):
 class PlannerAnalyzeRequest(BaseModel):
     character_name: str
     tags: List[str] = []
+    batch_count: Optional[int] = None
 
 @app.post("/planner/analyze")
 async def planner_analyze(req: PlannerAnalyzeRequest):
@@ -1248,13 +1424,17 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
 
     # Generar 10 jobs con enriquecimiento de style/concept y QUALITY_TAGS
     lora_tag = f"<lora:{sanitize_filename(req.character_name)}:0.8>"
-    trigger = ", ".join([t for t in (req.tags or []) if t.strip()]) or sanitize_filename(req.character_name)
+    def _clean_tags(tags: List[str]) -> List[str]:
+        banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
+        return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
+    trigger = ", ".join(_clean_tags(req.tags or [])) or sanitize_filename(req.character_name)
     jobs: List[PlannerJob] = []
     style_pool = styles or []
     concept_pool = concepts or []
     atmospheres: List[str] = await _get_atmospheres_for_character(req.character_name)
+    n = req.batch_count if (isinstance(getattr(req, "batch_count", None), int) and int(getattr(req, "batch_count", 0)) > 0) else 10
 
-    for i in range(10):
+    for i in range(n):
         base = combos_sugeridos[i % len(combos_sugeridos)]
         style = (random.choice(style_pool) if style_pool else random.choice(atmospheres))
         concept = (random.choice(concept_pool) if concept_pool else "")
@@ -1268,7 +1448,8 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
         seed = random.randint(0, 2_147_483_647)
         jobs.append(PlannerJob(character_name=req.character_name, prompt=prompt, seed=seed))
 
-    return {"jobs": [j.model_dump() for j in jobs], "lore": lore_text}
+    ai_msg = f"✨ IA: Contexto de '{req.character_name}' aplicado. Se sugirieron {len(combos_sugeridos)} escenarios."
+    return {"jobs": [j.model_dump() for j in jobs], "lore": lore_text, "ai_reasoning": ai_msg}
 
 # BLOQUE DUPLICADO ELIMINADO: se removieron definiciones duplicadas de endpoints y clases añadidas por error durante la edición.
 
@@ -1317,13 +1498,29 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
             dest_dir = base_env / sanitize_filename(character_name)
     dest_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    target = dest_dir / f"{ts}.png"
+    cfg = FACTORY_STATE.get("current_config") or {}
+    flags = []
+    if bool(cfg.get("hires_fix")):
+        flags.append("HR")
+    if bool(cfg.get("adetailer")):
+        flags.append("AD")
+    seed_val = cfg.get("seed")
+    suffix = ""
+    if flags:
+        suffix += "_" + "_".join(flags)
+    if seed_val is not None:
+        suffix += f"_{seed_val}"
+    target = dest_dir / f"{ts}{suffix}.png"
     try:
         data = base64.b64decode(image_b64)
         target.write_bytes(data)
     except Exception as e:
         _log(f"Error guardando imagen: {e}")
         raise HTTPException(status_code=500, detail=f"Error guardando imagen: {str(e)}")
+    try:
+        _log(f"[INFO] Imagen guardada en: {str(target)}")
+    except Exception:
+        pass
     return str(target)
 
 # [DEPRECATED] produce_jobs (v1) eliminado. Usar produce_jobs para producción asíncrona con aprovisionamiento.
@@ -1434,7 +1631,6 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         steps_override = gc.steps if gc and isinstance(gc.steps, int) else None
         cfg_override = gc.cfg_scale if gc and isinstance(gc.cfg_scale, (int, float)) else None
         
-        # Inyección de LoRAs extra
         final_prompt = job.prompt
         extra_loras = gc.extra_loras if gc and isinstance(gc.extra_loras, list) else []
         if extra_loras:
@@ -1450,6 +1646,45 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
                     lora_blocks.append(f"<lora:{l}:0.7>")
             if lora_blocks:
                 final_prompt = f"{final_prompt}, {', '.join(lora_blocks)}"
+
+        def _clean_prompt(s: str) -> str:
+            import re
+            parts = [p.strip() for p in (s or "").split(",") if str(p).strip()]
+            seen = set()
+            out = []
+            lora_regex = re.compile(r"^<lora:([^:>]+)(?::([0-9.]+))?>$")
+            lora_pos = {}
+            for i, p in enumerate(parts):
+                m = lora_regex.match(p)
+                if m:
+                    name = m.group(1).strip().lower()
+                    w = m.group(2)
+                    try:
+                        wv = float(w) if w is not None else 0.7
+                    except Exception:
+                        wv = 0.7
+                    if name in lora_pos:
+                        j = lora_pos[name]
+                        prev = out[j]
+                        mm = lora_regex.match(prev)
+                        pw = mm.group(2)
+                        try:
+                            pwv = float(pw) if pw is not None else 0.7
+                        except Exception:
+                            pwv = 0.7
+                        if wv > pwv:
+                            out[j] = f"<lora:{m.group(1)}:{wv}>"
+                    else:
+                        lora_pos[name] = len(out)
+                        out.append(p)
+                else:
+                    key = p.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(p)
+            return ", ".join(out)
+
+        final_prompt = _clean_prompt(final_prompt)
 
         try:
             actual_steps = steps_override if isinstance(steps_override, int) else 28
@@ -1477,23 +1712,31 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             
             # Obtener opciones actuales para loguear hr_scale real
             options = await get_options()
-            hr_scale = options.get("hr_scale") if isinstance(options, dict) else 1.5
+            raw_hr_scale = options.get("hr_scale") if isinstance(options, dict) else None
             
             # Determinar estado real de Hires Fix para el log
             hr_override = (gc.hires_fix if (gc and isinstance(gc.hires_fix, bool)) else None)
             actual_hr = hr_override if hr_override is not None else enable_hr
             # Si hay override de escala desde el group_config, úsalo para el log
             hr_scale_override = (gc.upscale_by if (gc and isinstance(gc.upscale_by, (int, float))) else None)
-            hires_str = f"ON (x{(hr_scale_override if (actual_hr and hr_scale_override is not None) else hr_scale)})" if actual_hr else "OFF"
+            def _coerce_scale(val):
+                try:
+                    f = float(val)
+                    return f if 1.0 <= f <= 4.0 else 2.0
+                except Exception:
+                    return 2.0
+            hr_display = _coerce_scale(hr_scale_override) if (actual_hr and hr_scale_override is not None) else (_coerce_scale(raw_hr_scale) if actual_hr else None)
+            hires_str = f"ON (x{hr_display})" if actual_hr else "OFF"
 
             FACTORY_STATE["current_config"] = {
                 "steps": actual_steps,
                 "cfg": actual_cfg,
                 "batch_size": bs,
                 "hires_fix": actual_hr,
-                "hr_scale": (hr_scale_override if (actual_hr and hr_scale_override is not None) else hr_scale),
+                "hr_scale": hr_display if actual_hr else None,
                 "seed": job.seed,
                 "checkpoint": ckpt,
+                "adetailer": bool(gc.adetailer) if gc is not None else False,
             }
             _log(f"Enviando a ReForge: [Seed {job.seed}] Prompt: {final_prompt}")
             _log(f"Checkpoint: {ckpt}")
@@ -1587,7 +1830,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             path = await _save_image(job.character_name, last_b64, override_dir=override_dir)
             FACTORY_STATE["last_image_path"] = path
             FACTORY_STATE["last_image_b64"] = f"data:image/png;base64,{last_b64}"
-            _log(f"Guardado en disco: {path}")
+            _log(f"[INFO] Imagen guardada en: {path}")
         except Exception as e:
             _log(f"Error en generación: {e}")
             continue
@@ -1747,14 +1990,24 @@ async def reforge_checkpoints():
     try:
         titles = await list_checkpoints()
         return {"titles": titles}
-    except httpx.HTTPStatusError as e:
-        status = e.response.status_code if getattr(e, "response", None) else None
-        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
-        raise HTTPException(status_code=502, detail=message)
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+    except Exception:
+        return {"titles": []}
+
+@app.get("/reforge/health")
+async def reforge_health():
+    try:
+        titles = await list_checkpoints()
+        return {"status": "ok", "count": len(titles)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+        return {"status": "error", "detail": str(e)}
+
+@app.post("/reforge/refresh")
+async def reforge_refresh():
+    try:
+        await refresh_checkpoints()
+        return {"status": "ok"}
+    except Exception:
+        return {"status": "error"}
 
 
 @app.get("/reforge/vaes")
@@ -2064,20 +2317,18 @@ async def download_checkpoint(req: DownloadCheckpointRequest):
 
 @app.get("/local/loras")
 async def list_local_loras():
-    """Lista archivos .safetensors en la carpeta de LoRAs"""
-    if not REFORGE_PATH:
-        raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
+    d = get_lora_dir()
+    if d is None:
+        raise HTTPException(status_code=400, detail="LORA_PATH/REFORGE_PATH no configurados correctamente.")
 
-    def _list() -> list[str]:
-        base = Path(REFORGE_PATH).resolve()
-        lora_dir = base.parents[1] / "models" / "Lora"
-        if not lora_dir.exists():
-            return []
-        # Escaneo recursivo
-        return [p.stem for p in lora_dir.rglob("*.safetensors") if p.is_file()]
+    def _list() -> tuple[list[str], str]:
+        if not d.exists():
+            return [], str(d)
+        files = [p.stem for p in d.rglob("*.safetensors") if p.is_file()]
+        return files, str(d)
 
-    files = await asyncio.to_thread(_list)
-    return {"files": files}
+    files, path = await asyncio.to_thread(_list)
+    return {"files": files, "path": path}
 
 @app.delete("/local/lora")
 async def delete_local_lora(req: DeleteLoraRequest):
@@ -2132,32 +2383,7 @@ async def _maybe_download_lora(name: str) -> bool:
     _log(f"LoRA '{name}' no encontrado; no hay metadata para descargar. Se omite.")
     return False
 
-async def _save_image(character_name: str, image_b64: str, override_dir: Optional[str] = None) -> str:
-    if not OUTPUTS_DIR:
-        raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
-    # Resolver directorio de salida respetando tokens de entorno
-    base_env = Path(OUTPUTS_DIR)
-    dest_dir = base_env / sanitize_filename(character_name)
-    if isinstance(override_dir, str) and override_dir.strip():
-        try:
-            raw = override_dir.strip()
-            # Permitir tokens: OUTPUTS_DIR y {Character}
-            resolved = raw.replace("OUTPUTS_DIR", str(base_env))
-            resolved = resolved.replace("{Character}", sanitize_filename(character_name))
-            dest_dir = Path(resolved)
-        except Exception:
-            # Fallback seguro
-            dest_dir = base_env / sanitize_filename(character_name)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    target = dest_dir / f"{ts}.png"
-    try:
-        data = base64.b64decode(image_b64)
-        target.write_bytes(data)
-    except Exception as e:
-        _log(f"Error guardando imagen: {e}")
-        raise HTTPException(status_code=500, detail=f"Error guardando imagen: {str(e)}")
-    return str(target)
+# Eliminada duplicación de _save_image: se usa la versión única definida arriba.
 
 
 def schedule_production(jobs: List[PlannerJob]):

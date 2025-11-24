@@ -44,8 +44,8 @@ export default function Sidebar() {
         <NavLink href="/" label="Dashboard" icon={LayoutDashboard} active={isActive("/")} />
         <NavLink href="/radar" label="Radar" icon={Radar} active={isActive("/radar")} />
         <NavLink href="/planner" label="Planificador" icon={ClipboardList} active={isActive("/planner")} />
-        <NavLink href="/gallery" label="Galería" icon={ImageIcon} active={isActive("/gallery")} />
         <NavLink href="/factory" label="Fábrica" icon={Factory} active={isActive("/factory")} />
+        <NavLink href="/gallery" label="Galería" icon={ImageIcon} active={isActive("/gallery")} />
         <NavLink href="/settings" label="Configuración" icon={Settings} active={isActive("/settings")} />
       </nav>
       <div className="mt-auto pt-4 text-xs text-zinc-400">

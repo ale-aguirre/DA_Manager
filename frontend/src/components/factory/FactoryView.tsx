@@ -2,7 +2,7 @@
 import React from "react";
 import { getFactoryStatus, postFactoryStop, getReforgeProgress } from "../../lib/api";
 import type { FactoryStatus } from "../../lib/api";
-import { OctagonX, Square, Eraser } from "lucide-react";
+import { OctagonX, Square, Eraser, Loader2 } from "lucide-react";
 
 export default function FactoryView() {
   const [isActive, setIsActive] = React.useState(false);
@@ -10,6 +10,7 @@ export default function FactoryView() {
   const [total, setTotal] = React.useState(0);
   const [character, setCharacter] = React.useState<string | null>(null);
   const [lastImage, setLastImage] = React.useState<string | null>(null);
+  const [liveImage, setLiveImage] = React.useState<string | null>(null);
   const [logs, setLogs] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [currentPrompt, setCurrentPrompt] = React.useState<string | null>(null);
@@ -40,11 +41,21 @@ export default function FactoryView() {
             if (mounted && prog && typeof prog.progress === 'number') {
               setRealProgress(Math.round(prog.progress * 100));
             }
+            const ci = prog.current_image;
+            if (mounted) {
+              if (typeof ci === 'string' && ci.length > 0) {
+                const src = ci.startsWith('data:image') ? ci : `data:image/png;base64,${ci}`;
+                setLiveImage(src);
+              } else {
+                setLiveImage(null);
+              }
+            }
           } catch (e) {
             // Ignorar error de progreso para no spamear
           }
         } else {
           setRealProgress(0);
+          setLiveImage(null);
         }
       } catch (e: unknown) {
         if (!mounted) return;
@@ -146,6 +157,11 @@ export default function FactoryView() {
             {lastImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={lastImage} alt="Última imagen" className="h-full w-full object-contain" />
+            ) : liveImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={liveImage} alt="Preview en progreso" className="h-full w-full object-contain" />
+            ) : isActive ? (
+              <div className="text-xs text-zinc-200 flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Cargando Preview...</div>
             ) : (
               <div className="text-xs text-zinc-400 flex items-center gap-2"><Square className="h-3 w-3" /> Sin imagen aún</div>
             )}

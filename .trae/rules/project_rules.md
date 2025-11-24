@@ -1,61 +1,68 @@
-# Project: LadyNuggets Manager (Local Monorepo)
+# Project: LadyManager (Local Monorepo)
 
 ## 1. Project Overview & Architecture
-This is a local full-stack application designed to automate Stable Diffusion workflows.
-- **Architecture:** Monorepo structure.
-  - `/frontend`: Next.js application (User Interface).
-  - `/backend`: FastAPI application (Business Logic, Scraping, AI processing).
-- **Goal:** Scalable, local-first automation. All file system paths must be dynamic via Environment Variables.
 
-## 2. Framework Version and Dependencies
+Local full-stack application for automated NSFW Anime production using Stable Diffusion (ReForge).
 
-### Frontend (Client)
-- **Framework:** Next.js 14+ (App Router `src/app`).
-- **Language:** TypeScript (Strict mode).
-- **Styling:** Tailwind CSS (Mobile-first, dark mode default).
-- **Icons:** Lucide React.
-- **State Management:** React Hooks (`useState`, `useEffect`) or Context API for simple global state.
-- **HTTP Client:** Native `fetch` API.
+- **Stack:** FastAPI (Backend :8000) + Next.js (Frontend :3000).
+- **Goal:** "Click-to-Manufacture". Automation of discovery, planning, and generation.
 
-### Backend (Server)
-- **Framework:** FastAPI (Python 3.10+).
-- **Server:** Uvicorn (standard host: 127.0.0.1, port: 8000).
-- **Validation:** Pydantic V2 models.
-- **Environment Management:** `python-dotenv` (CRITICAL: All local paths must be loaded from .env).
-- **Scraping:** `cloudscraper` (Must be used to bypass Cloudflare protection).
-- **AI Integration:** `groq` (official SDK) for text processing.
+## 2. Critical Behavioral Rules (THE LAW)
 
-## 3. Testing Framework
-- **Backend:** `pytest` for unit testing logic and API endpoints.
-- **Frontend:** No comprehensive testing suite required for MVP, but code must be modular to allow `Vitest` implementation later.
+### 🚨 DATA INTEGRITY (No Empty States)
 
-## 4. API & Implementation Constraints (Do's and Don'ts)
+- **NEVER return `null`, `undefined`, or empty strings** to the Frontend for critical fields (Outfit, Pose, Location).
+- **FALLBACK LOGIC IS MANDATORY:** If AI (Groq) fails or returns empty data, the Backend MUST select a random line from `backend/resources/`.
+- **The UI must never show "(vacio)"**. It is better to show a random valid value than an empty error.
 
-### ⛔ AVOID (Don'ts)
-- **NO `requests` library for Scraping:** Civitai and Rule34 block standard `requests`. YOU MUST USE `cloudscraper` for any external scraping.
-- **NO Hardcoded Paths:** Never write paths like `/Users/alexis...` in the Python or TypeScript code. Always use `os.getenv("REFORGE_PATH")` or similar.
-- **NO Synchronous Blocking:** Ensure scraping and AI tasks run asynchronously or in background tasks to keep the UI responsive.
-- **NO Complex Database:** For this version, use JSON files or direct `.txt` file manipulation. Do not implement PostgreSQL/SQLite yet.
+### 🎨 UI/UX STANDARDS (High Density)
 
-### ✅ PREFER (Do's)
-- **Error Handling:** Always wrap external API calls (Civitai/Groq) in try/except blocks and return meaningful HTTP errors.
-- **Typing:** Use strict Pydantic models for Backend responses and TypeScript interfaces for Frontend props.
-- **Monorepo Awareness:** Remember that Frontend runs on port 3000 and Backend on port 8000. Ensure CORS is correctly configured in FastAPI to allow `http://localhost:3000`.
+- **Style:** "Technical Dashboard" (inspired by Automatic1111/ComfyUI). Avoid "Landing Page" styles with too much whitespace.
+- **Components:**
+  - Use **Lucide React** icons exclusively. **NO TEXT EMOJIS** in the UI.
+  - Use **Dense Grids**. Maximize screen real estate.
+  - **Inputs:** Inputs should be aligned and compact. Use Sliders with numeric inputs side-by-side.
+- **Feedback:** Always show loading states (Spinners) and Toast/Alerts for errors.
 
-## 5. Environment Variables Structure
-The project depends on a `.env` file in the `/backend` directory with the following keys:
-- `REFORGE_PATH`: Absolute path to the Stable Diffusion wildcards folder.
-- `GROQ_API_KEY`: API Key for AI processing.
-- `CIVITAI_API_KEY`: Optional key for NSFW content fetching.
+### 🛠️ GIT WORKFLOW (Trunk-Based)
 
-## Ports and Execution Discipline
-- Frontend: must run strictly on port 3000 (http://localhost:3000). If the port is occupied, free conflicting processes and retry; do not use alternative ports.
-- Backend: must run strictly on port 8000 (http://127.0.0.1:8000). If port 8000 is occupied, the server must fail and notify; do not switch ports automatically.
-- Rationale: ensure consistent local environment and avoid connection errors between UI and API.
+- **Branch:** Work DIRECTLY on `main`.
+- **NO Feature Branches:** Do not create `feature/xyz` branches unless explicitly asked. We prioritize speed.
+- **Commit:** Use conventional commits (`feat:`, `fix:`, `chore:`).
 
-### Recommended dev script (strict)
-- Use `./scripts/dev-strict.sh` to start services with port discipline.
-- Behavior:
-  - Frees port 3000 if it is occupied to prevent Next from switching to 3001.
-  - Checks port 8000; if occupied, fails and warns (does not change port).
-  - Starts backend on `127.0.0.1:8000` and frontend on `http://localhost:3000`.
+### 🖥️ ENVIRONMENT AWARENESS (Windows/Mac)
+
+- **OS Agnostic:** Do not assume Linux/Mac paths (`/`). Use `os.path.join` or `pathlib` in Python.
+- **Startup:** Always refer to `start.bat` (Windows) or `scripts/dev-strict.sh` (Mac/Linux) for starting servers.
+- **Ports:** Strict adherence to 3000 (Front) and 8000 (Back). Kill processes if occupied.
+
+## 3. Tech Stack Constraints
+
+### Backend (FastAPI)
+
+- **AI (Groq):** Use `llama-3.3-70b-versatile`. MUST implement fallback logic to older models if the API returns 404/Decommissioned.
+- **Scraping:** ALWAYS use `cloudscraper` (never `requests`) to bypass Cloudflare.
+- **Paths:** ALWAYS use `os.getenv("OUTPUTS_DIR")` and `os.getenv("LORA_PATH")`. Never hardcode local paths.
+
+### Frontend (Next.js 14)
+
+- **Images:** Use standard `<img>` tags for local files or external URLs to avoid Next.js Image Optimization strictness (unless domain is configured).
+- **State:** Persist critical user preferences (e.g., Batch Count, Last Tab) in `localStorage`.
+
+## 4. Business Logic (The "Factory" Concept)
+
+1.  **Radar:** Discovery. Must filter for "Anime/2D" strictly.
+2.  **Planner:** Strategy. "Character-Centric" view. Users edit the _plan_ here.
+    - Logic: `[Trigger Words] + [Outfit] + [Pose] + [Location] + [Tech Config]`.
+3.  **Factory:** Execution. Background processing. Must provide real-time logs via API polling.
+4.  **Gallery:** Asset Management.
+
+## 5. Environment Variables (Reference)
+
+Ensure `.env` contains:
+
+- `REFORGE_PATH` (Wildcards folder)
+- `LORA_PATH` (Models/Lora folder)
+- `OUTPUTS_DIR` (Where images are saved)
+- `CIVITAI_API_KEY`
+- `GROQ_API_KEY`

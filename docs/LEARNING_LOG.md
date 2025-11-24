@@ -44,3 +44,42 @@
 - Cause: Se añadieron nuevos controles al panel técnico sin extender el tipo del helper `setTechConfig`.
 - Fix: Extender el tipo de `setTechConfig` para incluir `{ upscaler: string; checkpoint: string }` y persistir correctamente en `techConfigByCharacter`.
 - Prevention: Cada vez que se agreguen controles o propiedades nuevas en el estado técnico, actualizar los tipos y ejecutar ESLint/TS antes del commit. Añadir verificación en PR checklist.
+## 2025-11-24
+- Issue: Error 500 en generación por `NoneType` en Hires Fix.
+- Cause: Falta el campo `hr_additional_modules` en payload y valores `hr_scale/hr_upscaler` vacíos.
+- Fix: Forzar `hr_scale` `float` (default 2.0), `hr_upscaler` `Latent`, y agregar `hr_additional_modules` `["Use same choices"]` al nivel raíz. Logs `[DEBUG]` + dump de payload.
+- Prevention: Checklist de validación de payload ReForge (claves obligatorias cuando `enable_hr=True`), pruebas de compilación Python tras cambios, verificación en consola antes de enviar.
+
+- Issue: Prompts finales con duplicados (`<lora:A>, trigger, <lora:A>, trigger`).
+- Cause: `job.prompt` ya contiene LoRA/base, y producción añadía LoRAs extra sin dedup.
+- Fix: Deduplicar tokens y consolidar `<lora:NAME:weight>` por nombre (mantener mayor peso), evitar concatenar base duplicada.
+- Prevention: Política de “job.prompt como cuerpo/delta” y limpieza previa; pruebas unitarias recomendadas.
+
+- Issue: Galería no mostraba imágenes tras generación.
+- Cause: URLs relativas sin codificar y montaje estático sin ruta absoluta (Windows con espacios).
+- Fix: `StaticFiles` con `Path.resolve()`, `/gallery` devuelve URLs absolutas con `quote`, `GalleryView.tsx` `onError` con URL.
+- Prevention: Usar `quote` en rutas de servidor, priorizar URLs absolutas, diagnóstico visual en UI.
+
+## 2025-11-24 14:00
+- Issue: Planner retorna múltiples nodos raíz y rompe JSX (parse error `')' expected`).
+- Cause: Se añadió un modal fuera del contenedor principal del `return` generando siblings sin fragment.
+- Fix: Reubicar el modal dentro del contenedor principal; evitar hermanos en el `return` sin fragment.
+- Prevention: En UI complejas, envolver nodos condicionales en el contenedor principal o usar `<>...</>`.
+
+## 2025-11-24 14:05
+- Issue: Triggers oficiales no se aplicaban desde `.civitai.info`.
+- Cause: El código leía `triggers` pero los metadatos usan `trainedWords`.
+- Fix: Lectura prioritaria de `trainedWords` con fallback a `triggers` y colocación al inicio del prompt tras `<lora:...>`.
+- Prevention: Validar estructura de metadatos de Civitai; pruebas con archivos reales; añadir script de verificación.
+
+## 2025-11-24 18:30
+- Issue: Botón “Actualizar Checkpoints” no reflejaba cambios y la API devolvía 500.
+- Cause: Falta de endpoint de refresh en Backend y manejo de errores frágil en `/reforge/checkpoints`.
+- Fix: Añadido `POST /reforge/refresh` (Forge `/sdapi/v1/refresh-checkpoints`), `GET /reforge/checkpoints` devuelve `[]` ante fallos; en Planner, spinner + espera real de 2s y autoselección del primer checkpoint cuando no hay seleccionado.
+- Prevention: Política de “fallbacks seguros” en endpoints críticos y secuencias de refresh con delays explícitos; test manual en Preview y ESLint/TypeScript en cada cambio.
+
+## 2025-11-24 18:35
+- Issue: Galería confusa por prompt “Seleccionar ubicación” y sin navegación por carpetas.
+- Cause: UX basada en `prompt()` y parámetro `override_base` sin descubrir carpetas.
+- Fix: `GET /gallery/folders` para listar subcarpetas en `OUTPUTS_DIR`; Sidebar de carpetas con persistencia en `localStorage`; botón 📂 “Abrir carpeta” junto al título; `POST /system/open-folder` en Backend (Windows) usando `os.startfile`.
+- Prevention: Evitar `prompt()` para flujos de navegación; usar exploradores laterales con estados persistentes; verificación visual en Preview.

@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Optional, Callable
 import cloudscraper
 import asyncio
+import hashlib
+import json
 
 class DownloadError(Exception):
     pass
@@ -161,7 +163,57 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
                 return False
 
         ok = await asyncio.to_thread(download_task)
-        return ok and target.exists()
+        if not ok or not target.exists():
+            return False
+
+        # Post-proceso: calcular hash y persistir metadatos de Civitai junto al .safetensors
+        try:
+            h = hashlib.sha256()
+            with open(target, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    if not chunk:
+                        break
+                    h.update(chunk)
+            file_hash = h.hexdigest()
+            scraper = cloudscraper.create_scraper()
+            info_url = f"https://civitai.com/api/v1/model-versions/by-hash/{file_hash}"
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            r = scraper.get(info_url, headers=headers, timeout=(15, 60))
+            r.raise_for_status()
+            data = r.json()
+            triggers = []
+            base_model = None
+            desc = None
+            model_id = None
+            version_id = None
+            if isinstance(data, dict):
+                tw = data.get("trainedWords")
+                if isinstance(tw, list):
+                    triggers = [str(x) for x in tw if isinstance(x, (str, int, float))]
+                base_model = data.get("baseModel") or data.get("base_model")
+                desc = data.get("description")
+                model_id = data.get("modelId") or data.get("model_id")
+                version_id = data.get("id") or data.get("versionId")
+            meta = {
+                "triggers": triggers,
+                "baseModel": base_model or "",
+                "id": version_id or model_id or "",
+                "description": desc or "",
+                "hash": file_hash,
+            }
+            info_path = target.with_suffix(".civitai.info")
+            try:
+                info_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                if on_log:
+                    on_log(f"[INFO] Metadatos Civitai guardados: {info_path.name}")
+            except Exception:
+                pass
+        except Exception as e:
+            if on_log:
+                on_log(f"⚠️ No se pudo obtener metadatos Civitai por hash: {str(e)}")
+        return True
     except Exception as e:
         if on_log:
             on_log(f"❌ Error crítico descargando {filename}: {str(e)}")
