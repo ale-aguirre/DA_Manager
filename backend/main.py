@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 import httpx
-from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint, get_options, interrupt_generation, list_vaes
+from services.reforge import call_txt2img, list_checkpoints, set_active_checkpoint, get_options, interrupt_generation, list_vaes, list_upscalers
 from services.lora import ensure_lora
 import cloudscraper
 from pydantic import BaseModel
@@ -1512,15 +1512,13 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             # Batch Size override
             bs_override = (gc.batch_size if (gc and isinstance(gc.batch_size, int) and gc.batch_size > 0) else None)
             
-            # Adetailer script construction (formato API estándar: lista name/args)
+            # Adetailer script construction (estructura segura)
             scripts_arr = []
             if gc and gc.adetailer:
                 scripts_arr.append({
                     "name": "ADetailer",
                     "args": [
-                        True,
-                        False,
-                        {"ad_model": "face_yolo8n.pt"},
+                        {"ad_model": "face_yolo8n.pt"}
                     ],
                 })
 
@@ -1541,20 +1539,40 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             hr_upscaler = gc.upscaler if (gc and isinstance(gc.upscaler, str) and gc.upscaler.strip()) else None
             hr_scale_override = gc.upscale_by if (gc and isinstance(gc.upscale_by, (int, float))) else None
 
-            data = await call_txt2img(
-                prompt=final_prompt, 
-                negative_prompt=getattr(job, "negative_prompt", None),
-                cfg_scale=cfg_override, 
-                steps=steps_override, 
-                enable_hr=hr_override, 
-                denoising_strength=dn_override, 
-                hr_second_pass_steps=hr_steps_override,
-                batch_size=bs_override,
-                hr_upscaler=hr_upscaler,
-                hr_scale=hr_scale_override,
-                alwayson_scripts=scripts_arr if scripts_arr else None,
-                override_settings=override_settings or None
-            )
+            try:
+                data = await call_txt2img(
+                    prompt=final_prompt, 
+                    negative_prompt=getattr(job, "negative_prompt", None),
+                    cfg_scale=cfg_override, 
+                    steps=steps_override, 
+                    enable_hr=hr_override, 
+                    denoising_strength=dn_override, 
+                    hr_second_pass_steps=hr_steps_override,
+                    batch_size=bs_override,
+                    hr_upscaler=hr_upscaler,
+                    hr_scale=hr_scale_override,
+                    alwayson_scripts=scripts_arr if scripts_arr else None,
+                    override_settings=override_settings or None
+                )
+            except httpx.HTTPStatusError as e:
+                code = e.response.status_code if getattr(e, "response", None) else None
+                if code == 422 and scripts_arr:
+                    data = await call_txt2img(
+                        prompt=final_prompt,
+                        negative_prompt=getattr(job, "negative_prompt", None),
+                        cfg_scale=cfg_override,
+                        steps=steps_override,
+                        enable_hr=hr_override,
+                        denoising_strength=dn_override,
+                        hr_second_pass_steps=hr_steps_override,
+                        batch_size=bs_override,
+                        hr_upscaler=hr_upscaler,
+                        hr_scale=hr_scale_override,
+                        alwayson_scripts=None,
+                        override_settings=override_settings or None
+                    )
+                else:
+                    raise
             # Si se solicitó STOP mientras esperábamos respuesta, no continuar.
             if FACTORY_STATE.get("stop_requested"):
                 _log("Parada detectada tras la respuesta. Omitiendo guardado y cancelando cola.")
@@ -1754,6 +1772,21 @@ async def reforge_vaes():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
+@app.get("/reforge/upscalers")
+async def reforge_upscalers():
+    """Lista Upscalers disponibles desde ReForge/SD WebUI."""
+    try:
+        names = await list_upscalers()
+        return {"names": names}
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if getattr(e, "response", None) else None
+        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        raise HTTPException(status_code=502, detail=message)
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+
 
 @app.get("/reforge/options")
 async def reforge_options():
@@ -1842,10 +1875,14 @@ async def generate(payload: GenerateRequest):
         _log(f"Checkpoint: {ckpt}")
         bs = payload.batch_size if payload.batch_size is not None else 1
         _log(f"Config: Steps 28, CFG {cfg}, Batch Size {bs}, Hires Fix: {hires_str}")
+        hr_upscaler_opt = options.get("hr_upscaler") if isinstance(options, dict) else None
         data = await call_txt2img(
             prompt=payload.prompt,
             batch_size=payload.batch_size,
             cfg_scale=payload.cfg_scale,
+            enable_hr=bool(enable_hr),
+            hr_scale=(float(hr_scale) if isinstance(hr_scale, (int, float)) and float(hr_scale) >= 1.0 else 1.5),
+            hr_upscaler=(hr_upscaler_opt if isinstance(hr_upscaler_opt, str) and hr_upscaler_opt.strip() else "Latent"),
         )
         images = data.get("images", []) if isinstance(data, dict) else []
         info = data.get("info") if isinstance(data, dict) else None
@@ -2169,3 +2206,58 @@ async def factory_stop():
     except Exception as e:
         _log(f"Error al interrumpir la generación en ReForge: {e}")
     return {"status": "stopping"}
+class MarketingGenerateRequest(BaseModel):
+    prompt_used: Optional[str] = None
+    character: Optional[str] = None
+
+@app.post("/marketing/generate")
+async def marketing_generate(req: MarketingGenerateRequest):
+    api_key = GROQ_API_KEY
+    if not api_key:
+        raise HTTPException(status_code=400, detail="GROQ_API_KEY no disponible")
+    if Groq is None:
+        raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor")
+    try:
+        client = Groq(api_key=api_key)
+        system_prompt = (
+            "You are a social media content assistant for Anime artwork. "
+            "Return ONLY JSON with keys: title (short catchy), description (2-4 sentences, storytelling, PG-13), tags (array of hashtags for Twitter/DeviantArt)."
+        )
+        user_prompt = (
+            f"Character: {req.character or ''}\n"
+            f"Prompt: {req.prompt_used or ''}\n"
+            "Constraints: NO explicit words, safe for general audience."
+        )
+        completion = await groq_chat_with_fallbacks(
+            client,
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+        )
+        content = completion.choices[0].message.content.strip()
+        # Intentar parsear JSON
+        try:
+            start = content.find("{")
+            end = content.rfind("}")
+            json_str = content[start:end+1] if start != -1 and end != -1 else content
+            data = json.loads(json_str)
+        except Exception:
+            # Fallback simple
+            data = {
+                "title": (req.character or "Anime Art"),
+                "description": "A captivating anime artwork crafted with care.",
+                "tags": ["#anime", "#art", "#digitalart"],
+            }
+        title = str(data.get("title") or (req.character or "Anime Art"))
+        description = str(data.get("description") or "A captivating anime artwork.")
+        tags = data.get("tags")
+        if not isinstance(tags, list):
+            tags = ["#anime", "#art", "#digitalart"]
+        tags = [str(t) for t in tags if isinstance(t, (str, int, float))]
+        return {"title": title, "description": description, "tags": tags}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")

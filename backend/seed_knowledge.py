@@ -33,6 +33,12 @@ def parse_lines(s: str) -> list[str]:
             out.append(ln)
     return out
 
+GROQ_MODEL_FALLBACKS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+]
+
 def generate_list(client: Groq, title: str, count: int = 60) -> list[str]:
     sys = (
         "You generate clean lists for an anime content planner.\n"
@@ -40,16 +46,23 @@ def generate_list(client: Groq, title: str, count: int = 60) -> list[str]:
         "Strictly avoid Photorealistic, Cosplay, or 3D Render styles. Focus on 2D Anime/Manga aesthetics."
     )
     user = f"Generate {count} items for: {title}."
-    completion = client.chat.completions.create(
-        model="llama-3.1-70b-versatile",
-        messages=[
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.2,
-    )
-    content = completion.choices[0].message.content or ""
-    return parse_lines(content)
+    last_err = None
+    for model in GROQ_MODEL_FALLBACKS:
+        try:
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.2,
+            )
+            content = completion.choices[0].message.content or ""
+            return parse_lines(content)
+        except Exception as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"Groq generation failed: {last_err}")
 
 def main():
     if Groq is None:
@@ -63,6 +76,17 @@ def main():
 
     outfits_path = root / "outfits.txt"
     poses_path = root / "poses.txt"
+    locations_path = root / "locations.txt"
+    styles_path = root / "styles.txt"
+    concepts_poses_path = root / "concepts" / "poses.txt"
+    concepts_locations_path = root / "concepts" / "locations.txt"
+    styles_lighting_path = root / "styles" / "lighting.txt"
+    styles_camera_path = root / "styles" / "camera.txt"
+    visuals_expressions_path = root / "visuals" / "expressions.txt"
+    visuals_hairstyles_path = root / "visuals" / "hairstyles.txt"
+    wardrobe_casual_path = root / "wardrobe" / "casual.txt"
+    wardrobe_lingerie_path = root / "wardrobe" / "lingerie.txt"
+    wardrobe_cosplay_path = root / "wardrobe" / "cosplay.txt"
 
     try:
         needs_outfits = True
@@ -95,6 +119,167 @@ def main():
             print("Poses already populated")
     except Exception as e:
         print(f"Poses generation failed: {e}")
+
+    try:
+        needs_locations = True
+        try:
+            existing = locations_path.read_text(encoding="utf-8")
+            needs_locations = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_locations = True
+        if needs_locations:
+            locations = generate_list(client, "anime scene locations and environments (SFW)")
+            write_lines(locations_path, locations)
+            write_lines(concepts_locations_path, locations)
+            print(f"Wrote {len(locations)} locations -> {locations_path} and {concepts_locations_path}")
+        else:
+            print("Locations already populated")
+    except Exception as e:
+        print(f"Locations generation failed: {e}")
+
+    try:
+        needs_styles = True
+        try:
+            existing = styles_path.read_text(encoding="utf-8")
+            needs_styles = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_styles = True
+        if needs_styles:
+            styles = generate_list(client, "anime visual styles words (lighting, mood, camera), SFW")
+            write_lines(styles_path, styles)
+            print(f"Wrote {len(styles)} styles -> {styles_path}")
+        else:
+            print("Styles already populated")
+    except Exception as e:
+        print(f"Styles generation failed: {e}")
+
+    try:
+        needs_lighting = True
+        try:
+            existing = styles_lighting_path.read_text(encoding="utf-8")
+            needs_lighting = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_lighting = True
+        if needs_lighting:
+            lighting = generate_list(client, "anime lighting cues and descriptors (SFW)")
+            write_lines(styles_lighting_path, lighting)
+            print(f"Wrote {len(lighting)} lighting -> {styles_lighting_path}")
+        else:
+            print("Lighting already populated")
+    except Exception as e:
+        print(f"Lighting generation failed: {e}")
+
+    try:
+        needs_camera = True
+        try:
+            existing = styles_camera_path.read_text(encoding="utf-8")
+            needs_camera = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_camera = True
+        if needs_camera:
+            camera = generate_list(client, "anime camera angles and shot types (SFW)")
+            write_lines(styles_camera_path, camera)
+            print(f"Wrote {len(camera)} camera -> {styles_camera_path}")
+        else:
+            print("Camera already populated")
+    except Exception as e:
+        print(f"Camera generation failed: {e}")
+
+    try:
+        needs_expressions = True
+        try:
+            existing = visuals_expressions_path.read_text(encoding="utf-8")
+            needs_expressions = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_expressions = True
+        if needs_expressions:
+            expressions = generate_list(client, "anime facial expressions words")
+            write_lines(visuals_expressions_path, expressions)
+            print(f"Wrote {len(expressions)} expressions -> {visuals_expressions_path}")
+        else:
+            print("Expressions already populated")
+    except Exception as e:
+        print(f"Expressions generation failed: {e}")
+
+    try:
+        needs_hairstyles = True
+        try:
+            existing = visuals_hairstyles_path.read_text(encoding="utf-8")
+            needs_hairstyles = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_hairstyles = True
+        if needs_hairstyles:
+            hairstyles = generate_list(client, "anime hairstyles words")
+            write_lines(visuals_hairstyles_path, hairstyles)
+            print(f"Wrote {len(hairstyles)} hairstyles -> {visuals_hairstyles_path}")
+        else:
+            print("Hairstyles already populated")
+    except Exception as e:
+        print(f"Hairstyles generation failed: {e}")
+
+    try:
+        needs_concepts_poses = True
+        try:
+            existing = concepts_poses_path.read_text(encoding="utf-8")
+            needs_concepts_poses = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_concepts_poses = True
+        if needs_concepts_poses:
+            poses2 = generate_list(client, "anime action poses concise words")
+            write_lines(concepts_poses_path, poses2)
+            print(f"Wrote {len(poses2)} concept poses -> {concepts_poses_path}")
+        else:
+            print("Concept poses already populated")
+    except Exception as e:
+        print(f"Concept poses generation failed: {e}")
+
+    try:
+        needs_wardrobe_casual = True
+        try:
+            existing = wardrobe_casual_path.read_text(encoding="utf-8")
+            needs_wardrobe_casual = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_wardrobe_casual = True
+        if needs_wardrobe_casual:
+            casual = generate_list(client, "anime casual outfits words (SFW)")
+            write_lines(wardrobe_casual_path, casual)
+            print(f"Wrote {len(casual)} wardrobe casual -> {wardrobe_casual_path}")
+        else:
+            print("Wardrobe casual already populated")
+    except Exception as e:
+        print(f"Wardrobe casual generation failed: {e}")
+
+    try:
+        needs_wardrobe_lingerie = True
+        try:
+            existing = wardrobe_lingerie_path.read_text(encoding="utf-8")
+            needs_wardrobe_lingerie = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_wardrobe_lingerie = True
+        if needs_wardrobe_lingerie:
+            lingerie = generate_list(client, "anime lingerie outfits words (SFW)")
+            write_lines(wardrobe_lingerie_path, lingerie)
+            print(f"Wrote {len(lingerie)} wardrobe lingerie -> {wardrobe_lingerie_path}")
+        else:
+            print("Wardrobe lingerie already populated")
+    except Exception as e:
+        print(f"Wardrobe lingerie generation failed: {e}")
+
+    try:
+        needs_wardrobe_cosplay = True
+        try:
+            existing = wardrobe_cosplay_path.read_text(encoding="utf-8")
+            needs_wardrobe_cosplay = len(parse_lines(existing)) < 20
+        except Exception:
+            needs_wardrobe_cosplay = True
+        if needs_wardrobe_cosplay:
+            cosplay = generate_list(client, "anime cosplay outfits words (SFW)")
+            write_lines(wardrobe_cosplay_path, cosplay)
+            print(f"Wrote {len(cosplay)} wardrobe cosplay -> {wardrobe_cosplay_path}")
+        else:
+            print("Wardrobe cosplay already populated")
+    except Exception as e:
+        print(f"Wardrobe cosplay generation failed: {e}")
 
 if __name__ == "__main__":
     main()

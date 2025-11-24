@@ -1,8 +1,8 @@
 "use client";
 import React from "react";
-import { Wand2, Trash2, RefreshCw, Play, Radar, Search, Cog, Camera, Sun, ChevronDown, ChevronUp, Bot } from "lucide-react";
+import { Wand2, Trash2, RefreshCw, Play, Radar, Search, Cog, Camera, Sun, ChevronDown, ChevronUp, Bot, Loader2 } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
-import { magicFixPrompt, getPlannerResources, postPlannerAnalyze, getReforgeCheckpoints, postReforgeSetCheckpoint, getLocalLoras, getReforgeVAEs, getReforgeOptions } from "../../lib/api";
+import { magicFixPrompt, getPlannerResources, postPlannerAnalyze, getReforgeCheckpoints, postReforgeSetCheckpoint, getLocalLoras, getReforgeVAEs, getReforgeOptions, postPlannerDraft, getReforgeUpscalers } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import type { ResourceMeta } from "../../lib/api";
 
@@ -165,6 +165,8 @@ function rebuildPromptWithExtras(original: string, extras: { lighting?: string; 
 export default function PlannerView() {
   const [jobs, setJobs] = React.useState<PlannerJob[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [isRegenerating, setIsRegenerating] = React.useState(false);
+  const [seedBusy, setSeedBusy] = React.useState<Set<number>>(new Set());
   const [error, setError] = React.useState<string | null>(null);
   const [resources, setResources] = React.useState<{ outfits: string[]; poses: string[]; locations: string[]; lighting?: string[]; camera?: string[]; expressions?: string[]; hairstyles?: string[]; upscalers?: string[] } | null>(null);
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
@@ -179,6 +181,7 @@ export default function PlannerView() {
   const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
   const [localLoras, setLocalLoras] = React.useState<string[]>([]);
   const [vaes, setVaes] = React.useState<string[]>([]);
+  const [reforgeUpscalers, setReforgeUpscalers] = React.useState<string[]>([]);
   const [reforgeOptions, setReforgeOptionsState] = React.useState<{ current_vae: string; current_clip_skip: number } | null>(null);
   const setTechConfig = (character: string | null, partial: Partial<{ steps: number; cfg: number; sampler: string; seed: number; hiresFix: boolean; upscaleBy: number; upscaler: string; checkpoint: string; extraLoras: string[]; hiresSteps: number; batch_size: number; batch_count: number; adetailer: boolean; vae: string; clipSkip: number; negativePrompt: string }>) => {
     if (!character) return;
@@ -283,14 +286,16 @@ export default function PlannerView() {
   React.useEffect(() => {
     (async () => {
       try {
-        const [vNames, opts] = await Promise.all([
+        const [vNames, opts, upNames] = await Promise.all([
           getReforgeVAEs().catch(() => []),
           getReforgeOptions().catch(() => ({ current_vae: "Automatic", current_clip_skip: 1 })),
+          getReforgeUpscalers().catch(() => []),
         ]);
         setVaes(Array.isArray(vNames) ? vNames : []);
         setReforgeOptionsState(opts || null);
+        setReforgeUpscalers(Array.isArray(upNames) ? upNames : []);
       } catch (e) {
-        console.warn("Error cargando VAEs/opciones", e);
+        console.warn("Error cargando VAEs/opciones/upscalers", e);
       }
     })();
   }, []);
@@ -333,6 +338,14 @@ export default function PlannerView() {
       try {
         const cps = await getReforgeCheckpoints();
         setCheckpoints(cps);
+        if (activeCharacter) {
+          const current = techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
+          const first = cps && cps.length > 0 ? cps[0] : "";
+          if (!current && first) {
+            setTechConfig(activeCharacter, { checkpoint: first });
+            try { await postReforgeSetCheckpoint(first); } catch {}
+          }
+        }
       } catch (e) {
         console.warn("No se pudieron cargar checkpoints:", e);
       }
@@ -902,30 +915,6 @@ export default function PlannerView() {
                       <div className="mt-4">
                           <div className="mb-2 flex items-center justify-between">
                             <div className="text-xs uppercase tracking-wide text-slate-400">CONFIG A1111 (TÉCNICA)</div>
-                            <button
-                              type="button"
-                              className="text-[11px] rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 hover:bg-slate-700"
-                              onClick={() => {
-                                const t = techConfigByCharacter[activeCharacter!] || {};
-                              const c = configByCharacter[activeCharacter!] || {};
-                              const preset = {
-                                steps: typeof t.steps === "number" ? t.steps : 30,
-                                cfg: typeof t.cfg === "number" ? t.cfg : 7,
-                                negativePrompt: (t.negativePrompt && t.negativePrompt.trim().length > 0) ? t.negativePrompt : DEFAULT_NEGATIVE_ANIME,
-                                batch_size: typeof t.batch_size === "number" ? t.batch_size : 1,
-                                batch_count: typeof t.batch_count === "number" ? t.batch_count : 10,
-                                hiresFix: typeof t.hiresFix === "boolean" ? t.hiresFix : true,
-                                adetailer: typeof t.adetailer === "boolean" ? t.adetailer : true,
-                                upscaler: typeof t.upscaler === "string" ? t.upscaler : "",
-                                denoising: typeof c.denoising === "number" ? c.denoising : 0.35,
-                              };
-                              try { localStorage.setItem("planner_preset_global", JSON.stringify(preset)); } catch {}
-                              }}
-                              title="Guardar Configuración"
-                              aria-label="Guardar Configuración"
-                            >
-                              💾 Guardar Configuración
-                            </button>
                           </div>
                         <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
                           {/* Fila 1: Modelos */}
@@ -1030,18 +1019,6 @@ export default function PlannerView() {
                           {/* Fila 4: Sliders */}
                           <div className="col-span-2 grid grid-cols-3 gap-4">
                             <div>
-                              <label className="text-xs text-slate-300">Batch Size</label>
-                              <input
-                                type="range"
-                                min={1}
-                                max={4}
-                                value={techConfigByCharacter[activeCharacter]?.batch_size ?? 1}
-                                onChange={(e) => setTechConfig(activeCharacter, { batch_size: Number(e.target.value) })}
-                                className="mt-2 w-full"
-                              />
-                              <div className="mt-1 text-[11px] text-slate-400">{techConfigByCharacter[activeCharacter]?.batch_size ?? 1} imágenes por job</div>
-                            </div>
-                            <div>
                               <label className="text-xs text-slate-300">Batch Count</label>
                               <div className="mt-2 flex items-center gap-2">
                                 <input
@@ -1066,6 +1043,46 @@ export default function PlannerView() {
                                   }}
                                   className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                                 />
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!activeCharacter) return;
+                                    const count = techConfigByCharacter[activeCharacter]?.batch_count ?? 10;
+                                    const triggers = metaByCharacter[activeCharacter]?.trigger_words || [activeCharacter];
+                                    try {
+                                      setIsRegenerating(true);
+                                      const res = await postPlannerDraft([{ character_name: activeCharacter, trigger_words: triggers, batch_count: count }], undefined);
+                                      setJobs((prev) => {
+                                        const others = prev.filter((j) => j.character_name !== activeCharacter);
+                                        const next = [...others, ...res.jobs];
+                                        try { localStorage.setItem("planner_jobs", JSON.stringify(next)); } catch {}
+                                        return next;
+                                      });
+                                      try {
+                                        const draftsList: unknown[] = Array.isArray(res.drafts) ? (res.drafts as unknown[]) : [];
+                                        const found = draftsList.find((d): d is { character?: string; base_prompt?: string; recommended_params?: { cfg: number; steps: number; sampler: string }; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> } => {
+                                          return !!d && typeof d === "object" && (d as Record<string, unknown>).hasOwnProperty("character") && (d as { character?: string }).character === activeCharacter;
+                                        });
+                                        if (found) {
+                                          setPlannerContext((prev) => {
+                                            const next = { ...prev, [activeCharacter]: { base_prompt: found.base_prompt, recommended_params: found.recommended_params, reference_images: found.reference_images } };
+                                            try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
+                                            return next;
+                                          });
+                                        }
+                                      } catch {}
+                                    } catch (e) {
+                                      console.error("Regeneración fallida", e);
+                                    } finally {
+                                      setIsRegenerating(false);
+                                    }
+                                  }}
+                                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+                                  title="Re-Generar Plan"
+                                  disabled={isRegenerating}
+                                >
+                                  {isRegenerating ? (<span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Re-Generando...</span>) : ("🔄 Re-Generar Plan")}
+                                </button>
                               </div>
                               <div className="mt-1 text-[11px] text-slate-400">{techConfigByCharacter[activeCharacter]?.batch_count ?? 10} jobs planificados</div>
                             </div>
@@ -1123,7 +1140,7 @@ export default function PlannerView() {
                                     className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
                                   >
                                     <option value="">(none)</option>
-                                    {resources?.upscalers?.map((u) => (<option key={u} value={u}>{u}</option>))}
+                                {reforgeUpscalers.map((u) => (<option key={u} value={u}>{u}</option>))}
                                   </select>
                                 </div>
                                 <div className="flex-1">
@@ -1147,6 +1164,31 @@ export default function PlannerView() {
                                 </div>
                               </div>
                             )}
+                            <div className="ml-auto">
+                              <button
+                                type="button"
+                                className="text-[11px] rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 hover:bg-slate-700"
+                                onClick={() => {
+                                  const t = techConfigByCharacter[activeCharacter!] || {};
+                                  const c = configByCharacter[activeCharacter!] || {};
+                                  const preset = {
+                                    steps: typeof t.steps === "number" ? t.steps : 30,
+                                    cfg: typeof t.cfg === "number" ? t.cfg : 7,
+                                    negativePrompt: (t.negativePrompt && t.negativePrompt.trim().length > 0) ? t.negativePrompt : DEFAULT_NEGATIVE_ANIME,
+                                    batch_count: typeof t.batch_count === "number" ? t.batch_count : 10,
+                                    hiresFix: typeof t.hiresFix === "boolean" ? t.hiresFix : true,
+                                    adetailer: typeof t.adetailer === "boolean" ? t.adetailer : true,
+                                    upscaler: typeof t.upscaler === "string" ? t.upscaler : "",
+                                    denoising: typeof c.denoising === "number" ? c.denoising : 0.35,
+                                  };
+                                  try { localStorage.setItem("planner_preset_global", JSON.stringify(preset)); } catch {}
+                                }}
+                                title="Guardar Configuración"
+                                aria-label="Guardar Configuración"
+                              >
+                                💾 Guardar Configuración
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1275,8 +1317,18 @@ export default function PlannerView() {
                             <button onClick={() => { const ensured = ensureTriplet(jobs[idx].prompt); updatePrompt(idx, ensured); }} className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40">
                               <Cog className="h-4 w-4" /> <span>Aplicar</span>
                             </button>
-                            <button onClick={() => regenerateSeed(idx)} className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">
-                              <RefreshCw className="h-4 w-4" /> <span>Regenerar</span>
+                            <button
+                              onClick={() => {
+                                setSeedBusy((prev) => { const next = new Set(prev); next.add(idx); return next; });
+                                regenerateSeed(idx);
+                                setTimeout(() => {
+                                  setSeedBusy((prev) => { const next = new Set(prev); next.delete(idx); return next; });
+                                }, 400);
+                              }}
+                              disabled={seedBusy.has(idx)}
+                              className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+                            >
+                              {seedBusy.has(idx) ? (<><Loader2 className="h-4 w-4 animate-spin" /> <span>Regenerando...</span></>) : (<><RefreshCw className="h-4 w-4" /> <span>Regenerar</span></>)}
                             </button>
                             <button onClick={() => toggleDetails(idx)} className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800">
                               <Camera className="h-4 w-4" /> <span>Ver Prompt</span>

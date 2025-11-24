@@ -1,12 +1,56 @@
-dutch angle
-fisheye
-from below
-from above
-low angle
-high angle
-close-up
-extreme close-up
-wide shot
-cowboy shot
-over-the-shoulder
-tilt-shift
+Low angle shot of a character standing
+High angle shot of a cityscape
+Over the shoulder shot of a conversation
+Point of view shot from a characters perspective
+Close up shot of a characters face
+Medium shot of a character walking
+Long shot of a character in a landscape
+Extreme close up shot of a characters eyes
+Two shot of two characters talking
+Overhead shot of a room
+Dutch angle shot of a character running
+Cutaway shot of a different scene
+Reaction shot of a character responding
+Establishing shot of a new location
+Birds eye view of a city
+Worms eye view of a character
+Shot reverse shot of a conversation
+Medium long shot of a character sitting
+Long long shot of a character in the distance
+Extreme long shot of a vast landscape
+Close up shot of a characters hands
+High angle shot of a character looking down
+Low angle shot of a character looking up
+Point of view shot from behind a character
+Over the shoulder shot of a character listening
+Two shot of two characters standing
+Medium shot of a character running
+Long shot of a character in a crowd
+Extreme close up shot of a characters lips
+Cutaway shot of a characters flashback
+Reaction shot of a character surprised
+Establishing shot of a characters home
+Birds eye view of a forest
+Worms eye view of a tree
+Shot reverse shot of a romantic conversation
+Medium long shot of a character dancing
+Long long shot of a character in a field
+Extreme long shot of a mountain range
+Close up shot of a characters feet
+High angle shot of a character sitting
+Low angle shot of a character standing tall
+Point of view shot from a characters hands
+Over the shoulder shot of a character talking
+Two shot of two characters hugging
+Medium shot of a character jumping
+Long shot of a character in a desert
+Extreme close up shot of a characters nose
+Cutaway shot of a characters imagination
+Reaction shot of a character laughing
+Establishing shot of a new world
+Birds eye view of a river
+Worms eye view of a building
+Shot reverse shot of a dramatic conversation
+Medium long shot of a character singing
+Long long shot of a character on a road
+Extreme long shot of a galaxy

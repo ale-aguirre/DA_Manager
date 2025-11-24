@@ -1,15 +1,64 @@
-soft ambient light
-cinematic lighting
-rim lighting
-neon backlight
-volumetric light rays
-moonlit night
-sunset golden hour
-backlit silhouette
-film grain texture
-depth of field (bokeh)
-low-angle shot
-high-angle shot
-portrait close-up
-wide-angle composition
-rule of thirds framing
+Soft Pastel Colors
+Warm Golden Hour Lighting
+Vibrant Sakura Blossoms
+Gentle Watercolor Textures
+Muted Earthy Tones
+Serene Moonlit Nights
+Dramatic Chiaroscuro
+Whimsical Hand Drawn Patterns
+Romantic Candlelit Scenes
+Airy Feathery Brushstrokes
+Nostalgic Sepia Tones
+Tranquil Misty Mornings
+Crisp High Contrast
+Fantastical Dreamlike Landscapes
+Intricate Pen and Ink Details
+Lively Expressive Character Designs
+Delicate Cherry Blossom Petals
+Warm Cozy Interiors
+Soft Focus Blurred Backgrounds
+Vivid Neon Cityscapes
+Glowing Ethereal Aura
+Intense Emotional Close Ups
+Peaceful Shaded Forests
+Bright Sunshine Filtering
+Delicate Lace Patterns
+Majestic Sweeping Landscapes
+Gentle Rainy Days
+Vibrant Colorful Festivals
+Serene Silent Moments
+Dramatic Action Sequences
+Warmly Lit Cozy Cafes
+Fantastical Mythical Creatures
+Intricate Traditional Patterns
+Softly Glowing Lanterns
+Tranquil Peaceful Oceans
+Lively Dynamic Camera Angles
+Whimsical Fantastical Architecture
+Romantic Starry Nights
+Gentle Fluffy Clouds
+Vibrant Lively Markets
+Delicate Beautiful Florals
+Crisp Clean Lines
+Nostalgic Vintage Aesthetics
+Serene Quiet Moments
+Dramatic Intense Action
+Warmly Lit Firesides
+Glowing Softly Lit Portraits
+Tranquil Silent Forests
+Vividly Colored Hair Accessories
+Fantastical Magical Effects
+Intricate Delicate Jewelry
+Softly Falling Snowflakes
+Gentle Soothing Music
+Lively Energetic Character Animations
+Whimsical Fantastical Storybook
+Romantic Beautiful Scenery
+Peaceful Serene Landscapes
+Dramatic Emotional Storytelling
+Vibrant Lively City Life
+Gentle Warm Smiles
+Tranquil Peaceful Atmosphere
+Softly Glowing Embers
+Delicate Beautiful Watercolor
+Nostalgic Memories

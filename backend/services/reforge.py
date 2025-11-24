@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, List
 import httpx
+import json
 
 # Instrucción del usuario: URL base de ReForge hardcodeada por ahora
 BASE_URL = "http://127.0.0.1:7860"
@@ -48,22 +49,26 @@ def build_txt2img_payload(prompt: Optional[str] = None,
         payload["steps"] = steps
     if isinstance(enable_hr, bool):
         payload["enable_hr"] = enable_hr
-        # Si enable_hr está activo y hay valor válido de denoising, aplicarlo
         if isinstance(denoising_strength, (int, float)):
             val = float(denoising_strength)
             if 0.0 <= val <= 1.0:
                 payload["denoising_strength"] = val
-        # Hires Steps (0 = mismo que steps base)
         if isinstance(hr_second_pass_steps, int) and hr_second_pass_steps >= 0:
             payload["hr_second_pass_steps"] = hr_second_pass_steps
-        # Upscaler y escala de Hires Fix
+        set_scale = None
         if isinstance(hr_scale, (int, float)):
             val = float(hr_scale)
-            # rangos típicos aceptados por A1111: 1.0 - 4.0
             if 1.0 <= val <= 4.0:
-                payload["hr_scale"] = val
-        if isinstance(hr_upscaler, str) and hr_upscaler.strip():
-            payload["hr_upscaler"] = hr_upscaler.strip()
+                set_scale = val
+        if set_scale is None and enable_hr:
+            set_scale = 2.0
+        if set_scale is not None:
+            payload["hr_scale"] = set_scale
+        set_upscaler = (hr_upscaler.strip() if isinstance(hr_upscaler, str) else None)
+        if not set_upscaler and enable_hr:
+            set_upscaler = "Latent"
+        if set_upscaler:
+            payload["hr_upscaler"] = set_upscaler
 
     return payload
 
@@ -122,6 +127,15 @@ async def call_txt2img(prompt: Optional[str] = None,
         payload["override_settings"] = override_settings
     
     # Timeout ampliado a 600s para evitar 502 por Mac M2
+    # Sanitizar None y log de depuración del payload completo
+    payload = {k: v for k, v in payload.items() if v is not None}
+    try:
+        print(f"[ReForge/txt2img] Payload: {json.dumps(payload, ensure_ascii=False)}")
+    except Exception:
+        try:
+            print("[ReForge/txt2img] Payload serialización fallida")
+        except Exception:
+            pass
     async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
@@ -155,6 +169,21 @@ async def list_vaes() -> List[str]:
         if isinstance(data, list):
             for item in data:
                 name = item.get("model_name") if isinstance(item, dict) else None
+                if name:
+                    names.append(name)
+        return names
+
+async def list_upscalers() -> List[str]:
+    """Obtiene la lista de Upscalers disponibles desde la API y devuelve solo los 'name'."""
+    url = f"{BASE_URL}/sdapi/v1/upscalers"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+        names: List[str] = []
+        if isinstance(data, list):
+            for item in data:
+                name = item.get("name") if isinstance(item, dict) else None
                 if name:
                     names.append(name)
         return names

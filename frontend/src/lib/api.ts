@@ -254,6 +254,16 @@ export async function getReforgeVAEs(): Promise<string[]> {
   return Array.isArray(data?.names) ? data.names : [];
 }
 
+export async function getReforgeUpscalers(): Promise<string[]> {
+  const res = await fetch(`${BASE_URL}/reforge/upscalers`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`ReForge Upscalers failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.names) ? data.names : [];
+}
+
 export interface ReforgeOptionsBrief {
   current_vae: string;
   current_clip_skip: number;
