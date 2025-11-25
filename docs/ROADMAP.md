@@ -1,24 +1,56 @@
 # 🗺️ LadyManager Roadmap 
  
 ## 🟢 Fase 1: Infraestructura y Radar (Actual) 
- - [ ] Configuración de Monorepo (Back/Front). 
- - [ ] Variables de entorno dinámicas (.env). 
- - [ ] Endpoint de Scraping a Civitai (usando cloudscraper). 
- - [ ] Interfaz básica para ver JSON crudo de Civitai. 
+ - [x] Configuración de Monorepo (Back/Front). 
+ - [x] Variables de entorno dinámicas (.env). 
+ - [x] Endpoint de Scraping a Civitai (usando cloudscraper). 
+ - [x] Interfaz básica para ver JSON crudo de Civitai. 
  
  ## 🟡 Fase 2: Inteligencia y Procesamiento 
- - [ ] Integración con Groq (Llama 3) para limpiar datos. 
- - [ ] Separación lógica de Personajes vs. Poses. 
- - [ ] Endpoint para guardar archivos .txt en la carpeta de ReForge. 
+ - [x] Integración con Groq (Llama 3) para limpiar datos. 
+ - [x] Separación lógica de Personajes vs. Poses. 
+ - [x] Endpoint para guardar archivos .txt en la carpeta de ReForge. 
  
  ## 🟠 Fase 3: Conexión con Stable Diffusion 
- - [ ] Botón en el Dashboard para activar generación en ReForge. 
- - [ ] Visor de galería local (ver qué se está generando). 
- 
- ## 🔴 Fase 4: Auditoría Visual (Futuro) 
- - [ ] Integración con Gemini Vision. 
- - [ ] Filtrado automático de imágenes defectuosas.
+ - [x] Botón en el Dashboard para activar generación en ReForge. 
+ - [x] Visor de galería local (ver qué se está generando). 
 
+ # 🗺️ LadyManager Roadmap (Windows/Mac Hybrid)
+> **Estado:** FASE 3.5 (Estabilización Final & UX)
+> **Motor:** Forge f2.0 / ReForge (API Compatible)
+
+## 🟢 FASE 3.5: Estabilización y UX
+El objetivo actual es cerrar los bugs visuales y asegurar que la "Fábrica" sea usable y bonita.
+
+### 🔧 Correcciones Pendientes
+- [x] **FIX Visual de Jobs:** Agregar Iconos (Lucide) a los selectores de Outfit/Pose para identificación rápida.
+- [x] **FIX Selector Checkpoints:** Asegurar que el botón "Actualizar" fuerce un re-render visual del dropdown.
+- [x] **FIX LoRAs Extra:** Asegurar que la lista se cargue y permita selección múltiple con peso.
+- [x] **FIX Galería Header:** Restaurar la barra superior con la ruta actual y el botón de "Abrir en Explorador".
+
+### ⚙️ Lógica de Negocio
+- [x] **Prompt Base Limpio:** Backend debe dejar de concatenar `base_prompt` si el frontend ya lo envió. (Evitar duplicados).
+- [x] **Inteligencia Real:** Backend debe leer `.civitai.info` y forzar los `trainedWords` en el prompt base, prohibiendo a la IA inventar.
+- [x] **Hires Fix Seguro:** Backend debe enviar `hr_additional_modules: ["Use same choices"]` para evitar Error 500 en Forge.
+
+## 🔵 FASE 4: Escalamiento y Marketing (PRÓXIMO)
+Una vez que la fábrica sea estable, nos enfocamos en la post-producción.
+
+- [ ] Integración con Gemini Vision. 
+- [ ] Filtrado automático de imágenes defectuosas.
+- [ ] **Asistente de Marketing V2:** Generación de Título/Tags optimizados para Twitter/DeviantArt usando Groq.
+- [ ] **Auto-Tagging:** Inyectar metadatos EXIF en los PNGs finales.
+- [ ] **Gestión de Archivos:** Mover/Borrar archivos desde la Galería.
+
+## 🔮 FASE 5: Futuro (V4 - "El Imperio")
+- [ ] **Vision AI:** Integrar `LLaVA` o similar para que una IA revise las fotos y borre las deformes automáticamente.
+- [ ] **Auto-Snatcher:** Script nocturno que descargue lo más popular de Civitai automáticamente.
+- [ ] **Publicación:** Integración con API de DeviantArt.
+
+## ⚖️ Reglas de Oro (Técnicas)
+1.  **Rutas:** Siempre `os.path.join`. Compatibilidad Windows/Mac.
+2.  **API Forge:** Siempre enviar `hr_scale` como float y `hr_additional_modules` si Hires Fix está activo.
+3.  **UI:** Lucide Icons, Dark Mode, Feedback visual (Toasts/Spinners).
 
 ## 🟣 Descargas y Gestor Local — 2025-11-22
 - Backend: `POST /download-lora` (cloudscraper, streaming a REFORGE_PATH/../../models/Lora), `GET /local/loras` (listar .safetensors) y `DELETE /local/lora` (borrado seguro con validación de ruta).

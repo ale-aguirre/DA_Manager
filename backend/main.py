@@ -892,7 +892,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
 
     # Helper: enriquecer con Civitai
     async def civitai_enrich(character_name: str, trigger_words: List[str]) -> dict:
-        lora_tag = f"<lora:{sanitize_filename(character_name)}:0.8>"
+        real_stem = _find_lora_file_stem(character_name) or sanitize_filename(character_name)
+        lora_tag = f"<lora:{real_stem}:0.8>"
         def _clean_tags(tags: List[str]) -> List[str]:
             banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
             return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
