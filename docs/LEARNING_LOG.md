@@ -88,4 +88,10 @@
 - Issue: Galería confusa por prompt “Seleccionar ubicación” y sin navegación por carpetas.
 - Cause: UX basada en `prompt()` y parámetro `override_base` sin descubrir carpetas.
 - Fix: `GET /gallery/folders` para listar subcarpetas en `OUTPUTS_DIR`; Sidebar de carpetas con persistencia en `localStorage`; botón 📂 “Abrir carpeta” junto al título; `POST /system/open-folder` en Backend (Windows) usando `os.startfile`.
-- Prevention: Evitar `prompt()` para flujos de navegación; usar exploradores laterales con estados persistentes; verificación visual en Preview.
+ - Prevention: Evitar `prompt()` para flujos de navegación; usar exploradores laterales con estados persistentes; verificación visual en Preview.
+
+## 2025-11-25
+- Issue: Doble botón de “Ocultar menú” y densidad visual baja en Planner.
+- Cause: Toggle duplicado en Sidebar y paddings/gaps grandes en secciones del Planner.
+- Fix: Eliminar toggle interno del Sidebar y ampliar el global; reducir `p-4→p-3`, `gap-6→gap-4`, `space-y-6→space-y-4`; compactar lista de jobs a `space-y-2`; renombrar etiquetas a “Prompt Positivo” y botón principal a “Generar”.
+- Prevention: Checklist de UX denso (“Technical Dashboard”) antes de cerrar tareas; evitar controles redundantes; preferir toggles globales.

@@ -18,6 +18,10 @@ import {
   Shirt,
   MapPin,
   Zap,
+  Save,
+  Shuffle,
+  Plus,
+  CheckCircle,
 } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
 import {
@@ -303,7 +307,6 @@ export default function PlannerView() {
   const [jobs, setJobs] = React.useState<PlannerJob[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [isRegenerating, setIsRegenerating] = React.useState(false);
-  const [seedBusy, setSeedBusy] = React.useState<Set<number>>(new Set());
   const [toast, setToast] = React.useState<{ message: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [resources, setResources] = React.useState<{
@@ -363,6 +366,7 @@ export default function PlannerView() {
         steps?: number;
         cfg?: number;
         sampler?: string;
+        schedulerType?: string;
         seed?: number;
         hiresFix?: boolean;
         upscaleBy?: number;
@@ -408,6 +412,12 @@ export default function PlannerView() {
     current_vae: string;
     current_clip_skip: number;
   } | null>(null);
+  const [paramTab, setParamTab] = React.useState<
+    "generation" | "hires" | "adetailer"
+  >("generation");
+  const [rightTab, setRightTab] = React.useState<"personajes" | "helpers">(
+    "personajes"
+  );
   const [refreshingCheckpoints, setRefreshingCheckpoints] =
     React.useState(false);
   const [dryRunOpen, setDryRunOpen] = React.useState(false);
@@ -418,6 +428,7 @@ export default function PlannerView() {
       steps: number;
       cfg: number;
       sampler: string;
+      schedulerType: string;
       seed: number;
       hiresFix: boolean;
       upscaleBy: number;
@@ -532,11 +543,13 @@ export default function PlannerView() {
     }
     if (typeof tech.upscaleBy !== "number") {
       const p = preset as { upscaleBy?: number } | null;
-      patchTech.upscaleBy = typeof p?.upscaleBy === "number" ? p!.upscaleBy! : 1.5;
+      patchTech.upscaleBy =
+        typeof p?.upscaleBy === "number" ? p!.upscaleBy! : 1.5;
     }
     if (typeof tech.hiresSteps !== "number") {
       const p = preset as { hiresSteps?: number } | null;
-      patchTech.hiresSteps = typeof p?.hiresSteps === "number" ? p!.hiresSteps! : 10;
+      patchTech.hiresSteps =
+        typeof p?.hiresSteps === "number" ? p!.hiresSteps! : 10;
     }
     if (typeof tech.width !== "number") {
       patchTech.width = 832;
@@ -879,17 +892,7 @@ export default function PlannerView() {
     });
   };
 
-  const regenerateSeed = (idx: number) => {
-    setJobs((prev) => {
-      const next = [...prev];
-      next[idx] = {
-        ...next[idx],
-        seed: Math.floor(Math.random() * 2_147_483_647),
-      };
-      localStorage.setItem("planner_jobs", JSON.stringify(next));
-      return next;
-    });
-  };
+  
 
   const deleteRow = (idx: number) => {
     setJobs((prev) => {
@@ -1136,7 +1139,11 @@ export default function PlannerView() {
           const tech = techConfigByCharacter[j.character_name];
           const base = plannerContext[j.character_name]?.base_prompt || "";
           const bodyPrompt = ensureTriplet(j.prompt);
-          const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
+          const sanitize = (s: string) =>
+            s
+              .toLowerCase()
+              .replace(/\s+/g, "_")
+              .replace(/[^a-z0-9_\-]/g, "");
           const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
           const qualityEnd = "masterpiece, best quality, absurdres";
           let trigList: string[] = [];
@@ -1146,17 +1153,23 @@ export default function PlannerView() {
             } else {
               try {
                 const info = await getLocalLoraInfo(j.character_name);
-                trigList = Array.isArray(info?.trainedWords) ? info.trainedWords : [];
+                trigList = Array.isArray(info?.trainedWords)
+                  ? info.trainedWords
+                  : [];
                 cache[j.character_name] = trigList;
               } catch {
-                trigList = metaByCharacter[j.character_name]?.trigger_words || [];
+                trigList =
+                  metaByCharacter[j.character_name]?.trigger_words || [];
               }
             }
           }
-          const trig = (trigList.length > 0 ? trigList : [j.character_name]).join(", ");
-          const finalPrompt = base && base.trim().length > 0
-            ? `${base.trim()}, ${bodyPrompt}`
-            : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+          const trig = (
+            trigList.length > 0 ? trigList : [j.character_name]
+          ).join(", ");
+          const finalPrompt =
+            base && base.trim().length > 0
+              ? `${base.trim()}, ${bodyPrompt}`
+              : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
           out.push({
             ...j,
             prompt: finalPrompt,
@@ -1189,7 +1202,8 @@ export default function PlannerView() {
             checkpoint: tech.checkpoint,
             width: typeof tech.width === "number" ? tech.width : 832,
             height: typeof tech.height === "number" ? tech.height : 1216,
-            adetailer_model: (tech.adetailer ?? true) ? "face_yolov8n.pt" : undefined,
+            adetailer_model:
+              tech.adetailer ?? true ? "face_yolov8n.pt" : undefined,
             extra_loras: tech.extraLoras,
             hires_steps: tech.hiresSteps,
             batch_size: tech.batch_size ?? 1,
@@ -1237,7 +1251,6 @@ export default function PlannerView() {
     if (goRadar) router.push("/radar");
   };
 
-
   const deleteSelected = () => {
     setJobs((prev) => {
       const next = prev.filter((_, i) => !selected.has(i));
@@ -1247,16 +1260,7 @@ export default function PlannerView() {
     setSelected(new Set());
   };
 
-  const regenerateSelectedSeeds = () => {
-    setJobs((prev) => {
-      const next = prev.map((job, i) => {
-        if (!selected.has(i)) return job;
-        return { ...job, seed: Math.floor(Math.random() * 2_147_483_647) };
-      });
-      localStorage.setItem("planner_jobs", JSON.stringify(next));
-      return next;
-    });
-  };
+  
 
   // Controles globales
   const toggleAllDetailsGlobal = () => {
@@ -1272,23 +1276,7 @@ export default function PlannerView() {
     });
   };
 
-  const regenerateAllSeeds = () => {
-    if (!activeCharacter) return;
-    const indices = perCharacter[activeCharacter]?.indices || [];
-    setJobs((prev) => {
-      const next = [...prev];
-      for (const idx of indices) {
-        if (typeof idx === "number")
-          next[idx] = {
-            ...next[idx],
-            seed: Math.floor(Math.random() * 2_147_483_647),
-          };
-      }
-      localStorage.setItem("planner_jobs", JSON.stringify(next));
-      return next;
-    });
-  };
-
+  
 
   const applyQuickEdit = (
     row: number,
@@ -1397,8 +1385,8 @@ export default function PlannerView() {
                 {opt}
               </button>
             ))}
-          </div>
-        )}
+            </div>
+      )}
       </div>
     );
   };
@@ -1486,11 +1474,9 @@ export default function PlannerView() {
     });
   };
 
-
-
   if (jobs.length === 0) {
     return (
-      <div className="mx-auto max-w-3xl px-4 md:px-6 lg:px-8">
+      <div className="w-full px-4 md:px-6 lg:px-8">
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-10 text-center shadow-xl">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/20">
             <Radar className="h-8 w-8 text-violet-400" aria-hidden />
@@ -1515,7 +1501,7 @@ export default function PlannerView() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-4 md:px-6 lg:px-8">
+    <div className="w-full px-4 md:px-6 lg:px-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-slate-100">Planificador</h1>
         <div className="flex items-center gap-2">
@@ -1567,28 +1553,40 @@ export default function PlannerView() {
                 const preparedJobs: PlannerJob[] = [];
                 for (const j of jobs) {
                   const tech = techConfigByCharacter[j.character_name];
-                  const base = plannerContext[j.character_name]?.base_prompt || "";
+                  const base =
+                    plannerContext[j.character_name]?.base_prompt || "";
                   const bodyPrompt = ensureTriplet(j.prompt);
-                  const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
+                  const sanitize = (s: string) =>
+                    s
+                      .toLowerCase()
+                      .replace(/\s+/g, "_")
+                      .replace(/[^a-z0-9_\-]/g, "");
                   const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
                   const qualityEnd = "masterpiece, best quality, absurdres";
                   let trigList: string[] = [];
                   if (!base || base.trim().length === 0) {
                     try {
                       const info = await getLocalLoraInfo(j.character_name);
-                      trigList = Array.isArray(info?.trainedWords) ? info.trainedWords : [];
+                      trigList = Array.isArray(info?.trainedWords)
+                        ? info.trainedWords
+                        : [];
                     } catch {
-                      trigList = metaByCharacter[j.character_name]?.trigger_words || [];
+                      trigList =
+                        metaByCharacter[j.character_name]?.trigger_words || [];
                     }
                   }
-                  const trig = (trigList.length > 0 ? trigList : [j.character_name]).join(", ");
-                  const finalPrompt = base && base.trim().length > 0
-                    ? `${base.trim()}, ${bodyPrompt}`
-                    : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+                  const trig = (
+                    trigList.length > 0 ? trigList : [j.character_name]
+                  ).join(", ");
+                  const finalPrompt =
+                    base && base.trim().length > 0
+                      ? `${base.trim()}, ${bodyPrompt}`
+                      : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
                   preparedJobs.push({
                     ...j,
                     prompt: finalPrompt,
-                    seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
+                    seed:
+                      tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
                     negative_prompt: tech?.negativePrompt,
                   });
                 }
@@ -1613,8 +1611,10 @@ export default function PlannerView() {
                       upscaler: tech.upscaler,
                       checkpoint: tech.checkpoint,
                       width: typeof tech.width === "number" ? tech.width : 832,
-                      height: typeof tech.height === "number" ? tech.height : 1216,
-                      adetailer_model: (tech.adetailer ?? true) ? "face_yolov8n.pt" : undefined,
+                      height:
+                        typeof tech.height === "number" ? tech.height : 1216,
+                      adetailer_model:
+                        tech.adetailer ?? true ? "face_yolov8n.pt" : undefined,
                       extra_loras: tech.extraLoras,
                       hires_steps: tech.hiresSteps,
                       batch_size: tech.batch_size ?? 1,
@@ -1626,7 +1626,9 @@ export default function PlannerView() {
                 );
                 let outputsPath = "";
                 try {
-                  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+                  const API_BASE =
+                    process.env.NEXT_PUBLIC_API_BASE_URL ||
+                    "http://127.0.0.1:8000";
                   const res = await fetch(`${API_BASE}/system/outputs-dir`);
                   if (res.ok) {
                     const j = await res.json();
@@ -1679,43 +1681,217 @@ export default function PlannerView() {
 
       {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
 
-      <div className="space-y-6">
+      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
+        <div className="p-2">
+          <div className="mb-3">
+            <div className="section-title">
+              <Cog className="section-title__icon" aria-hidden />
+              <span>Panel Técnico</span>
+              <span className="ml-auto"><EngineHealthIndicator /></span>
+            </div>
+          </div>
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <div className="col-span-6">
+              <label className="text-xs text-slate-300">
+                Stable Diffusion Checkpoint
+              </label>
+              <select
+                value={
+                  techConfigByCharacter[activeCharacter!]?.checkpoint ?? ""
+                }
+                onChange={async (e) => {
+                  const title = e.target.value;
+                  setTechConfig(activeCharacter, { checkpoint: title });
+                  try {
+                    if (title) await postReforgeSetCheckpoint(title);
+                  } catch {}
+                }}
+                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                key={`ckpt-${checkpointVersion}`}
+              >
+                <option value="">(Sin cambio)</option>
+                {checkpoints.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-3">
+              <label className="text-xs text-slate-300">VAE</label>
+              <select
+                value={
+                  techConfigByCharacter[activeCharacter!]?.vae ??
+                  reforgeOptions?.current_vae ??
+                  "Automatic"
+                }
+                onChange={(e) =>
+                  setTechConfig(activeCharacter, { vae: e.target.value })
+                }
+                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+              >
+                <option value="Automatic">Automatic</option>
+                {vaes.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs text-slate-300">Clip Skip</label>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex-1">
+                  {SliderBar({
+                    value:
+                      techConfigByCharacter[activeCharacter!]?.clipSkip ??
+                      reforgeOptions?.current_clip_skip ??
+                      1,
+                    min: 1,
+                    max: 4,
+                    step: 1,
+                    onChange: (v) =>
+                      setTechConfig(activeCharacter, { clipSkip: v }),
+                  })}
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={4}
+                  step={1}
+                  value={
+                    techConfigByCharacter[activeCharacter!]?.clipSkip ??
+                    reforgeOptions?.current_clip_skip ??
+                    1
+                  }
+                  onChange={(e) =>
+                    setTechConfig(activeCharacter, {
+                      clipSkip: Number(e.target.value),
+                    })
+                  }
+                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                />
+              </div>
+            </div>
+            <div className="col-span-1 flex items-center justify-end">
+              <button
+                onClick={async () => {
+                  try {
+                    await postReforgeRefresh();
+                  } catch {}
+                  await refreshUpscalers();
+                  await refreshCheckpoints();
+                }}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+              >
+                <RefreshCw className="h-3 w-3" /> Actualizar
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
+        <div className="p-3">
+          <div className="grid grid-cols-12 gap-3">
+            <div className="col-span-9">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="text-xs text-slate-300">
+                    Prompt Positivo
+                  </label>
+                  <textarea
+                    value={plannerContext[activeCharacter!]?.base_prompt || ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPlannerContext((prev) => {
+                        const next = {
+                          ...prev,
+                          [activeCharacter!]: {
+                            ...(prev[activeCharacter!] || {}),
+                            base_prompt: v,
+                          },
+                        };
+                        try {
+                          localStorage.setItem(
+                            "planner_context",
+                            JSON.stringify(next)
+                          );
+                        } catch {}
+                        return next;
+                      });
+                    }}
+                    className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-300">
+                    Prompt Negativo
+                  </label>
+                  <textarea
+                    value={
+                      techConfigByCharacter[activeCharacter!]?.negativePrompt ??
+                      ""
+                    }
+                    onChange={(e) =>
+                      setTechConfig(activeCharacter, {
+                        negativePrompt: e.target.value,
+                      })
+                    }
+                    className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="col-span-3">
+              <button
+                onClick={startProduction}
+                disabled={jobs.length === 0}
+                className="w-full h-32 rounded-lg bg-green-600 text-white text-lg font-semibold hover:bg-green-500 disabled:opacity-60"
+              >
+                Generar
+              </button>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <button
+                  onClick={() => {
+                    try {
+                      localStorage.setItem(
+                        "planner_jobs",
+                        JSON.stringify(jobs)
+                      );
+                    } catch {}
+                  }}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                >
+                  Guardar
+                </button>
+                <button
+                  onClick={() => deleteCharacter(activeCharacter!)}
+                  className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
+                >
+                  Borrar
+                </button>
+                <button
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="space-y-4">
         {activeCharacter ? (
           <>
             {/* Sección Superior (Contexto & Config) */}
             <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
-              <div className="p-4">
-                <div className="grid grid-cols-12 gap-6 items-start">
-                  {/* Col 1-3: Perfil */}
-                  <div className="col-span-12 md:col-span-3">
-                    <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
-                      {metaByCharacter[activeCharacter]?.image_url ? (
-                        <img
-                          src={metaByCharacter[activeCharacter]!.image_url!}
-                          alt={activeCharacter}
-                          className="aspect-[2/3] w-full rounded-lg object-cover shadow-lg"
-                        />
-                      ) : (
-                        <div className="aspect-[2/3] w-full rounded-lg border border-slate-800 bg-slate-800/40 flex items-center justify-center text-xs text-slate-400">
-                          Sin imagen
-                        </div>
-                      )}
-                      <h2 className="mt-3 text-lg font-bold text-slate-100">
-                        {activeCharacter}
-                      </h2>
-                      <button
-                        onClick={() => deleteCharacter(activeCharacter)}
-                        className="mt-3 w-full rounded-md border border-red-700 bg-red-700/20 px-3 py-2 text-sm font-medium text-red-100 hover:bg-red-700/30"
-                      >
-                        <Trash2 className="mr-2 inline-block h-4 w-4" />{" "}
-                        Eliminar Personaje
-                      </button>
-                    </div>
-                  </div>
+              <div className="p-3">
+                <div className="grid grid-cols-12 gap-4 items-start">
 
-                  {/* Col 4-12: Lore, Prompt Base, Config Técnica */}
-                  <div className="col-span-12 md:col-span-9">
-                    <div className="rounded-lg border border-slate-800 bg-slate-900 p-4">
+                  {/* Panel izquierdo: Lore Context y configuraciones del sistema */}
+                  <div className="col-span-12 md:col-span-7 md:order-1">
+                    <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+                      <div className="section-title"><Cog className="section-title__icon" aria-hidden /><span>Panel de Configuración</span></div>
                       {/* Lore Context */}
                       <div>
                         <label className="text-xs uppercase tracking-wide text-slate-400">
@@ -1754,632 +1930,604 @@ export default function PlannerView() {
                         </div>
                       </div>
 
-                      {/* CONFIG A1111 (TÉCNICA) - diseño denso estilo A1111 real */}
                       <div className="mt-4">
-                      <div className="mb-2 flex items-center justify-between">
-                        <div className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-3">
-                          <span>CONFIG A1111 (TÉCNICA)</span>
-                          <EngineHealthIndicator />
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-3">
+                            <EngineHealthIndicator />
+                          </div>
                         </div>
-                      </div>
+                        <div className="mb-3 flex items-center gap-2">
+                          <button
+                            onClick={() => setParamTab("generation")}
+                            className={`rounded-md px-3 py-1 text-xs border ${
+                              paramTab === "generation"
+                                ? "border-slate-600 bg-slate-800 text-slate-100"
+                                : "border-slate-700 bg-slate-900 text-slate-300"
+                            }`}
+                          >
+                            Generation
+                          </button>
+                          <button
+                            onClick={() => setParamTab("hires")}
+                            className={`rounded-md px-3 py-1 text-xs border ${
+                              paramTab === "hires"
+                                ? "border-slate-600 bg-slate-800 text-slate-100"
+                                : "border-slate-700 bg-slate-900 text-slate-300"
+                            }`}
+                          >
+                            Hires. Fix
+                          </button>
+                          <button
+                            onClick={() => setParamTab("adetailer")}
+                            className={`rounded-md px-3 py-1 text-xs border ${
+                              paramTab === "adetailer"
+                                ? "border-slate-600 bg-slate-800 text-slate-100"
+                                : "border-slate-700 bg-slate-900 text-slate-300"
+                            }`}
+                          >
+                            ADetailer
+                          </button>
+                        </div>
                         <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
-                          {/* Fila 1: Modelos */}
-                          <div className="col-span-2">
-                            <label className="text-xs text-slate-300">
-                              Stable Diffusion Checkpoint
-                            </label>
-                            <select
-                              value={
-                                techConfigByCharacter[activeCharacter]
-                                  ?.checkpoint ?? ""
-                              }
-                              onChange={async (e) => {
-                                const title = e.target.value;
-                                setTechConfig(activeCharacter, {
-                                  checkpoint: title,
-                                });
-                                try {
-                                  if (title)
-                                    await postReforgeSetCheckpoint(title);
-                                } catch (err) {
-                                  console.warn(
-                                    "No se pudo aplicar checkpoint",
-                                    err
-                                  );
-                                }
-                              }}
-                              className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                              key={`ckpt-${checkpointVersion}`}
-                            >
-                              <option value="">(Sin cambio)</option>
-                              {checkpoints.map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="mt-2 flex items-center justify-end">
-                              <button
-                                onClick={refreshCheckpoints}
-                                disabled={refreshingCheckpoints}
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-60"
-                              >
-                                {refreshingCheckpoints ? (
-                                  <>
-                                    <Loader2 className="h-3 w-3 animate-spin" />{" "}
-                                    Escaneando disco...
-                                  </>
-                                ) : (
-                                  <>
-                                    <RefreshCw className="h-3 w-3" /> Actualizar
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Fila 2: Prompts Base */}
-                          <div className="col-span-2 grid grid-cols-2 gap-4">
+                          {paramTab === "generation" ? (
                             <div>
-                              <label className="text-xs text-slate-300">
-                                Prompt Base (Positivo)
-                              </label>
-                              <textarea
-                                value={
-                                  plannerContext[activeCharacter]
-                                    ?.base_prompt || ""
-                                }
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setPlannerContext((prev) => {
-                                    const next = {
-                                      ...prev,
-                                      [activeCharacter!]: {
-                                        ...(prev[activeCharacter!] || {}),
-                                        base_prompt: v,
-                                      },
-                                    };
-                                    try {
-                                      localStorage.setItem(
-                                        "planner_context",
-                                        JSON.stringify(next)
-                                      );
-                                    } catch {}
-                                    return next;
-                                  });
-                                }}
-                                placeholder="Escribe el prefijo de calidad/estilo..."
-                                className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-300">
-                                Prompt Negativo
-                              </label>
-                              <textarea
-                                value={
-                                  techConfigByCharacter[activeCharacter]
-                                    ?.negativePrompt ?? ""
-                                }
-                                onChange={(e) =>
-                                  setTechConfig(activeCharacter, {
-                                    negativePrompt: e.target.value,
-                                  })
-                                }
-                                className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                              />
-                            </div>
-                          </div>
-
-                          {/* Fila 3: Parámetros clave */}
-                          <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
-                            <div className="col-span-2">
-                              <label className="text-xs text-slate-300">
-                                Sampler
-                              </label>
-                              <select
-                                value={
-                                  techConfigByCharacter[activeCharacter]
-                                    ?.sampler ??
-                                  plannerContext[activeCharacter]
-                                    ?.recommended_params?.sampler ??
-                                  "Euler a"
-                                }
-                                onChange={(e) =>
-                                  setTechConfig(activeCharacter, {
-                                    sampler: e.target.value,
-                                  })
-                                }
-                                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                              >
-                                <option>Euler a</option>
-                                <option>Euler</option>
-                                <option>DDIM</option>
-                                <option>DPM++ 2M Karras</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-300">
-                                Steps
-                              </label>
-                              <div className="mt-2 flex items-center gap-2">
-                                <div className="flex-1">
-                                  {SliderBar({
-                                    value:
-                                      techConfigByCharacter[activeCharacter]
-                                        ?.steps ??
-                                      plannerContext[activeCharacter]
-                                        ?.recommended_params?.steps ??
-                                      30,
-                                    min: 1,
-                                    max: 60,
-                                    step: 1,
-                                    onChange: (v) =>
-                                      setTechConfig(activeCharacter, {
-                                        steps: v,
-                                      }),
-                                  })}
-                                </div>
-                                <input
-                                  type="number"
-                                  value={
-                                    techConfigByCharacter[activeCharacter]
-                                      ?.steps ??
-                                    plannerContext[activeCharacter]
-                                      ?.recommended_params?.steps ??
-                                    30
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      steps: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-300">
-                                CFG
-                              </label>
-                              <div className="mt-2 flex items-center gap-2">
-                                <div className="flex-1">
-                                  {SliderBar({
-                                    value:
-                                      techConfigByCharacter[activeCharacter]
-                                        ?.cfg ??
-                                      plannerContext[activeCharacter]
-                                        ?.recommended_params?.cfg ??
-                                      7,
-                                    min: 1,
-                                    max: 20,
-                                    step: 0.5,
-                                    onChange: (v) =>
-                                      setTechConfig(activeCharacter, {
-                                        cfg: v,
-                                      }),
-                                  })}
-                                </div>
-                                <input
-                                  type="number"
-                                  step={0.5}
-                                  value={
-                                    techConfigByCharacter[activeCharacter]
-                                      ?.cfg ??
-                                    plannerContext[activeCharacter]
-                                      ?.recommended_params?.cfg ??
-                                    7
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      cfg: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Fila 4: Sliders */}
-                          <div className="col-span-2 grid grid-cols-3 gap-4">
-                            <div>
-                              <label className="text-xs text-slate-300">Width</label>
-                              <div className="mt-2 flex items-center gap-2">
-                                <div className="flex-1">
-                                  {SliderBar({
-                                    value:
-                                      techConfigByCharacter[activeCharacter]?.width ?? 832,
-                                    min: 512,
-                                    max: 2048,
-                                    step: 8,
-                                    onChange: (v) =>
-                                      setTechConfig(activeCharacter, { width: v }),
-                                  })}
-                                </div>
-                                <input
-                                  type="number"
-                                  min={512}
-                                  max={2048}
-                                  step={8}
-                                  value={
-                                    techConfigByCharacter[activeCharacter]?.width ?? 832
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      width: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-300">Height</label>
-                              <div className="mt-2 flex items-center gap-2">
-                                <div className="flex-1">
-                                  {SliderBar({
-                                    value:
-                                      techConfigByCharacter[activeCharacter]?.height ?? 1216,
-                                    min: 512,
-                                    max: 2048,
-                                    step: 8,
-                                    onChange: (v) =>
-                                      setTechConfig(activeCharacter, { height: v }),
-                                  })}
-                                </div>
-                                <input
-                                  type="number"
-                                  min={512}
-                                  max={2048}
-                                  step={8}
-                                  value={
-                                    techConfigByCharacter[activeCharacter]?.height ?? 1216
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      height: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-300">
-                                Batch Count
-                              </label>
-                              <div className="mt-2 flex items-center gap-2">
-                                <input
-                                  type="range"
-                                  min={1}
-                                  max={20}
-                                  value={
-                                    techConfigByCharacter[activeCharacter]
-                                      ?.batch_count ?? 10
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      batch_count: Number(e.target.value),
-                                    })
-                                  }
-                                  className="flex-1"
-                                />
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={20}
-                                  value={
-                                    techConfigByCharacter[activeCharacter]
-                                      ?.batch_count ?? 10
-                                  }
-                                  onChange={(e) => {
-                                    let v = Number(e.target.value);
-                                    if (!Number.isFinite(v)) v = 10;
-                                    if (v < 1) v = 1;
-                                    if (v > 20) v = 20;
-                                    setTechConfig(activeCharacter, {
-                                      batch_count: v,
-                                    });
-                                  }}
-                                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    if (!activeCharacter) return;
-                                    const count =
-                                      techConfigByCharacter[activeCharacter]
-                                        ?.batch_count ?? 10;
-                                    const triggers = metaByCharacter[
-                                      activeCharacter
-                                    ]?.trigger_words || [activeCharacter];
-                                    const allowExtra =
-                                      allowExtraLorasByCharacter[
-                                        activeCharacter
-                                      ] ?? true;
-                                    try {
-                                      setIsRegenerating(true);
-                                      const res = await postPlannerDraft(
-                                        [
-                                          {
-                                            character_name: activeCharacter,
-                                            trigger_words: triggers,
-                                            batch_count: count,
-                                          },
-                                        ],
-                                        undefined,
-                                        allowExtra
-                                      );
-                                      setJobs((prev) => {
-                                        const others = prev.filter(
-                                          (j) =>
-                                            j.character_name !== activeCharacter
-                                        );
-                                        const next = [...others, ...res.jobs];
-                                        try {
-                                          localStorage.setItem(
-                                            "planner_jobs",
-                                            JSON.stringify(next)
-                                          );
-                                        } catch {}
-                                        return next;
-                                      });
-                                      try {
-                                        const draftsList: unknown[] =
-                                          Array.isArray(res.drafts)
-                                            ? (res.drafts as unknown[])
-                                            : [];
-                                        const found = draftsList.find(
-                                          (
-                                            d
-                                          ): d is {
-                                            character?: string;
-                                            base_prompt?: string;
-                                            recommended_params?: {
-                                              cfg: number;
-                                              steps: number;
-                                              sampler: string;
-                                            };
-                                            reference_images?: Array<{
-                                              url: string;
-                                              meta: Record<string, unknown>;
-                                            }>;
-                                          } => {
-                                            return (
-                                              !!d &&
-                                              typeof d === "object" &&
-                                              (
-                                                d as Record<string, unknown>
-                                              ).hasOwnProperty("character") &&
-                                              (d as { character?: string })
-                                                .character === activeCharacter
-                                            );
-                                          }
-                                        );
-                                        if (found) {
-                                          setPlannerContext((prev) => {
-                                            const next = {
-                                              ...prev,
-                                              [activeCharacter]: {
-                                                base_prompt: found.base_prompt,
-                                                recommended_params:
-                                                  found.recommended_params,
-                                                reference_images:
-                                                  found.reference_images,
-                                              },
-                                            };
-                                            try {
-                                              localStorage.setItem(
-                                                "planner_context",
-                                                JSON.stringify(next)
-                                              );
-                                            } catch {}
-                                            return next;
-                                          });
-                                        }
-                                      } catch {}
-                                    } catch (e) {
-                                      console.error("Regeneración fallida", e);
-                                    } finally {
-                                      setIsRegenerating(false);
-                                    }
-                                  }}
-                                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-                                  title="Generar"
-                                  disabled={isRegenerating}
-                                >
-                                  {isRegenerating ? (
-                                    <span className="inline-flex items-center gap-1">
-                                      <Loader2 className="h-3 w-3 animate-spin" />{" "}
-                                      Generando...
-                                    </span>
-                                  ) : (
-                                    "🔄 Generar"
-                                  )}
-                                </button>
-                              </div>
-                              <div className="mt-1 text-[11px] text-slate-400">
-                                {techConfigByCharacter[activeCharacter]
-                                  ?.batch_count ?? 10}{" "}
-                                jobs planificados
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-300">
-                                Seed
-                              </label>
-                              <div className="mt-2 flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  placeholder="Random (-1)"
-                                  value={
-                                    techConfigByCharacter[activeCharacter]
-                                      ?.seed ?? -1
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      seed: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                />
-                                <button
-                                  type="button"
-                                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                                  onClick={() =>
-                                    setTechConfig(activeCharacter, { seed: -1 })
-                                  }
-                                  aria-label="Seed aleatorio"
-                                  title="Seed aleatorio (-1)"
-                                >
-                                  🎲
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Fila 5: Checkboxes */}
-                          <div className="col-span-2 flex gap-6 pt-2 border-t border-slate-800 items-center">
-                            <label className="flex items-center gap-2 text-slate-300 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  techConfigByCharacter[activeCharacter]
-                                    ?.hiresFix ??
-                                  configByCharacter[activeCharacter]
-                                    ?.hiresFix ??
-                                  true
-                                }
-                                onChange={(e) =>
-                                  setTechConfig(activeCharacter, {
-                                    hiresFix: e.target.checked,
-                                  })
-                                }
-                                className="accent-blue-500"
-                              />
-                              Hires. Fix
-                            </label>
-                            <label className="flex items-center gap-2 text-slate-300 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  techConfigByCharacter[activeCharacter]
-                                    ?.adetailer ?? true
-                                }
-                                onChange={(e) =>
-                                  setTechConfig(activeCharacter, {
-                                    adetailer: e.target.checked,
-                                  })
-                                }
-                                className="accent-blue-500"
-                              />
-                              ADetailer
-                            </label>
-                            <label className="flex items-center gap-2 text-slate-300 text-sm">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  allowExtraLorasByCharacter[
-                                    activeCharacter!
-                                  ] ?? true
-                                }
-                                onChange={(e) => {
-                                  const val = e.target.checked;
-                                  setAllowExtraLorasByCharacter((prev) => {
-                                    const next = {
-                                      ...prev,
-                                      [activeCharacter!]: val,
-                                    };
-                                    try {
-                                      localStorage.setItem(
-                                        "planner_allow_extra_loras",
-                                        JSON.stringify(next)
-                                      );
-                                    } catch {}
-                                    return next;
-                                  });
-                                }}
-                                className="accent-blue-500"
-                              />
-                              Permitir Sugerencias de LoRAs Extra
-                            </label>
-                            <div className="flex-1" />
-                            {(techConfigByCharacter[activeCharacter]
-                              ?.hiresFix ??
-                              configByCharacter[activeCharacter]?.hiresFix ??
-                              true) && (
-                              <div className="w-full space-y-2">
-                              <div className="grid grid-cols-2 gap-4">
-                                  <div className="min-w-0">
-                                    <label className="text-xs text-slate-300 flex items-center justify-between">
-                                      <span>VAE</span>
-                                    </label>
-                                    <select
-                                      value={
-                                        (techConfigByCharacter[activeCharacter]?.vae ?? reforgeOptions?.current_vae ?? "Automatic")
-                                      }
-                                      onChange={(e) =>
-                                        setTechConfig(activeCharacter, { vae: e.target.value })
-                                      }
-                                      className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                    >
-                                      <option value="Automatic">Automatic</option>
-                                      {vaes.map((v) => (
-                                        <option key={v} value={v}>
-                                          {v}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="min-w-0">
-                                  <label className="text-xs text-slate-300 flex items-center justify-between">
-                                    <span>Upscaler</span>
-                                    <button
-                                      type="button"
-                                      onClick={refreshUpscalers}
-                                      disabled={refreshingUpscalers}
-                                      className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-60"
-                                    >
-                                      {refreshingUpscalers ? (
-                                        <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Actualizando</span>
-                                      ) : (
-                                        <span className="inline-flex items-center gap-1"><RefreshCw className="h-3 w-3" /> Actualizar</span>
-                                      )}
-                                    </button>
-                                  </label>
-                                  <select
-                                    key={`upscaler-${upscalerVersion}`}
-                                    value={
-                                      techConfigByCharacter[activeCharacter]
-                                        ?.upscaler ?? ""
-                                    }
-                                    onChange={(e) =>
-                                        setTechConfig(activeCharacter, {
-                                          upscaler: e.target.value,
-                                        })
-                                      }
-                                      className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                    >
-                                      <option value="">(none)</option>
-                                      {reforgeUpscalers.map((u) => (
-                                        <option key={u} value={u}>
-                                          {u}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="min-w-0">
-                                    <label className="text-xs text-slate-300 flex items-center justify-between">
-                                      <span>Denoise</span>
-                                      <input
-                                        type="number"
-                                        step={0.01}
+                              <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
+                                <div className="col-span-2">
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                      <label className="text-xs text-slate-300">
+                                        Sampling method
+                                      </label>
+                                      <select
                                         value={
-                                          configByCharacter[activeCharacter]
-                                            ?.denoising ?? 0.35
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.sampler ??
+                                          plannerContext[activeCharacter]
+                                            ?.recommended_params?.sampler ??
+                                          "Euler a"
                                         }
                                         onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            sampler: e.target.value,
+                                          })
+                                        }
+                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                      >
+                                        <option>Euler a</option>
+                                        <option>Euler</option>
+                                        <option>DDIM</option>
+                                        <option>DPM++ 2M Karras</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="text-xs text-slate-300">
+                                        Schedule type
+                                      </label>
+                                      <select
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.schedulerType ?? "Automatic"
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            schedulerType: e.target.value,
+                                          })
+                                        }
+                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                      >
+                                        <option>Automatic</option>
+                                        <option>Karras</option>
+                                        <option>Default</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-slate-300">
+                                    Steps
+                                  </label>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <div className="flex-1">
+                                      {SliderBar({
+                                        value:
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.steps ??
+                                          plannerContext[activeCharacter]
+                                            ?.recommended_params?.steps ??
+                                          30,
+                                        min: 1,
+                                        max: 60,
+                                        step: 1,
+                                        onChange: (v) =>
+                                          setTechConfig(activeCharacter, {
+                                            steps: v,
+                                          }),
+                                      })}
+                                    </div>
+                                    <input
+                                      type="number"
+                                      value={
+                                        techConfigByCharacter[activeCharacter]
+                                          ?.steps ??
+                                        plannerContext[activeCharacter]
+                                          ?.recommended_params?.steps ??
+                                        30
+                                      }
+                                      onChange={(e) =>
+                                        setTechConfig(activeCharacter, {
+                                          steps: Number(e.target.value),
+                                        })
+                                      }
+                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                    />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-slate-300">
+                                    CFG
+                                  </label>
+                                  <div className="mt-2 flex items-center gap-2">
+                                    <div className="flex-1">
+                                      {SliderBar({
+                                        value:
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.cfg ??
+                                          plannerContext[activeCharacter]
+                                            ?.recommended_params?.cfg ??
+                                          7,
+                                        min: 1,
+                                        max: 20,
+                                        step: 0.5,
+                                        onChange: (v) =>
+                                          setTechConfig(activeCharacter, {
+                                            cfg: v,
+                                          }),
+                                      })}
+                                    </div>
+                                    <input
+                                      type="number"
+                                      step={0.5}
+                                      value={
+                                        techConfigByCharacter[activeCharacter]
+                                          ?.cfg ??
+                                        plannerContext[activeCharacter]
+                                          ?.recommended_params?.cfg ??
+                                        7
+                                      }
+                                      onChange={(e) =>
+                                        setTechConfig(activeCharacter, {
+                                          cfg: Number(e.target.value),
+                                        })
+                                      }
+                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="col-span-2 grid grid-cols-2 gap-4">
+                                <div className="space-y-4">
+                                  <div>
+                                    <label className="text-xs text-slate-300">
+                                      Width
+                                    </label>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <div className="flex-1">
+                                        {SliderBar({
+                                          value:
+                                            techConfigByCharacter[
+                                              activeCharacter
+                                            ]?.width ?? 832,
+                                          min: 512,
+                                          max: 2048,
+                                          step: 8,
+                                          onChange: (v) =>
+                                            setTechConfig(activeCharacter, {
+                                              width: v,
+                                            }),
+                                        })}
+                                      </div>
+                                      <input
+                                        type="number"
+                                        min={512}
+                                        max={2048}
+                                        step={8}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.width ?? 832
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            width: Number(e.target.value),
+                                          })
+                                        }
+                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-slate-300">
+                                      Height
+                                    </label>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <div className="flex-1">
+                                        {SliderBar({
+                                          value:
+                                            techConfigByCharacter[
+                                              activeCharacter
+                                            ]?.height ?? 1216,
+                                          min: 512,
+                                          max: 2048,
+                                          step: 8,
+                                          onChange: (v) =>
+                                            setTechConfig(activeCharacter, {
+                                              height: v,
+                                            }),
+                                        })}
+                                      </div>
+                                      <input
+                                        type="number"
+                                        min={512}
+                                        max={2048}
+                                        step={8}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.height ?? 1216
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            height: Number(e.target.value),
+                                          })
+                                        }
+                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="space-y-4">
+                                  <div>
+                                    <label className="text-xs text-slate-300">
+                                      Batch count
+                                    </label>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <input
+                                        type="range"
+                                        min={1}
+                                        max={20}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.batch_count ?? 10
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            batch_count: Number(e.target.value),
+                                          })
+                                        }
+                                        className="flex-1"
+                                      />
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={20}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.batch_count ?? 10
+                                        }
+                                        onChange={(e) => {
+                                          let v = Number(e.target.value);
+                                          if (!Number.isFinite(v)) v = 10;
+                                          if (v < 1) v = 1;
+                                          if (v > 20) v = 20;
+                                          setTechConfig(activeCharacter, {
+                                            batch_count: v,
+                                          });
+                                        }}
+                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          const characterNames = Object.keys(metaByCharacter);
+                                          if (characterNames.length === 0) return;
+                                          const count =
+                                            techConfigByCharacter[
+                                              activeCharacter || characterNames[0]
+                                            ]?.batch_count ?? 10;
+                                          const allowExtra =
+                                            allowExtraLorasByCharacter[
+                                              activeCharacter || characterNames[0]
+                                            ] ?? true;
+                                          const payload = characterNames.map((name) => ({
+                                            character_name: name,
+                                            trigger_words:
+                                              metaByCharacter[name]?.trigger_words || [name],
+                                            batch_count: count,
+                                          }));
+                                          try {
+                                            setIsRegenerating(true);
+                                            const res = await postPlannerDraft(payload, count, allowExtra);
+                                            setJobs((prev) => {
+                                              const blocked = new Set(payload.map((p) => p.character_name));
+                                              const others = prev.filter((j) => !blocked.has(j.character_name));
+                                              const next = [...others, ...res.jobs];
+                                              try {
+                                                localStorage.setItem("planner_jobs", JSON.stringify(next));
+                                              } catch {}
+                                              return next;
+                                            });
+                                            try {
+                                              const draftsList: unknown[] = Array.isArray(res.drafts) ? (res.drafts as unknown[]) : [];
+                                              setPlannerContext((prev) => {
+                                                const next = { ...prev };
+                                                draftsList.forEach((d) => {
+                                                  const item = d as {
+                                                    character?: string;
+                                                    base_prompt?: string;
+                                                    recommended_params?: { cfg: number; steps: number; sampler: string };
+                                                    reference_images?: Array<{ url: string; meta: Record<string, unknown> }>;
+                                                  };
+                                                  const key = item.character;
+                                                  if (key) {
+                                                    next[key] = {
+                                                      base_prompt: item.base_prompt,
+                                                      recommended_params: item.recommended_params,
+                                                      reference_images: item.reference_images,
+                                                    };
+                                                  }
+                                                });
+                                                try {
+                                                  localStorage.setItem("planner_context", JSON.stringify(next));
+                                                } catch {}
+                                                return next;
+                                              });
+                                            } catch {}
+                                          } catch (e) {
+                                            console.error("Regeneración fallida", e);
+                                          } finally {
+                                            setIsRegenerating(false);
+                                          }
+                                        }}
+                                        className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+                                        title="Generar"
+                                        disabled={isRegenerating}
+                                      >
+                                        {isRegenerating ? (
+                                          <span className="inline-flex items-center gap-1">
+                                            <Loader2 className="h-3 w-3 animate-spin" />{" "}
+                                            Generando...
+                                          </span>
+                                        ) : (
+                                          "🔄 Generar"
+                                        )}
+                                      </button>
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-slate-400">
+                                      {techConfigByCharacter[activeCharacter]
+                                        ?.batch_count ?? 10}{" "}
+                                      jobs planificados
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-slate-300">
+                                      Batch size
+                                    </label>
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <input
+                                        type="range"
+                                        min={1}
+                                        max={8}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.batch_size ?? 1
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            batch_size: Number(e.target.value),
+                                          })
+                                        }
+                                        className="flex-1"
+                                      />
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={8}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.batch_size ?? 1
+                                        }
+                                        onChange={(e) => {
+                                          let v = Number(e.target.value);
+                                          if (!Number.isFinite(v)) v = 1;
+                                          if (v < 1) v = 1;
+                                          if (v > 8) v = 8;
+                                          setTechConfig(activeCharacter, {
+                                            batch_size: v,
+                                          });
+                                        }}
+                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="col-span-2">
+                                <label className="text-xs text-slate-300">
+                                  Seed
+                                </label>
+                                <div className="mt-2 flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    placeholder="Random (-1)"
+                                    value={
+                                      techConfigByCharacter[activeCharacter]
+                                        ?.seed ?? -1
+                                    }
+                                    onChange={(e) =>
+                                      setTechConfig(activeCharacter, {
+                                        seed: Number(e.target.value),
+                                      })
+                                    }
+                                    className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                                    onClick={() =>
+                                      setTechConfig(activeCharacter, {
+                                        seed: -1,
+                                      })
+                                    }
+                                    aria-label="Seed aleatorio"
+                                    title="Seed aleatorio (-1)"
+                                  >
+                                    <Shuffle className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+                          {paramTab === "hires" && (
+                            <>
+                              <div className="col-span-2 flex gap-6 items-center">
+                                <label className="flex items-center gap-2 text-slate-300 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      techConfigByCharacter[activeCharacter]
+                                        ?.hiresFix ??
+                                      configByCharacter[activeCharacter]
+                                        ?.hiresFix ??
+                                      true
+                                    }
+                                    onChange={(e) =>
+                                      setTechConfig(activeCharacter, {
+                                        hiresFix: e.target.checked,
+                                      })
+                                    }
+                                    className="accent-blue-500"
+                                  />
+                                  Hires. Fix
+                                </label>
+                              </div>
+                              {(techConfigByCharacter[activeCharacter]
+                                ?.hiresFix ??
+                                configByCharacter[activeCharacter]?.hiresFix ??
+                                true) && (
+                                <div className="col-span-2 w-full space-y-2">
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div className="min-w-0">
+                                      <label className="text-xs text-slate-300 flex items-center justify-between">
+                                        <span>VAE</span>
+                                      </label>
+                                      <select
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.vae ??
+                                          reforgeOptions?.current_vae ??
+                                          "Automatic"
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            vae: e.target.value,
+                                          })
+                                        }
+                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                      >
+                                        <option value="Automatic">
+                                          Automatic
+                                        </option>
+                                        {vaes.map((v) => (
+                                          <option key={v} value={v}>
+                                            {v}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <label className="text-xs text-slate-300 flex items-center justify-between">
+                                        <span>Upscaler</span>
+                                        <button
+                                          type="button"
+                                          onClick={refreshUpscalers}
+                                          disabled={refreshingUpscalers}
+                                          className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+                                        >
+                                          {refreshingUpscalers ? (
+                                            <span className="inline-flex items-center gap-1">
+                                              <Loader2 className="h-3 w-3 animate-spin" />{" "}
+                                              Actualizando
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1">
+                                              <RefreshCw className="h-3 w-3" />{" "}
+                                              Actualizar
+                                            </span>
+                                          )}
+                                        </button>
+                                      </label>
+                                      <select
+                                        key={`upscaler-${upscalerVersion}`}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.upscaler ?? ""
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            upscaler: e.target.value,
+                                          })
+                                        }
+                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                      >
+                                        <option value="">(none)</option>
+                                        {reforgeUpscalers.map((u) => (
+                                          <option key={u} value={u}>
+                                            {u}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="min-w-0">
+                                      <label className="text-xs text-slate-300 flex items-center justify-between">
+                                        <span>Denoise</span>
+                                        <input
+                                          type="number"
+                                          step={0.01}
+                                          value={
+                                            configByCharacter[activeCharacter]
+                                              ?.denoising ?? 0.35
+                                          }
+                                          onChange={(e) =>
+                                            setConfigByCharacter((prev) => {
+                                              const next = {
+                                                ...prev,
+                                                [activeCharacter]: {
+                                                  ...(prev[activeCharacter] || {
+                                                    hiresFix: true,
+                                                    denoising: 0.35,
+                                                    outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
+                                                  }),
+                                                  denoising: Number(
+                                                    e.target.value
+                                                  ),
+                                                },
+                                              };
+                                              localStorage.setItem(
+                                                "planner_config",
+                                                JSON.stringify(next)
+                                              );
+                                              return next;
+                                            })
+                                          }
+                                          className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                        />
+                                      </label>
+                                      {SliderBar({
+                                        value:
+                                          configByCharacter[activeCharacter]
+                                            ?.denoising ?? 0.35,
+                                        min: 0,
+                                        max: 1,
+                                        step: 0.01,
+                                        onChange: (v) =>
                                           setConfigByCharacter((prev) => {
                                             const next = {
                                               ...prev,
@@ -2389,7 +2537,7 @@ export default function PlannerView() {
                                                   denoising: 0.35,
                                                   outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
                                                 }),
-                                                denoising: Number(e.target.value),
+                                                denoising: v,
                                               },
                                             };
                                             localStorage.setItem(
@@ -2397,44 +2545,13 @@ export default function PlannerView() {
                                               JSON.stringify(next)
                                             );
                                             return next;
-                                          })
-                                        }
-                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                    </label>
-                                    {SliderBar({
-                                      value:
-                                        configByCharacter[activeCharacter]
-                                          ?.denoising ?? 0.35,
-                                      min: 0,
-                                      max: 1,
-                                      step: 0.01,
-                                      onChange: (v) =>
-                                        setConfigByCharacter((prev) => {
-                                          const next = {
-                                            ...prev,
-                                            [activeCharacter]: {
-                                              ...(prev[activeCharacter] || {
-                                                hiresFix: true,
-                                                denoising: 0.35,
-                                                outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
-                                              }),
-                                              denoising: v,
-                                            },
-                                          };
-                                          localStorage.setItem(
-                                            "planner_config",
-                                            JSON.stringify(next)
-                                          );
-                                          return next;
-                                        }),
-                                    })}
-                                  </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div className="min-w-0">
-                                    <label className="text-xs text-slate-300 flex items-center justify-between">
-                                      <span>Upscale By (x)</span>
+                                          }),
+                                      })}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <label className="text-xs text-slate-300 flex items-center justify-between">
+                                        <span>Upscale By (x)</span>
+                                      </label>
                                       <input
                                         type="number"
                                         step={0.05}
@@ -2451,23 +2568,23 @@ export default function PlannerView() {
                                         }
                                         className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                                       />
-                                    </label>
-                                    {SliderBar({
-                                      value:
-                                        techConfigByCharacter[activeCharacter]
-                                          ?.upscaleBy ?? 1.5,
-                                      min: 1,
-                                      max: 4,
-                                      step: 0.05,
-                                      onChange: (v) =>
-                                        setTechConfig(activeCharacter, {
-                                          upscaleBy: v,
-                                        }),
-                                    })}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <label className="text-xs text-slate-300 flex items-center justify-between">
-                                      <span>Hires Steps</span>
+                                      {SliderBar({
+                                        value:
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.upscaleBy ?? 1.5,
+                                        min: 1,
+                                        max: 4,
+                                        step: 0.05,
+                                        onChange: (v) =>
+                                          setTechConfig(activeCharacter, {
+                                            upscaleBy: v,
+                                          }),
+                                      })}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <label className="text-xs text-slate-300 flex items-center justify-between">
+                                        <span>Hires Steps</span>
+                                      </label>
                                       <input
                                         type="number"
                                         step={1}
@@ -2484,215 +2601,44 @@ export default function PlannerView() {
                                         }
                                         className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                                       />
-                                    </label>
-                                    {SliderBar({
-                                      value:
-                                        techConfigByCharacter[activeCharacter]
-                                          ?.hiresSteps ?? 10,
-                                      min: 0,
-                                      max: 60,
-                                      step: 1,
-                                      onChange: (v) =>
-                                        setTechConfig(activeCharacter, {
-                                          hiresSteps: v,
-                                        }),
-                                    })}
+                                      {SliderBar({
+                                        value:
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.hiresSteps ?? 10,
+                                        min: 0,
+                                        max: 60,
+                                        step: 1,
+                                        onChange: (v) =>
+                                          setTechConfig(activeCharacter, {
+                                            hiresSteps: v,
+                                          }),
+                                      })}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            )}
-                            <div className="ml-auto">
-                              <button
-                                type="button"
-                                className="text-[11px] rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-slate-200 hover:bg-slate-700"
-                                onClick={() => {
-                                  const t =
-                                    techConfigByCharacter[activeCharacter!] ||
-                                    {};
-                                  const c =
-                                    configByCharacter[activeCharacter!] || {};
-                                  const preset = {
-                                    steps:
-                                      typeof t.steps === "number"
-                                        ? t.steps
-                                        : 30,
-                                    cfg: typeof t.cfg === "number" ? t.cfg : 7,
-                                    negativePrompt:
-                                      t.negativePrompt &&
-                                      t.negativePrompt.trim().length > 0
-                                        ? t.negativePrompt
-                                        : DEFAULT_NEGATIVE_ANIME,
-                                    batch_count:
-                                      typeof t.batch_count === "number"
-                                        ? t.batch_count
-                                        : 10,
-                                    hiresFix:
-                                      typeof t.hiresFix === "boolean"
-                                        ? t.hiresFix
-                                        : true,
-                                    adetailer:
-                                      typeof t.adetailer === "boolean"
-                                        ? t.adetailer
-                                        : true,
-                                    upscaler:
-                                      typeof t.upscaler === "string"
-                                        ? t.upscaler
-                                        : "",
-                                    denoising:
-                                      typeof c.denoising === "number"
-                                        ? c.denoising
-                                        : 0.35,
-                                  };
-                                  try {
-                                    localStorage.setItem(
-                                      "planner_preset_global",
-                                      JSON.stringify(preset)
-                                    );
-                                  } catch {}
-                                  try {
-                                    setToast({ message: "✅ Guardado" });
-                                    setTimeout(() => setToast(null), 2000);
-                                  } catch {}
-                                }}
-                                title="Guardar Configuración"
-                                aria-label="Guardar Configuración"
-                              >
-                                💾 Guardar Configuración
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Fila 6: LoRAs (full-width) */}
-                          <div className="col-span-2 mt-2 border-t border-slate-800 pt-2">
-                            <div className="flex items-center gap-2 mb-2">
-                              <button
-                                onClick={refreshLocalLoras}
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                              >
-                                <RefreshCw className="h-3 w-3" /> LoRAs
-                              </button>
-                              <span className="text-xs text-slate-400">
-                                Selecciona LoRAs extra
-                              </span>
-                            </div>
-                            {localLoras.length === 0 ? (
-                              <div className="mb-2 text-xs text-slate-400">
-                                No se encontraron LoRAs en{" "}
-                                {lorasPath || "(ruta no detectada)"}
-                              </div>
-                            ) : (
-                              <div className="space-y-2">
+                              )}
+                            </>
+                          )}
+                          {paramTab === "adetailer" && (
+                            <div className="col-span-2 flex items-center gap-6">
+                              <label className="flex items-center gap-2 text-slate-300 text-sm">
                                 <input
-                                  type="text"
-                                  value={loraQuery}
-                                  onChange={(e) => setLoraQuery(e.target.value)}
-                                  placeholder="Buscar LoRA"
-                                  className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100 text-xs"
+                                  type="checkbox"
+                                  checked={
+                                    techConfigByCharacter[activeCharacter]
+                                      ?.adetailer ?? true
+                                  }
+                                  onChange={(e) =>
+                                    setTechConfig(activeCharacter, {
+                                      adetailer: e.target.checked,
+                                    })
+                                  }
+                                  className="accent-blue-500"
                                 />
-                                <div className="flex flex-wrap gap-2">
-                                  {localLoras
-                                    .filter((n) =>
-                                      n
-                                        .toLowerCase()
-                                        .includes(loraQuery.toLowerCase())
-                                    )
-                                    .slice(0, 50)
-                                    .map((n) => (
-                                      <button
-                                        key={`pick-${n}`}
-                                        type="button"
-                                        onClick={() => {
-                                          const current =
-                                            techConfigByCharacter[
-                                              activeCharacter!
-                                            ]?.extraLorasWeighted ?? [];
-                                          if (current.some((x) => x.name === n))
-                                            return;
-                                          const next = [
-                                            ...current,
-                                            { name: n, weight: 0.6 },
-                                          ];
-                                          const nextStr = next.map(
-                                            (x) => `${x.name}:${x.weight}`
-                                          );
-                                          setTechConfig(activeCharacter, {
-                                            extraLorasWeighted: next,
-                                            extraLoras: nextStr,
-                                          });
-                                        }}
-                                        className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                                      >
-                                        {n}
-                                      </button>
-                                    ))}
-                                </div>
-                                <div className="mt-2 space-y-2">
-                                  {(
-                                    techConfigByCharacter[activeCharacter!]
-                                      ?.extraLorasWeighted ?? []
-                                  ).map((item, idx) => (
-                                    <div
-                                      key={`sel-${item.name}`}
-                                      className="flex items-center gap-2"
-                                    >
-                                      <span className="text-xs text-slate-200 flex-1 truncate">
-                                        {item.name}
-                                      </span>
-                                      <input
-                                        type="number"
-                                        step={0.05}
-                                        min={0}
-                                        max={2}
-                                        value={item.weight}
-                                        onChange={(e) => {
-                                          const w = Number(e.target.value);
-                                          const current =
-                                            techConfigByCharacter[
-                                              activeCharacter!
-                                            ]?.extraLorasWeighted ?? [];
-                                          const next = current.map((x) =>
-                                            x.name === item.name
-                                              ? { ...x, weight: w }
-                                              : x
-                                          );
-                                          const nextStr = next.map(
-                                            (x) => `${x.name}:${x.weight}`
-                                          );
-                                          setTechConfig(activeCharacter, {
-                                            extraLorasWeighted: next,
-                                            extraLoras: nextStr,
-                                          });
-                                        }}
-                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100 text-xs"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const current =
-                                            techConfigByCharacter[
-                                              activeCharacter!
-                                            ]?.extraLorasWeighted ?? [];
-                                          const next = current.filter(
-                                            (x) => x.name !== item.name
-                                          );
-                                          const nextStr = next.map(
-                                            (x) => `${x.name}:${x.weight}`
-                                          );
-                                          setTechConfig(activeCharacter, {
-                                            extraLorasWeighted: next,
-                                            extraLoras: nextStr,
-                                          });
-                                        }}
-                                        className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
-                                      >
-                                        X
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                                ADetailer
+                              </label>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2702,381 +2648,303 @@ export default function PlannerView() {
             </section>
 
             {/* Sección Inferior: Cola de Producción */}
-            <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
-              <div className="p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-medium text-slate-100">
-                    Cola de Producción (
-                    {perCharacter[activeCharacter]?.jobs.length || 0} Jobs)
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={toggleAllDetailsGlobal}
-                      className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-                    >
-                      Expandir/Colapsar Todos
-                    </button>
-                    <button
-                      onClick={regenerateAllSeeds}
-                      className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-                    >
-                      <RefreshCw className="h-3 w-3 inline" /> Regenerar Todas
-                      las Seeds
-                    </button>
-                  </div>
+            <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden mt-6" aria-labelledby="production-queue-title">
+              <div className="p-3 space-y-3">
+                <div className="section-title" id="production-queue-title">
+                  <Play className="section-title__icon" aria-hidden />
+                  <span>Cola de Producción</span>
+                  <span className="ml-auto text-xs text-zinc-400">Personajes: {Object.keys(perCharacter).length} · Jobs: {jobs.length}</span>
                 </div>
-                <ul className="space-y-3">
-                  {perCharacter[activeCharacter]?.jobs.map((job, i) => {
-                    const idx = perCharacter[activeCharacter]!.indices[i];
-                    const triplet = extractTriplet(job.prompt);
-                    const intensity = getIntensity(job.prompt);
-                    const topColor =
-                      intensity.label === "SFW"
-                        ? "border-green-600"
-                        : intensity.label === "ECCHI"
-                        ? "border-yellow-500"
-                        : "border-red-600";
-                    return (
-                      <li
-                        key={`${activeCharacter}-${i}`}
-                        className={`rounded-lg border border-slate-700 bg-slate-900 p-3 border-t-2 ${topColor}`}
-                      >
-                        {/* Header */}
-                        <div
-                          onClick={() => toggleDetails(idx)}
-                          className="flex items-center justify-between border-b border-slate-700 pb-2 cursor-pointer"
-                        >
-                          {/* Zona Izquierda: Título */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-slate-200">
-                              Job #{i + 1}
-                            </span>
-                          </div>
-                          {/* Zona Centro: Selector Intensidad (no colapsa) */}
-                          <IntensitySelector
-                            value={intensity.label as "SFW" | "ECCHI" | "NSFW"}
-                            onChange={(v) => handleIntensityChange(idx, v)}
-                            stop={(e) => e.stopPropagation()}
-                          />
-                          {/* Zona Derecha: Acciones */}
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteJob(activeCharacter, i);
-                              }}
-                              className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
-                            >
-                              <Trash2 className="h-3 w-3" aria-hidden />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleDetails(idx);
-                              }}
-                              className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-                            >
-                              {showDetails.has(idx) ? (
-                                <ChevronUp className="h-3 w-3" aria-hidden />
-                              ) : (
-                                <ChevronDown className="h-3 w-3" aria-hidden />
-                              )}
-                            </button>
-                          </div>
+                <div className="space-y-3">
+                <div className="mt-3 space-y-6" role="list">
+                  {Object.keys(perCharacter).map((character) => (
+                    <article
+                      key={`production-${character}`}
+                      id={`production-${character}`}
+                      role="listitem"
+                      aria-labelledby={`production-title-${character}`}
+                      className="rounded-lg border border-slate-800 bg-slate-900 p-3"
+                    >
+                      <header className="pb-2 border-b border-slate-700">
+                        <div className="flex items-center justify-between">
+                          <h4 id={`production-title-${character}`} className="text-base md:text-lg font-semibold text-slate-100">{character}</h4>
+                          <div className="text-xs text-zinc-400">{perCharacter[character]?.jobs.length ?? 0} jobs</div>
                         </div>
-
-                        {/* Body: selectores */}
-                        <div className="pt-3 relative">
-                          {intensityBusy.has(idx) && (
-                            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-10">
-                              <Loader2 className="h-5 w-5 animate-spin text-slate-200" />
-                            </div>
-                          )}
-                          <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                            <div>
-                              <label className="text-xs text-slate-400 flex items-center gap-1">
-                                <Shirt className="h-3 w-3 text-slate-400" />
-                                <span>Outfit</span>
-                                {job?.ai_meta?.outfit && (
-                                  <span
-                                    title="Sugerido por IA por coherencia"
-                                    className="inline-flex items-center text-blue-300"
-                                  >
-                                    <Bot className="h-3 w-3" />
-                                  </span>
-                                )}
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={triplet.outfit || ""}
-                                onChange={(e) =>
-                                  applyQuickEdit(idx, "outfit", e.target.value)
-                                }
-                              >
-                                <option value="">(vacío)</option>
-                                {resources &&
-                                  resources.outfits.map((o) => (
-                                    <option key={o} value={o}>
-                                      {o}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-400 flex items-center gap-1">
-                                <User className="h-3 w-3 text-slate-400" />{" "}
-                                <span>Pose</span>
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={triplet.pose || ""}
-                                onChange={(e) =>
-                                  applyQuickEdit(idx, "pose", e.target.value)
-                                }
-                              >
-                                <option value="">(vacío)</option>
-                                {resources &&
-                                  resources.poses.map((p) => (
-                                    <option key={p} value={p}>
-                                      {p}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-400 flex items-center gap-1">
-                                <MapPin className="h-3 w-3 text-slate-400" />{" "}
-                                <span>Location</span>
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={triplet.location || ""}
-                                onChange={(e) =>
-                                  applyQuickEdit(
-                                    idx,
-                                    "location",
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                <option value="">(vacío)</option>
-                                {resources &&
-                                  resources.locations.map((l) => (
-                                    <option key={l} value={l}>
-                                      {l}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-400 flex items-center gap-1">
-                                <Zap className="h-3 w-3 text-slate-400" />
-                                <span>Lighting</span>
-                                {job?.ai_meta?.lighting && (
-                                  <span
-                                    title="Sugerido por IA por coherencia"
-                                    className="inline-flex items-center text-blue-300"
-                                  >
-                                    <Bot className="h-3 w-3" />
-                                  </span>
-                                )}
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={extractExtras(job.prompt).lighting || ""}
-                                onChange={(e) =>
-                                  applyExtrasEdit(
-                                    idx,
-                                    "lighting",
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                <option value="">(vacío)</option>
-                                {resources &&
-                                  resources.lighting?.map((it) => (
-                                    <option key={it} value={it}>
-                                      {it}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-400 flex items-center gap-1">
-                                <Camera className="h-3 w-3 text-slate-400" />
-                                <span>Camera</span>
-                                {job?.ai_meta?.camera && (
-                                  <span
-                                    title="Sugerido por IA por coherencia"
-                                    className="inline-flex items-center text-blue-300"
-                                  >
-                                    <Bot className="h-3 w-3" />
-                                  </span>
-                                )}
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={extractExtras(job.prompt).camera || ""}
-                                onChange={(e) =>
-                                  applyExtrasEdit(idx, "camera", e.target.value)
-                                }
-                              >
-                                <option value="">(vacío)</option>
-                                {resources &&
-                                  resources.camera?.map((it) => (
-                                    <option key={it} value={it}>
-                                      {it}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-400">
-                                Expression
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={
-                                  extractExtras(job.prompt).expression || ""
-                                }
-                                onChange={(e) =>
-                                  applyExtrasEdit(
-                                    idx,
-                                    "expression",
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                <option value="">(vacío)</option>
-                                {resources &&
-                                  resources.expressions?.map((it) => (
-                                    <option key={it} value={it}>
-                                      {it}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-slate-400">
-                                Hairstyle
-                              </label>
-                              <select
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                value={
-                                  extractExtras(job.prompt).hairstyle || ""
-                                }
-                                onChange={(e) =>
-                                  applyExtrasEdit(
-                                    idx,
-                                    "hairstyle",
-                                    e.target.value
-                                  )
-                                }
-                              >
-                                <option value="">(Original/Vacío)</option>
-                                {resources &&
-                                  resources.hairstyles?.map((it) => (
-                                    <option key={it} value={it}>
-                                      {it}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Footer acciones */}
-                          <div className="mt-3 flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => magicFix(idx)}
-                              disabled={loading}
-                              className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60"
-                            >
-                              <Wand2 className="h-4 w-4" />{" "}
-                              <span>Magic Fix</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                const ensured = ensureTriplet(jobs[idx].prompt);
-                                updatePrompt(idx, ensured);
-                              }}
-                              className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40"
-                            >
-                              <Cog className="h-4 w-4" /> <span>Aplicar</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setSeedBusy((prev) => {
-                                  const next = new Set(prev);
-                                  next.add(idx);
+                        <div className="mt-2 flex items-end gap-2">
+                          <div className="flex-1 min-w-0">
+                            <label className="text-xs text-slate-300">LORE CONTEXT</label>
+                            <input
+                              type="text"
+                              value={loreByCharacter[character] || ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setLoreByCharacter((prev) => {
+                                  const next = { ...prev, [character]: v };
+                                  try {
+                                    localStorage.setItem("planner_lore_context", JSON.stringify(next));
+                                  } catch {}
                                   return next;
                                 });
-                                regenerateSeed(idx);
-                                setTimeout(() => {
-                                  setSeedBusy((prev) => {
-                                    const next = new Set(prev);
-                                    next.delete(idx);
-                                    return next;
-                                  });
-                                }, 400);
                               }}
-                              disabled={seedBusy.has(idx)}
-                              className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-                            >
-                              {seedBusy.has(idx) ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 animate-spin" />{" "}
-                                  <span>Regenerando...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <RefreshCw className="h-4 w-4" />{" "}
-                                  <span>Regenerar</span>
-                                </>
-                              )}
-                            </button>
+                              placeholder="Contexto breve del encargo / personaje"
+                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                            />
+                          </div>
+                          <div>
                             <button
-                              onClick={() => toggleDetails(idx)}
-                              className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
+                              onClick={() => analyzeLore(character)}
+                              className="rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-1.5 text-xs text-indigo-100 hover:bg-indigo-700/30"
                             >
-                              <Camera className="h-4 w-4" />{" "}
-                              <span>Ver Prompt</span>
+                              Analizar
                             </button>
                           </div>
-
-                          {/* Área Expandible */}
-                          {showDetails.has(idx) && (
-                            <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
-                              <textarea
-                                value={job.prompt}
-                                onChange={(e) =>
-                                  updatePrompt(idx, e.target.value)
-                                }
-                                className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                              />
-                              {aiReasoningByJob[idx] ? (
-                                <p className="mt-1 text-xs text-zinc-400">
-                                  {aiReasoningByJob[idx]}
-                                </p>
-                              ) : aiReasoningByCharacter[
-                                  activeCharacter || ""
-                                ] ? (
-                                <p className="mt-1 text-xs text-zinc-400">
-                                  {
-                                    aiReasoningByCharacter[
-                                      activeCharacter || ""
-                                    ]
-                                  }
-                                </p>
-                              ) : null}
-                            </div>
-                          )}
                         </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                      </header>
+                      <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
+                        <figure className="lg:col-span-1">
+                          {metaByCharacter[character]?.image_url ? (
+                            <img
+                              src={metaByCharacter[character]!.image_url!}
+                              alt={character}
+                              className="aspect-[3/4] w-full rounded-md object-cover border border-slate-800"
+                            />
+                          ) : (
+                            <div className="aspect-[3/4] w-full rounded-md border border-slate-800 bg-slate-800/40 flex items-center justify-center text-xs text-slate-400">Sin imagen</div>
+                          )}
+                          <figcaption className="sr-only">Imagen representativa de {character}</figcaption>
+                        </figure>
+                        <div className="lg:col-span-2">
+                          <ul className="space-y-2">
+                            {perCharacter[character]?.jobs.map((job, i) => {
+                              const idx = perCharacter[character]!.indices[i];
+                              const triplet = extractTriplet(job.prompt);
+                              const intensity = getIntensity(job.prompt);
+                              const topColor =
+                                intensity.label === "SFW"
+                                  ? "border-green-600"
+                                  : intensity.label === "ECCHI"
+                                  ? "border-yellow-500"
+                                  : "border-red-600";
+                              return (
+                                <li
+                                  key={`${character}-${i}`}
+                                  className={`rounded-lg border border-slate-700 bg-slate-900 p-3 border-t-2 ${topColor}`}
+                                >
+                                  <div
+                                    onClick={() => toggleDetails(idx)}
+                                    className="flex items-center justify-between border-b border-slate-700 pb-2 cursor-pointer"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium text-slate-200">Job #{i + 1}</span>
+                                    </div>
+                                    <IntensitySelector
+                                      value={intensity.label as "SFW" | "ECCHI" | "NSFW"}
+                                      onChange={(v) => handleIntensityChange(idx, v)}
+                                      stop={(e) => e.stopPropagation()}
+                                    />
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteJob(character, i);
+                                        }}
+                                        className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
+                                      >
+                                        <Trash2 className="h-3 w-3" aria-hidden />
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleDetails(idx);
+                                        }}
+                                        className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                                      >
+                                        {showDetails.has(idx) ? (
+                                          <ChevronUp className="h-3 w-3" aria-hidden />
+                                        ) : (
+                                          <ChevronDown className="h-3 w-3" aria-hidden />
+                                        )}
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {showDetails.has(idx) && (
+                                    <div className="pt-3 relative">
+                                      {intensityBusy.has(idx) && (
+                                        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                                          <Loader2 className="h-5 w-5 animate-spin text-slate-200" />
+                                        </div>
+                                      )}
+                                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                                      <div>
+                                        <label className="text-xs text-slate-400 flex items-center gap-1">
+                                          <Shirt className="h-3 w-3 text-slate-400" />
+                                          <span>Outfit</span>
+                                          {job?.ai_meta?.outfit && (
+                                            <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300">
+                                              <Bot className="h-3 w-3" />
+                                            </span>
+                                          )}
+                                        </label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={triplet.outfit || ""}
+                                          onChange={(e) => applyQuickEdit(idx, "outfit", e.target.value)}
+                                        >
+                                          <option value="">(vacío)</option>
+                                          {resources && resources.outfits.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-slate-400 flex items-center gap-1">
+                                          <User className="h-3 w-3 text-slate-400" /> <span>Pose</span>
+                                        </label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={triplet.pose || ""}
+                                          onChange={(e) => applyQuickEdit(idx, "pose", e.target.value)}
+                                        >
+                                          <option value="">(vacío)</option>
+                                          {resources && resources.poses.map((p) => (
+                                            <option key={p} value={p}>{p}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-slate-400 flex items-center gap-1">
+                                          <MapPin className="h-3 w-3 text-slate-400" /> <span>Location</span>
+                                        </label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={triplet.location || ""}
+                                          onChange={(e) => applyQuickEdit(idx, "location", e.target.value)}
+                                        >
+                                          <option value="">(vacío)</option>
+                                          {resources && resources.locations.map((l) => (
+                                            <option key={l} value={l}>{l}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-slate-400 flex items-center gap-1">
+                                          <Zap className="h-3 w-3 text-slate-400" />
+                                          <span>Lighting</span>
+                                          {job?.ai_meta?.lighting && (
+                                            <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300">
+                                              <Bot className="h-3 w-3" />
+                                            </span>
+                                          )}
+                                        </label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={extractExtras(job.prompt).lighting || ""}
+                                          onChange={(e) => applyExtrasEdit(idx, "lighting", e.target.value)}
+                                        >
+                                          <option value="">(vacío)</option>
+                                          {resources && resources.lighting?.map((it) => (
+                                            <option key={it} value={it}>{it}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-slate-400 flex items-center gap-1">
+                                          <Camera className="h-3 w-3 text-slate-400" />
+                                          <span>Camera</span>
+                                          {job?.ai_meta?.camera && (
+                                            <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300">
+                                              <Bot className="h-3 w-3" />
+                                            </span>
+                                          )}
+                                        </label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={extractExtras(job.prompt).camera || ""}
+                                          onChange={(e) => applyExtrasEdit(idx, "camera", e.target.value)}
+                                        >
+                                          <option value="">(vacío)</option>
+                                          {resources && resources.camera?.map((it) => (
+                                            <option key={it} value={it}>{it}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-slate-400">Expression</label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={extractExtras(job.prompt).expression || ""}
+                                          onChange={(e) => applyExtrasEdit(idx, "expression", e.target.value)}
+                                        >
+                                          <option value="">(vacío)</option>
+                                          {resources && resources.expressions?.map((it) => (
+                                            <option key={it} value={it}>{it}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="text-xs text-slate-400">Hairstyle</label>
+                                        <select
+                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                          value={extractExtras(job.prompt).hairstyle || ""}
+                                          onChange={(e) => applyExtrasEdit(idx, "hairstyle", e.target.value)}
+                                        >
+                                          <option value="">(Original/Vacío)</option>
+                                          {resources && resources.hairstyles?.map((it) => (
+                                            <option key={it} value={it}>{it}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      </div>
+                                      <div className="mt-3 flex items-center justify-end gap-2">
+                                      <button
+                                        onClick={() => magicFix(idx)}
+                                        disabled={loading}
+                                        className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60"
+                                      >
+                                        <Wand2 className="h-4 w-4" /> <span>Magic Fix</span>
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          const ensured = ensureTriplet(jobs[idx].prompt);
+                                          updatePrompt(idx, ensured);
+                                        }}
+                                        className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40"
+                                      >
+                                        <Cog className="h-4 w-4" /> <span>Aplicar</span>
+                                      </button>
+                                      <button
+                                        onClick={() => toggleDetails(idx)}
+                                        className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
+                                      >
+                                        <Camera className="h-4 w-4" /> <span>Ver Prompt</span>
+                                      </button>
+                                      </div>
+                                      <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
+                                        <textarea
+                                          value={job.prompt}
+                                          onChange={(e) => updatePrompt(idx, e.target.value)}
+                                          className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                                        />
+                                        {aiReasoningByJob[idx] ? (
+                                          <p className="mt-1 text-xs text-zinc-400">{aiReasoningByJob[idx]}</p>
+                                        ) : aiReasoningByCharacter[character] ? (
+                                          <p className="mt-1 text-xs text-zinc-400">{aiReasoningByCharacter[character]}</p>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
               </div>
-            </section>
+              </div>
+              </section>
           </>
         ) : (
           <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-slate-300">
@@ -3085,9 +2953,11 @@ export default function PlannerView() {
         )}
       </div>
 
+      
+
       {selected.size > 0 && (
         <div className="fixed bottom-4 left-0 right-0 mx-auto max-w-6xl px-4">
-          <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/80 p-3 backdrop-blur">
+          <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/80 p-3">
             <span className="text-sm text-zinc-300">
               {selected.size} seleccionadas
             </span>
@@ -3100,16 +2970,15 @@ export default function PlannerView() {
                 Eliminar seleccionadas
               </button>
               <button
-                onClick={regenerateSelectedSeeds}
-                className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-zinc-300 hover:bg-slate-800 cursor-pointer transition-all"
+                className="hidden"
               >
-                <RefreshCw className="h-3 w-3" aria-hidden />
-                Regenerar Seed
+                
               </button>
             </div>
           </div>
         </div>
       )}
+      
       {toast && (
         <div className="fixed top-4 right-4 z-40 rounded-md border border-slate-700 bg-slate-900/90 px-3 py-2 text-sm text-slate-200 shadow">
           {toast.message}
@@ -3133,8 +3002,8 @@ export default function PlannerView() {
               <pre className="text-xs text-slate-200 whitespace-pre-wrap break-words max-h-[60vh] overflow-auto">
                 {dryRunPayload}
               </pre>
-            </div>
           </div>
+        </div>
         </div>
       )}
     </div>
@@ -3146,8 +3015,11 @@ function EngineHealthIndicator() {
   React.useEffect(() => {
     (async () => {
       try {
-        const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-        const res = await fetch(`${API_BASE}/reforge/health`, { cache: "no-store" });
+        const API_BASE =
+          process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${API_BASE}/reforge/health`, {
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error(String(res.status));
         const j = await res.json();
         setStatus(j?.status === "ok" ? "ok" : "error");

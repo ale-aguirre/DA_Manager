@@ -197,7 +197,15 @@ Una vez que la fábrica sea estable, nos enfocamos en la post-producción.
 
 ## 🟢 Calidad & Config — 2025-11-25
 
-### Precisión de LoRA y Prompts
+### Ajustes de UX del Planner
+- Rediseño del panel técnico con tabs: `Generation / Hires / ADetailer`.
+- Botón principal renombrado a `Generar` para claridad.
+- Etiqueta `Prompt Base (Positivo)` renombrada a `Prompt Positivo`.
+- Densidad visual: reducción de `p-4 → p-3`, `gap-6 → gap-4`, `space-y-6 → space-y-4` en secciones clave.
+- Lista de jobs más compacta (`space-y-2`).
+
+### Navegación
+- Eliminado el botón de ocultar menú dentro del Sidebar; se mantiene uno global fijo en la esquina, ligeramente más grande para accesibilidad.
 - [x] Uso del nombre real del archivo `.safetensors` (stem) en el tag de LoRA: `<lora:RealStem:0.8>` en `/planner/draft` y `/planner/analyze`.
 - [x] Endpoint local `GET /local/lora-info` para leer `trainedWords` desde `.civitai.info` y usarlos en la previsualización cuando no hay `base_prompt`.
 
