@@ -163,6 +163,34 @@
 - [ ] Añadir pruebas unitarias para dedupe de LoRA/tags y `/gallery` encoding.
 - [ ] Revisar sampler/checkpoint defaults desde Planner → Backend para consistencia.
 
+## 🟢 Calidad & Config — 2025-11-25
+
+### Precisión de LoRA y Prompts
+- [x] Uso del nombre real del archivo `.safetensors` (stem) en el tag de LoRA: `<lora:RealStem:0.8>` en `/planner/draft` y `/planner/analyze`.
+- [x] Endpoint local `GET /local/lora-info` para leer `trainedWords` desde `.civitai.info` y usarlos en la previsualización cuando no hay `base_prompt`.
+
+### VAE y Resolución (SDXL)
+- [x] Default VAE `Automatic` (sin hardcode); override por usuario desde Planner.
+- [x] Sliders `Width` y `Height` en Planner (por personaje): defaults `832x1216`, rango `512–2048`, paso `8`, con clamp múltiplo de 8 en backend.
+- [x] Payload ReForge ampliado con `width`/`height` y verificación de límites.
+
+### ADetailer
+- [x] Modelo por defecto: `face_yolov8n.pt` cuando `adetailer` está ON; log en Factory y fallback sin ADetailer si Forge retorna 4xx.
+
+### Recursos V3 y Analyze
+- [x] `/planner/analyze` ahora usa recursos V3 con fallbacks seguros (no estados vacíos): `wardrobe/*`, `concepts/*`, `styles/*`.
+
+### Upscalers / UI
+- [x] Botón “Actualizar Upscalers” funcional con spinner y re-render forzado; lista incluye `Latent`.
+
+### Verificación de Calidad
+- [x] ESLint y TypeScript OK (warnings menores). `py_compile` OK.
+
+### Pendientes / Próximos
+- [ ] Selector de modelo para ADetailer (UI) y botón “Actualizar VAEs”.
+- [ ] Validación de entradas numéricas (NaN) robusta en Planner.
+- [ ] Unificar duplicación de `_save_image` en backend.
+- [ ] Parametrizar `BASE_URL` de ReForge en `.env` (evitar hardcode).
 ## 🟢 Fix Checkpoints & Galería UX — 2025-11-24
 
 - Backend: `GET /reforge/checkpoints` ahora devuelve `{"titles": []}` ante cualquier fallo (sin 500) para cumplir UI sin estados vacíos críticos.
