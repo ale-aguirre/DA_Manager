@@ -80,6 +80,16 @@ export async function postPlannerDraft(items: PlannerDraftItem[], jobCount?: num
   return res.json();
 }
 
+export async function getLocalLoraInfo(name: string): Promise<{ trainedWords: string[]; baseModel?: string | null; name?: string | null; id?: number | null; modelId?: number | null }> {
+  const url = `${BASE_URL}/local/lora-info?name=${encodeURIComponent(name)}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Local lora-info failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
 export async function magicFixPrompt(prompt: string): Promise<{ outfit: string; pose: string; location: string; ai_reasoning?: string }> {
   const res = await fetch(`${BASE_URL}/planner/magicfix`, {
     method: "POST",
@@ -124,6 +134,7 @@ export interface GroupConfigItem {
   hires_steps?: number;
   batch_size?: number;
   adetailer?: boolean;
+  adetailer_model?: string;
   vae?: string;
   clip_skip?: number;
   // Nuevos campos técnicos
@@ -131,6 +142,8 @@ export interface GroupConfigItem {
   upscaler?: string;
   sampler?: string;
   checkpoint?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface ReforgeProgress {

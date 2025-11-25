@@ -44,6 +44,12 @@
 - Cause: Se añadieron nuevos controles al panel técnico sin extender el tipo del helper `setTechConfig`.
 - Fix: Extender el tipo de `setTechConfig` para incluir `{ upscaler: string; checkpoint: string }` y persistir correctamente en `techConfigByCharacter`.
 - Prevention: Cada vez que se agreguen controles o propiedades nuevas en el estado técnico, actualizar los tipos y ejecutar ESLint/TS antes del commit. Añadir verificación en PR checklist.
+
+## 2025-11-24
+- Issue: LoRAs descargados sin metadatos completos; faltaban `trainedWords`, `modelId` y `name` en `.civitai.info`.
+- Cause: Post-proceso basado solo en hash (`by-hash`) y estructura parcial; no se extraía `VERSION_ID` desde la URL.
+- Fix: Actualizar `backend/services/lora.py` para extraer `VERSION_ID` de `download_url` y consultar `api/v1/model-versions/{id}`; fallback por hash. Actualizar `scripts/fetch_missing_meta.py` para la nueva estructura.
+- Prevention: Priorizar extracción de ID desde URL y mantener fallback por hash; validar con `py_compile`, ESLint y `tsc --noEmit` antes de cerrar tarea.
 ## 2025-11-24
 - Issue: Error 500 en generación por `NoneType` en Hires Fix.
 - Cause: Falta el campo `hr_additional_modules` en payload y valores `hr_scale/hr_upscaler` vacíos.

@@ -128,8 +128,8 @@
   - Frontend: `frontend/src/components/planner/PlannerView.tsx`.
 
 ### Metadatos y Triggers Oficiales
-- [x] Guardado `.civitai.info` junto a `.safetensors` (trainedWords/baseModel/id/description/hash) tras descarga.
-- [x] Script retroactivo: `scripts/fetch_missing_meta.py` para completar metadatos por hash.
+- [x] Guardado `.civitai.info` inmediatamente tras descarga usando `VERSION_ID` del `download_url` (`api/v1/model-versions/{id}`); fallback por `by-hash`.
+- [x] Script retroactivo actualizado: `scripts/fetch_missing_meta.py` ahora escribe `{ id, modelId, name, trainedWords, baseModel, description, hash }`.
 - [x] Inyección de triggers oficiales desde `.civitai.info` en `/planner/draft` y prompts.
   - Backend: `backend/services/lora.py`, `backend/main.py`.
 

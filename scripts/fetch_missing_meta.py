@@ -32,24 +32,23 @@ def fetch_meta_by_hash(file_hash: str) -> dict:
     r = scraper.get(url, headers=headers, timeout=(15, 60))
     r.raise_for_status()
     data = r.json()
-    triggers = []
-    base_model = None
-    desc = None
-    model_id = None
-    version_id = None
     if isinstance(data, dict):
-        tw = data.get("trainedWords")
-        if isinstance(tw, list):
-            triggers = [str(x) for x in tw if isinstance(x, (str, int, float))]
-        base_model = data.get("baseModel") or data.get("base_model")
-        desc = data.get("description")
-        model_id = data.get("modelId") or data.get("model_id")
-        version_id = data.get("id") or data.get("versionId")
+        return {
+            "id": data.get("id") or data.get("versionId"),
+            "modelId": data.get("modelId") or data.get("model_id"),
+            "name": data.get("name"),
+            "trainedWords": data.get("trainedWords") or [],
+            "baseModel": data.get("baseModel") or data.get("base_model") or "",
+            "description": data.get("description") or "",
+            "hash": file_hash,
+        }
     return {
-        "triggers": triggers,
-        "baseModel": base_model or "",
-        "id": version_id or model_id or "",
-        "description": desc or "",
+        "id": None,
+        "modelId": None,
+        "name": None,
+        "trainedWords": [],
+        "baseModel": "",
+        "description": "",
         "hash": file_hash,
     }
 

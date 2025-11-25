@@ -183,6 +183,25 @@ async def root():
         "reforge_path": REFORGE_PATH,
     }
 
+@app.get("/local/lora-info")
+async def local_lora_info(name: str):
+    if not name or not str(name).strip():
+        raise HTTPException(status_code=400, detail="name requerido")
+    p = _find_lora_info_path(name)
+    if not p or not p.exists():
+        return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None}
+    try:
+        j = json.loads(p.read_text(encoding="utf-8"))
+        return {
+            "trainedWords": j.get("trainedWords") or j.get("triggers") or [],
+            "baseModel": j.get("baseModel") or "",
+            "name": j.get("name"),
+            "id": j.get("id"),
+            "modelId": j.get("modelId"),
+        }
+    except Exception:
+        return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None}
+
 # Endpoint para borrar archivos bajo OUTPUTS_DIR
 @app.delete("/files")
 async def delete_file(path: str):
@@ -1093,7 +1112,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
         return (safe, ecchi, nsfw)
 
     for char in payload:
-        lora_tag = f"<lora:{sanitize_filename(char.character_name)}:0.8>"
+        real_stem = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
+        lora_tag = f"<lora:{real_stem}:0.8>"
         # Triggers oficiales desde .civitai.info si existe
         def _lora_dir() -> Path:
             le = os.getenv("LORA_PATH")
@@ -1101,7 +1121,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             if le and str(le).strip():
                 return Path(le).resolve()
             return Path(re).resolve().parents[3] / "models" / "Lora"
-        info_path = (_lora_dir() / f"{sanitize_filename(char.character_name)}.civitai.info").resolve()
+        info_path = _find_lora_info_path(char.character_name) or (_lora_dir() / f"{sanitize_filename(char.character_name)}.civitai.info").resolve()
         official_triggers: list[str] = []
         try:
             if info_path.exists():
@@ -1357,13 +1377,21 @@ class PlannerAnalyzeRequest(BaseModel):
 async def planner_analyze(req: PlannerAnalyzeRequest):
     if not req.character_name or not req.character_name.strip():
         raise HTTPException(status_code=400, detail="character_name requerido")
-    outfits = _read_lines("outfits.txt")
-    poses = _read_lines("poses.txt")
-    locations = _read_lines("locations.txt")
-    styles = _read_lines("styles.txt")
-    concepts = _read_lines("concepts.txt")
-    if not poses or not outfits or not locations:
-        raise HTTPException(status_code=500, detail="Recursos insuficientes: poses/outfits/locations vacíos.")
+    outfits_old = _read_lines("outfits.txt")
+    poses_old = _read_lines("poses.txt")
+    locations_old = _read_lines("locations.txt")
+    styles_old = _read_lines("styles.txt")
+    concepts_old = _read_lines("concepts.txt")
+    outfits_new = list(dict.fromkeys([x for x in ([*_read_lines("wardrobe/casual.txt"), *_read_lines("wardrobe/lingerie.txt"), *_read_lines("wardrobe/cosplay.txt")]) if x and x.strip()]))
+    poses_new = _read_lines("concepts/poses.txt")
+    locations_new = _read_lines("concepts/locations.txt")
+    styles_new = _read_lines("styles/lighting.txt")
+    concepts_new = _read_lines("styles/camera.txt")
+    outfits = outfits_old or outfits_new or FALLBACK_OUTFITS
+    poses = poses_old or poses_new or FALLBACK_POSES
+    locations = locations_old or locations_new or FALLBACK_LOCATIONS
+    styles = styles_old or styles_new or []
+    concepts = concepts_old or concepts_new or []
 
     combos_sugeridos: List[dict] = []
     lore_text: str = ""
@@ -1423,7 +1451,8 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
             combos_sugeridos.append({"outfit": o, "pose": p, "location": l})
 
     # Generar 10 jobs con enriquecimiento de style/concept y QUALITY_TAGS
-    lora_tag = f"<lora:{sanitize_filename(req.character_name)}:0.8>"
+    real_stem = _find_lora_file_stem(req.character_name) or sanitize_filename(req.character_name)
+    lora_tag = f"<lora:{real_stem}:0.8>"
     def _clean_tags(tags: List[str]) -> List[str]:
         banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
         return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
@@ -1469,6 +1498,45 @@ def get_lora_dir() -> Path | None:
         except Exception:
             pass
         return d
+    except Exception:
+        return None
+
+def _find_lora_info_path(character_name: str) -> Path | None:
+    try:
+        d = get_lora_dir()
+        if not d:
+            return None
+        key = sanitize_filename(character_name)
+        exact = (d / f"{key}.civitai.info").resolve()
+        if exact.exists():
+            return exact
+        best: Path | None = None
+        for info in d.glob("*.civitai.info"):
+            base = info.stem.lower()
+            if key in base or base in key:
+                if best is None or len(base) > len(best.stem.lower()):
+                    best = info
+        return best
+    except Exception:
+        return None
+
+def _find_lora_file_stem(character_name: str) -> str | None:
+    try:
+        d = get_lora_dir()
+        if not d:
+            return None
+        key = sanitize_filename(character_name)
+        # Prefer exact match by sanitized stem, else contains, else longest similar
+        best_stem: str | None = None
+        for f in d.glob("*.safetensors"):
+            stem = f.stem
+            low = stem.lower()
+            if low == key:
+                return stem
+            if key in low or low in key:
+                if best_stem is None or len(stem) > len(best_stem):
+                    best_stem = stem
+        return best_stem
     except Exception:
         return None
 
@@ -1552,6 +1620,7 @@ class GroupConfigItem(BaseModel):
     hires_steps: Optional[int] = None
     batch_size: Optional[int] = None
     adetailer: Optional[bool] = None
+    adetailer_model: Optional[str] = None
     # Nuevos controles técnicos avanzados
     vae: Optional[str] = None
     clip_skip: Optional[int] = None
@@ -1560,6 +1629,8 @@ class GroupConfigItem(BaseModel):
     upscaler: Optional[str] = None
     sampler: Optional[str] = None
     checkpoint: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 class ExecuteV2Request(BaseModel):
     jobs: List[PlannerJob]
@@ -1727,6 +1798,10 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
                     return 2.0
             hr_display = _coerce_scale(hr_scale_override) if (actual_hr and hr_scale_override is not None) else (_coerce_scale(raw_hr_scale) if actual_hr else None)
             hires_str = f"ON (x{hr_display})" if actual_hr else "OFF"
+            try:
+                _log(f"Hires Fix override: enable={actual_hr}, scale_override={hr_scale_override if hr_scale_override is not None else '—'}, raw_scale={raw_hr_scale if raw_hr_scale is not None else '—'}")
+            except Exception:
+                pass
 
             FACTORY_STATE["current_config"] = {
                 "steps": actual_steps,
@@ -1745,7 +1820,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             if gc and isinstance(gc.upscaler, str) and gc.upscaler.strip():
                 _log(f"Upscaler: {gc.upscaler}")
             if gc and gc.adetailer:
-                _log("ADetailer: ON (face)")
+                _log(f"ADetailer: ON (model={gc.adetailer_model or 'face_yolov8n.pt'})")
             _log(f"Generando imagen {idx}/{len(jobs)}...")
             
             # Overrides de Hires Fix y Denoising según group_config
@@ -1758,10 +1833,11 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             # Adetailer script construction (estructura segura)
             scripts_arr = []
             if gc and gc.adetailer:
+                model_name = (gc.adetailer_model if (isinstance(getattr(gc, "adetailer_model", None), str) and gc.adetailer_model.strip()) else "face_yolov8n.pt")
                 scripts_arr.append({
                     "name": "ADetailer",
                     "args": [
-                        {"ad_model": "face_yolo8n.pt"}
+                        {"ad_model": model_name}
                     ],
                 })
 
@@ -1773,8 +1849,8 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             vae_override = (gc.vae if (gc and isinstance(gc.vae, str) and gc.vae.strip()) else None)
             cs_override = (gc.clip_skip if (gc and isinstance(gc.clip_skip, int) and 1 <= gc.clip_skip <= 12) else None)
             override_settings = {}
-            if vae_override:
-                override_settings["sd_vae"] = vae_override
+            override_settings["sd_vae"] = (vae_override if vae_override else "Automatic")
+            _log(f"VAE override: {override_settings['sd_vae']}")
             if cs_override is not None:
                 override_settings["CLIP_stop_at_last_layers"] = cs_override
 
@@ -1794,6 +1870,8 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
                     batch_size=bs_override,
                     hr_upscaler=hr_upscaler,
                     hr_scale=hr_scale_override,
+                    width=(gc.width if gc and isinstance(gc.width, int) else None),
+                    height=(gc.height if gc and isinstance(gc.height, int) else None),
                     alwayson_scripts=scripts_arr if scripts_arr else None,
                     override_settings=override_settings or None
                 )

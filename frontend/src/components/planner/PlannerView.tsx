@@ -30,6 +30,7 @@ import {
   getReforgeVAEs,
   getReforgeOptions,
   postPlannerDraft,
+  getLocalLoraInfo,
   getReforgeUpscalers,
   postReforgeRefresh,
 } from "../../lib/api";
@@ -376,6 +377,8 @@ export default function PlannerView() {
         vae?: string;
         clipSkip?: number;
         negativePrompt?: string;
+        width?: number;
+        height?: number;
       }
     >
   >({});
@@ -399,6 +402,8 @@ export default function PlannerView() {
   const [loraQuery, setLoraQuery] = React.useState<string>("");
   const [vaes, setVaes] = React.useState<string[]>([]);
   const [reforgeUpscalers, setReforgeUpscalers] = React.useState<string[]>([]);
+  const [refreshingUpscalers, setRefreshingUpscalers] = React.useState(false);
+  const [upscalerVersion, setUpscalerVersion] = React.useState(0);
   const [reforgeOptions, setReforgeOptionsState] = React.useState<{
     current_vae: string;
     current_clip_skip: number;
@@ -427,6 +432,8 @@ export default function PlannerView() {
       vae: string;
       clipSkip: number;
       negativePrompt: string;
+      width: number;
+      height: number;
     }>
   ) => {
     if (!character) return;
@@ -479,7 +486,11 @@ export default function PlannerView() {
       batch_count: number;
       hiresFix: boolean;
       adetailer: boolean;
+      upscaleBy: number;
+      hiresSteps: number;
       upscaler: string;
+      width: number;
+      height: number;
     }> = {};
     const neg = (tech.negativePrompt ?? "").trim();
     if (!neg) {
@@ -518,6 +529,20 @@ export default function PlannerView() {
         preset && typeof preset.adetailer === "boolean"
           ? preset.adetailer
           : true;
+    }
+    if (typeof tech.upscaleBy !== "number") {
+      const p = preset as { upscaleBy?: number } | null;
+      patchTech.upscaleBy = typeof p?.upscaleBy === "number" ? p!.upscaleBy! : 1.5;
+    }
+    if (typeof tech.hiresSteps !== "number") {
+      const p = preset as { hiresSteps?: number } | null;
+      patchTech.hiresSteps = typeof p?.hiresSteps === "number" ? p!.hiresSteps! : 10;
+    }
+    if (typeof tech.width !== "number") {
+      patchTech.width = 832;
+    }
+    if (typeof tech.height !== "number") {
+      patchTech.height = 1216;
     }
     if ((tech.upscaler ?? "").trim().length === 0) {
       patchTech.upscaler =
@@ -601,12 +626,42 @@ export default function PlannerView() {
         ]);
         setVaes(Array.isArray(vNames) ? vNames : []);
         setReforgeOptionsState(opts || null);
-        setReforgeUpscalers(Array.isArray(upNames) ? upNames : []);
+        {
+          const list = Array.isArray(upNames)
+            ? Array.from(new Set([...upNames, "Latent"]))
+            : ["Latent"];
+          setReforgeUpscalers(list);
+        }
       } catch (e) {
         console.warn("Error cargando VAEs/opciones/upscalers", e);
       }
     })();
   }, []);
+
+  const refreshUpscalers = async () => {
+    try {
+      setRefreshingUpscalers(true);
+      const upNames = await getReforgeUpscalers();
+      const list = Array.isArray(upNames)
+        ? Array.from(new Set([...upNames, "Latent"]))
+        : ["Latent"];
+      setReforgeUpscalers(list);
+      setUpscalerVersion((v) => v + 1);
+      if (activeCharacter) {
+        const current = techConfigByCharacter[activeCharacter]?.upscaler ?? "";
+        if (current && Array.isArray(upNames) && !upNames.includes(current)) {
+          setTechConfig(activeCharacter, { upscaler: "" });
+        } else if (current && !Array.isArray(upNames)) {
+          setTechConfig(activeCharacter, { upscaler: "" });
+        }
+      }
+    } catch (e) {
+      setToast({ message: "❌ Error al actualizar Upscalers" });
+      setTimeout(() => setToast(null), 2500);
+    } finally {
+      setRefreshingUpscalers(false);
+    }
+  };
 
   React.useEffect(() => {
     // Si no hay lore para el personaje activo, cargarlo automáticamente
@@ -1073,22 +1128,44 @@ export default function PlannerView() {
       } catch (e) {
         console.warn("planner_meta inválido o ausente", e);
       }
-      // Asegurar que outfit/pose/location no estén vacíos, prefijar Prompt Base y aplicar seed/negative desde panel técnico
-      const preparedJobs: PlannerJob[] = jobs.map((j) => {
-        const tech = techConfigByCharacter[j.character_name];
-        const base = plannerContext[j.character_name]?.base_prompt || "";
-        const bodyPrompt = ensureTriplet(j.prompt);
-        const finalPrompt =
-          base && base.trim().length > 0
+      // Obtener triggers oficiales desde backend cuando no hay base_prompt
+      const preparedJobs: PlannerJob[] = await (async () => {
+        const out: PlannerJob[] = [];
+        const cache: Record<string, string[]> = {};
+        for (const j of jobs) {
+          const tech = techConfigByCharacter[j.character_name];
+          const base = plannerContext[j.character_name]?.base_prompt || "";
+          const bodyPrompt = ensureTriplet(j.prompt);
+          const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
+          const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
+          const qualityEnd = "masterpiece, best quality, absurdres";
+          let trigList: string[] = [];
+          if (!base || base.trim().length === 0) {
+            if (cache[j.character_name]) {
+              trigList = cache[j.character_name];
+            } else {
+              try {
+                const info = await getLocalLoraInfo(j.character_name);
+                trigList = Array.isArray(info?.trainedWords) ? info.trainedWords : [];
+                cache[j.character_name] = trigList;
+              } catch {
+                trigList = metaByCharacter[j.character_name]?.trigger_words || [];
+              }
+            }
+          }
+          const trig = (trigList.length > 0 ? trigList : [j.character_name]).join(", ");
+          const finalPrompt = base && base.trim().length > 0
             ? `${base.trim()}, ${bodyPrompt}`
-            : bodyPrompt;
-        return {
-          ...j,
-          prompt: finalPrompt,
-          seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
-          negative_prompt: tech?.negativePrompt,
-        };
-      });
+            : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+          out.push({
+            ...j,
+            prompt: finalPrompt,
+            seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
+            negative_prompt: tech?.negativePrompt,
+          });
+        }
+        return out;
+      })();
       // Construir group_config por personaje desde Config Avanzada, recomendado y panel técnico
       const groupConfig: import("../../lib/api").GroupConfigItem[] =
         Object.keys(perCharacter).map((character) => {
@@ -1110,6 +1187,9 @@ export default function PlannerView() {
             upscale_by: tech.upscaleBy,
             upscaler: tech.upscaler,
             checkpoint: tech.checkpoint,
+            width: typeof tech.width === "number" ? tech.width : 832,
+            height: typeof tech.height === "number" ? tech.height : 1216,
+            adetailer_model: (tech.adetailer ?? true) ? "face_yolov8n.pt" : undefined,
             extra_loras: tech.extraLoras,
             hires_steps: tech.hiresSteps,
             batch_size: tech.batch_size ?? 1,
@@ -1484,23 +1564,34 @@ export default function PlannerView() {
                       );
                   }
                 } catch {}
-                const preparedJobs = jobs.map((j) => {
+                const preparedJobs: PlannerJob[] = [];
+                for (const j of jobs) {
                   const tech = techConfigByCharacter[j.character_name];
-                  const base =
-                    plannerContext[j.character_name]?.base_prompt || "";
+                  const base = plannerContext[j.character_name]?.base_prompt || "";
                   const bodyPrompt = ensureTriplet(j.prompt);
-                  const finalPrompt =
-                    base && base.trim().length > 0
-                      ? `${base.trim()}, ${bodyPrompt}`
-                      : bodyPrompt;
-                  return {
+                  const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
+                  const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
+                  const qualityEnd = "masterpiece, best quality, absurdres";
+                  let trigList: string[] = [];
+                  if (!base || base.trim().length === 0) {
+                    try {
+                      const info = await getLocalLoraInfo(j.character_name);
+                      trigList = Array.isArray(info?.trainedWords) ? info.trainedWords : [];
+                    } catch {
+                      trigList = metaByCharacter[j.character_name]?.trigger_words || [];
+                    }
+                  }
+                  const trig = (trigList.length > 0 ? trigList : [j.character_name]).join(", ");
+                  const finalPrompt = base && base.trim().length > 0
+                    ? `${base.trim()}, ${bodyPrompt}`
+                    : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+                  preparedJobs.push({
                     ...j,
                     prompt: finalPrompt,
-                    seed:
-                      tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
+                    seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
                     negative_prompt: tech?.negativePrompt,
-                  };
-                });
+                  });
+                }
                 const groupConfig = Object.keys(perCharacter).map(
                   (character) => {
                     const conf = configByCharacter[character] ?? {
@@ -1521,6 +1612,9 @@ export default function PlannerView() {
                       upscale_by: tech.upscaleBy,
                       upscaler: tech.upscaler,
                       checkpoint: tech.checkpoint,
+                      width: typeof tech.width === "number" ? tech.width : 832,
+                      height: typeof tech.height === "number" ? tech.height : 1216,
+                      adetailer_model: (tech.adetailer ?? true) ? "face_yolov8n.pt" : undefined,
                       extra_loras: tech.extraLoras,
                       hires_steps: tech.hiresSteps,
                       batch_size: tech.batch_size ?? 1,
@@ -1890,6 +1984,68 @@ export default function PlannerView() {
                           {/* Fila 4: Sliders */}
                           <div className="col-span-2 grid grid-cols-3 gap-4">
                             <div>
+                              <label className="text-xs text-slate-300">Width</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="flex-1">
+                                  {SliderBar({
+                                    value:
+                                      techConfigByCharacter[activeCharacter]?.width ?? 832,
+                                    min: 512,
+                                    max: 2048,
+                                    step: 8,
+                                    onChange: (v) =>
+                                      setTechConfig(activeCharacter, { width: v }),
+                                  })}
+                                </div>
+                                <input
+                                  type="number"
+                                  min={512}
+                                  max={2048}
+                                  step={8}
+                                  value={
+                                    techConfigByCharacter[activeCharacter]?.width ?? 832
+                                  }
+                                  onChange={(e) =>
+                                    setTechConfig(activeCharacter, {
+                                      width: Number(e.target.value),
+                                    })
+                                  }
+                                  className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-300">Height</label>
+                              <div className="mt-2 flex items-center gap-2">
+                                <div className="flex-1">
+                                  {SliderBar({
+                                    value:
+                                      techConfigByCharacter[activeCharacter]?.height ?? 1216,
+                                    min: 512,
+                                    max: 2048,
+                                    step: 8,
+                                    onChange: (v) =>
+                                      setTechConfig(activeCharacter, { height: v }),
+                                  })}
+                                </div>
+                                <input
+                                  type="number"
+                                  min={512}
+                                  max={2048}
+                                  step={8}
+                                  value={
+                                    techConfigByCharacter[activeCharacter]?.height ?? 1216
+                                  }
+                                  onChange={(e) =>
+                                    setTechConfig(activeCharacter, {
+                                      height: Number(e.target.value),
+                                    })
+                                  }
+                                  className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                />
+                              </div>
+                            </div>
+                            <div>
                               <label className="text-xs text-slate-300">
                                 Batch Count
                               </label>
@@ -2153,42 +2309,107 @@ export default function PlannerView() {
                               ?.hiresFix ??
                               configByCharacter[activeCharacter]?.hiresFix ??
                               true) && (
-                              <div className="flex items-center gap-4 w-full">
-                                <div className="min-w-[220px]">
-                                  <label className="text-xs text-slate-300">
-                                    Upscaler
+                              <div className="w-full space-y-2">
+                              <div className="grid grid-cols-2 gap-4">
+                                  <div className="min-w-0">
+                                    <label className="text-xs text-slate-300 flex items-center justify-between">
+                                      <span>VAE</span>
+                                    </label>
+                                    <select
+                                      value={
+                                        (techConfigByCharacter[activeCharacter]?.vae ?? reforgeOptions?.current_vae ?? "Automatic")
+                                      }
+                                      onChange={(e) =>
+                                        setTechConfig(activeCharacter, { vae: e.target.value })
+                                      }
+                                      className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                    >
+                                      <option value="Automatic">Automatic</option>
+                                      {vaes.map((v) => (
+                                        <option key={v} value={v}>
+                                          {v}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="min-w-0">
+                                  <label className="text-xs text-slate-300 flex items-center justify-between">
+                                    <span>Upscaler</span>
+                                    <button
+                                      type="button"
+                                      onClick={refreshUpscalers}
+                                      disabled={refreshingUpscalers}
+                                      className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+                                    >
+                                      {refreshingUpscalers ? (
+                                        <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Actualizando</span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1"><RefreshCw className="h-3 w-3" /> Actualizar</span>
+                                      )}
+                                    </button>
                                   </label>
                                   <select
+                                    key={`upscaler-${upscalerVersion}`}
                                     value={
                                       techConfigByCharacter[activeCharacter]
                                         ?.upscaler ?? ""
                                     }
                                     onChange={(e) =>
-                                      setTechConfig(activeCharacter, {
-                                        upscaler: e.target.value,
-                                      })
-                                    }
-                                    className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                  >
-                                    <option value="">(none)</option>
-                                    {reforgeUpscalers.map((u) => (
-                                      <option key={u} value={u}>
-                                        {u}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                                <div className="flex-1">
-                                  <label className="text-xs text-slate-300 flex items-center justify-between">
-                                    <span>Denoise</span>
-                                    <input
-                                      type="number"
-                                      step={0.01}
-                                      value={
-                                        configByCharacter[activeCharacter]
-                                          ?.denoising ?? 0.35
+                                        setTechConfig(activeCharacter, {
+                                          upscaler: e.target.value,
+                                        })
                                       }
-                                      onChange={(e) =>
+                                      className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                                    >
+                                      <option value="">(none)</option>
+                                      {reforgeUpscalers.map((u) => (
+                                        <option key={u} value={u}>
+                                          {u}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <label className="text-xs text-slate-300 flex items-center justify-between">
+                                      <span>Denoise</span>
+                                      <input
+                                        type="number"
+                                        step={0.01}
+                                        value={
+                                          configByCharacter[activeCharacter]
+                                            ?.denoising ?? 0.35
+                                        }
+                                        onChange={(e) =>
+                                          setConfigByCharacter((prev) => {
+                                            const next = {
+                                              ...prev,
+                                              [activeCharacter]: {
+                                                ...(prev[activeCharacter] || {
+                                                  hiresFix: true,
+                                                  denoising: 0.35,
+                                                  outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
+                                                }),
+                                                denoising: Number(e.target.value),
+                                              },
+                                            };
+                                            localStorage.setItem(
+                                              "planner_config",
+                                              JSON.stringify(next)
+                                            );
+                                            return next;
+                                          })
+                                        }
+                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                    </label>
+                                    {SliderBar({
+                                      value:
+                                        configByCharacter[activeCharacter]
+                                          ?.denoising ?? 0.35,
+                                      min: 0,
+                                      max: 1,
+                                      step: 0.01,
+                                      onChange: (v) =>
                                         setConfigByCharacter((prev) => {
                                           const next = {
                                             ...prev,
@@ -2198,7 +2419,7 @@ export default function PlannerView() {
                                                 denoising: 0.35,
                                                 outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
                                               }),
-                                              denoising: Number(e.target.value),
+                                              denoising: v,
                                             },
                                           };
                                           localStorage.setItem(
@@ -2206,38 +2427,77 @@ export default function PlannerView() {
                                             JSON.stringify(next)
                                           );
                                           return next;
-                                        })
-                                      }
-                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                    />
-                                  </label>
-                                  {SliderBar({
-                                    value:
-                                      configByCharacter[activeCharacter]
-                                        ?.denoising ?? 0.35,
-                                    min: 0,
-                                    max: 1,
-                                    step: 0.01,
-                                    onChange: (v) =>
-                                      setConfigByCharacter((prev) => {
-                                        const next = {
-                                          ...prev,
-                                          [activeCharacter]: {
-                                            ...(prev[activeCharacter] || {
-                                              hiresFix: true,
-                                              denoising: 0.35,
-                                              outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
-                                            }),
-                                            denoising: v,
-                                          },
-                                        };
-                                        localStorage.setItem(
-                                          "planner_config",
-                                          JSON.stringify(next)
-                                        );
-                                        return next;
-                                      }),
-                                  })}
+                                        }),
+                                    })}
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div className="min-w-0">
+                                    <label className="text-xs text-slate-300 flex items-center justify-between">
+                                      <span>Upscale By (x)</span>
+                                      <input
+                                        type="number"
+                                        step={0.05}
+                                        min={1}
+                                        max={4}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.upscaleBy ?? 1.5
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            upscaleBy: Number(e.target.value),
+                                          })
+                                        }
+                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                    </label>
+                                    {SliderBar({
+                                      value:
+                                        techConfigByCharacter[activeCharacter]
+                                          ?.upscaleBy ?? 1.5,
+                                      min: 1,
+                                      max: 4,
+                                      step: 0.05,
+                                      onChange: (v) =>
+                                        setTechConfig(activeCharacter, {
+                                          upscaleBy: v,
+                                        }),
+                                    })}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <label className="text-xs text-slate-300 flex items-center justify-between">
+                                      <span>Hires Steps</span>
+                                      <input
+                                        type="number"
+                                        step={1}
+                                        min={0}
+                                        max={60}
+                                        value={
+                                          techConfigByCharacter[activeCharacter]
+                                            ?.hiresSteps ?? 10
+                                        }
+                                        onChange={(e) =>
+                                          setTechConfig(activeCharacter, {
+                                            hiresSteps: Number(e.target.value),
+                                          })
+                                        }
+                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                                      />
+                                    </label>
+                                    {SliderBar({
+                                      value:
+                                        techConfigByCharacter[activeCharacter]
+                                          ?.hiresSteps ?? 10,
+                                      min: 0,
+                                      max: 60,
+                                      step: 1,
+                                      onChange: (v) =>
+                                        setTechConfig(activeCharacter, {
+                                          hiresSteps: v,
+                                        }),
+                                    })}
+                                  </div>
                                 </div>
                               </div>
                             )}

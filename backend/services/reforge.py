@@ -21,7 +21,9 @@ def build_txt2img_payload(prompt: Optional[str] = None,
                            denoising_strength: Optional[float] = None,
                            hr_second_pass_steps: Optional[int] = None,
                            hr_upscaler: Optional[str] = None,
-                           hr_scale: Optional[float] = None) -> Dict[str, Any]:
+                           hr_scale: Optional[float] = None,
+                           width: Optional[int] = None,
+                           height: Optional[int] = None) -> Dict[str, Any]:
     """Devuelve el payload para txt2img con overrides opcionales.
     - Si 'prompt' viene definido, NO usa wildcards por defecto.
     - 'batch_size', 'cfg_scale' y 'steps' se aplican si se proveen.
@@ -31,8 +33,8 @@ def build_txt2img_payload(prompt: Optional[str] = None,
         "prompt": "__personajes__, __poses__, (masterpiece, best quality:1.2), nsfw, explicit, <lora:PonyXL:1>",
         "negative_prompt": "bad quality, worst quality, sketch, censor, mosaic",
         "steps": 28,
-        "width": 896,
-        "height": 1152,
+        "width": 832,
+        "height": 1216,
         "batch_size": 1,
         "n_iter": 1,
         "cfg_scale": 7,
@@ -95,6 +97,8 @@ async def call_txt2img(prompt: Optional[str] = None,
                        hr_second_pass_steps: Optional[int] = None,
                        hr_upscaler: Optional[str] = None,
                        hr_scale: Optional[float] = None,
+                       width: Optional[int] = None,
+                       height: Optional[int] = None,
                        alwayson_scripts: Optional[Any] = None,
                        override_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Realiza la llamada a la API de ReForge txt2img y devuelve el JSON de respuesta.
@@ -112,6 +116,8 @@ async def call_txt2img(prompt: Optional[str] = None,
         hr_second_pass_steps=hr_second_pass_steps,
         hr_upscaler=hr_upscaler,
         hr_scale=hr_scale,
+        width=width,
+        height=height,
     )
     # Compatibilidad: aceptar dict o lista para alwayson_scripts
     if alwayson_scripts:
@@ -242,3 +248,23 @@ async def interrupt_generation() -> Dict[str, Any]:
         except Exception:
             data = {"status": "ok"}
         return data
+    def _clamp_dim(val: Optional[int]) -> Optional[int]:
+        try:
+            if val is None:
+                return None
+            v = int(val)
+            if v < 512:
+                v = 512
+            if v > 2048:
+                v = 2048
+            # multiple of 8
+            v = (v // 8) * 8
+            return v
+        except Exception:
+            return None
+    w = _clamp_dim(width)
+    h = _clamp_dim(height)
+    if w is not None:
+        payload["width"] = w
+    if h is not None:
+        payload["height"] = h
