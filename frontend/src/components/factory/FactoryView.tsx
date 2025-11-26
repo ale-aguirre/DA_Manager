@@ -98,7 +98,7 @@ export default function FactoryView() {
     <div className="mx-auto max-w-6xl px-4 md:px-6 lg:px-8 space-y-8">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold bg-gradient-to-r from-emerald-500 to-teal-600 bg-clip-text text-transparent">Centro de Control</h1>
+          <h1 className="text-xl font-semibold bg-gradient-to-r from-pink-500 to-violet-600 bg-clip-text text-transparent">Centro de Control</h1>
           <p className="mt-1 text-xs text-zinc-400">
             {isActive ? `Procesando trabajo ${currentIndex} de ${total}` : "Fábrica inactiva"}
           </p>

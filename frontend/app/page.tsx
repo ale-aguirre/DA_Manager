@@ -12,11 +12,11 @@ export default function DashboardPage() {
   };
 
   return (
+    <div className="mx-auto w-full px-4 md:px-6 lg:px-8">
     <section className="space-y-8">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Radar className="h-6 w-6" aria-hidden />
-          <h1 className="text-3xl font-bold">Resumen Ejecutivo</h1>
+          <h1 className="text-xl font-semibold bg-gradient-to-r from-pink-500 to-violet-600 bg-clip-text text-transparent">Resumen Ejecutivo</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950 px-2 py-1 text-xs">
@@ -59,5 +59,6 @@ export default function DashboardPage() {
         </Link>
       </div>
     </section>
+    </div>
   );
 }

@@ -178,7 +178,7 @@ export default function GalleryView() {
       {/* Grid principal */}
       <main className="col-span-12 md:col-span-9">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xl font-semibold">Galería</h2>
+          <h2 className="text-xl font-semibold bg-gradient-to-r from-pink-500 to-violet-600 bg-clip-text text-transparent">Galería</h2>
           <div className="flex items-center gap-2">
             {selectedFolder && (
               <span className="inline-flex items-center gap-1 text-xs text-slate-400">
