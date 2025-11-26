@@ -269,3 +269,8 @@ Una vez que la fábrica sea estable, nos enfocamos en la post-producción.
 - Duplicación detectada de `_save_image` (`backend/main.py:1467-1509` y `2362-2399`); requiere unificación.
 - BASE_URL de ReForge hardcodeada (`backend/services/reforge.py:5-7`); pendiente parametrizar en `.env`.
 - Se agregó `docs/STATUS_REPORT_2025-11-24.md` con detalles, riesgos y plan de mejora.
+### Radar — Paginación (Pendiente)
+- [ ] Implementar paginación revisada para Radar (todas las pestañas), evitando repetición de resultados entre páginas.
+  - Observación actual: al avanzar de página, Civitai devuelve items repetidos con algunos `sort/period`; el frontend deduplica pero no aporta nuevos LoRAs.
+  - Próximo: diseñar estrategia de paginación con combinación de `sort/period` y `query` y/o “cargar más” acumulativo con señalización de “0 nuevos”.
+  - Validación: ver nuevos ids por página; indicador de items agregados; rendimiento estable.

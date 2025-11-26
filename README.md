@@ -20,6 +20,7 @@ Backend (.env en /backend):
 - REFORGE_PATH: ruta absoluta al folder wildcards de Dynamic Prompts
 - GROQ_API_KEY: clave de Groq (texto)
 - CIVITAI_API_KEY: clave opcional (para NSFW y cuota)
+- PRESETS_DIR: ruta absoluta al folder presets de Stable Diffusion
 
 Ejemplo: ver backend/.env.example
 

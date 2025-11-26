@@ -33,6 +33,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PORT = int(os.getenv("PORT", "8000"))
 OUTPUTS_DIR = os.getenv("OUTPUTS_DIR")
 RESOURCES_DIR = os.getenv("RESOURCES_DIR")
+PRESETS_DIR = os.getenv("PRESETS_DIR")
 
 # Listas de emergencia (Hardcode) para recursos vacíos
 FALLBACK_OUTFITS = [
@@ -174,6 +175,55 @@ try:
         print("[Static] OUTPUTS_DIR no configurado o no existe; no se monta /files")
 except Exception as e:
     print(f"[Static] Error montando /files: {e}")
+
+# Presets API
+class PresetSaveRequest(BaseModel):
+    name: str
+    content: str
+
+def _ensure_presets_dir() -> Path:
+    if not PRESETS_DIR or not str(PRESETS_DIR).strip():
+        raise HTTPException(status_code=500, detail="PRESETS_DIR no configurado en .env")
+    p = Path(PRESETS_DIR).expanduser().resolve()
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo crear PRESETS_DIR: {e}")
+    return p
+
+@app.get("/presets/list")
+async def presets_list():
+    d = _ensure_presets_dir()
+    files = [f.name for f in d.glob("*.txt")]
+    return {"files": files, "path": str(d)}
+
+@app.get("/presets/read")
+async def presets_read(name: str):
+    if not name or not name.strip():
+        raise HTTPException(status_code=400, detail="name requerido")
+    d = _ensure_presets_dir()
+    safe = sanitize_filename(name).replace(".txt", "") + ".txt"
+    target = d / safe
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Preset no encontrado")
+    try:
+        content = target.read_text(encoding="utf-8")
+        return {"name": safe, "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error leyendo preset: {e}")
+
+@app.post("/presets/save")
+async def presets_save(req: PresetSaveRequest):
+    if not req.name or not req.name.strip():
+        raise HTTPException(status_code=400, detail="name requerido")
+    d = _ensure_presets_dir()
+    safe = sanitize_filename(req.name).replace(".txt", "") + ".txt"
+    target = d / safe
+    try:
+        target.write_text(req.content or "", encoding="utf-8")
+        return {"status": "ok", "saved": str(target)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error guardando preset: {e}")
 
 @app.get("/")
 async def root():
@@ -428,6 +478,7 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         "types": "LORA",
         "query": q,
         "limit": 100,
+        "page": page,
         "nsfw": "true",
         "include": "tags",
     }
@@ -531,26 +582,7 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
 
         normalized = [it for it in normalized if not is_non_anime(it)]
 
-        if not use_query:
-            if len(normalized) < 12:
-                params2 = dict(params_trend)
-                params2["page"] = page + 1
-                def fetch2():
-                    resp = scraper.get(url, params=params2, timeout=20)
-                    resp.raise_for_status()
-                    return resp.json()
-                data2 = await asyncio.to_thread(fetch2)
-                items2 = data2.get("items", [])
-                normalized2 = [normalize_item(it) for it in items2 if isinstance(it, dict)]
-                seen_ids = set()
-                merged = []
-                for it in (normalized + normalized2):
-                    _id = it.get("id")
-                    if _id in seen_ids:
-                        continue
-                    seen_ids.add(_id)
-                    merged.append(it)
-                normalized = merged
+        # Paginación: devolver SOLO la página solicitada
 
         # Clasificación IA (Groq) de categorías: Character, Pose, Clothing, Style, Concept
         classified = normalized
