@@ -3,7 +3,6 @@ import React from "react";
 import {
   Wand2,
   Trash2,
-  RefreshCw,
   Play,
   Radar,
   Search,
@@ -26,277 +25,34 @@ import {
   postPlannerAnalyze,
   getReforgeCheckpoints,
   postReforgeSetCheckpoint,
-  getReforgeVAEs,
   getReforgeOptions,
   postPlannerDraft,
   getLocalLoraInfo,
+  getReforgeVAEs,
   getReforgeUpscalers,
-  postReforgeRefresh,
 } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import type { ResourceMeta } from "../../lib/api";
-
-// Palabras de calidad para detectar el segmento final del prompt
-const QUALITY_SET = new Set([
-  "masterpiece",
-  "best quality",
-  "absurdres",
-  "nsfw",
-]);
-
-// Estándar de oro para Negative Prompt (Anime)
-// Nota: NO incluir "nsfw" aquí para no bloquear contenidos NSFW cuando la intensidad lo requiera.
-const DEFAULT_NEGATIVE_ANIME =
-  "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name";
-
-function splitPrompt(prompt: string): string[] {
-  return (prompt || "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0);
-}
-
-function extractTriplet(prompt: string): {
-  outfit?: string;
-  pose?: string;
-  location?: string;
-} {
-  const tokens = splitPrompt(prompt);
-  // Quitar tokens de calidad al final
-  const core: string[] = [];
-  for (const t of tokens) {
-    core.push(t);
-  }
-  // Remover desde el final las palabras de calidad
-  while (core.length > 0) {
-    const last = core[core.length - 1].toLowerCase();
-    if (QUALITY_SET.has(last)) core.pop();
-    else break;
-  }
-  // Esperamos: [..., outfit, pose, location]
-  const n = core.length;
-  if (n >= 3) {
-    return { outfit: core[n - 3], pose: core[n - 2], location: core[n - 1] };
-  }
-  return {};
-}
-
-function rebuildPromptWithTriplet(
-  original: string,
-  nextTriplet: { outfit?: string; pose?: string; location?: string }
-): string {
-  const tokens = splitPrompt(original);
-  const core: string[] = [];
-  const quality: string[] = [];
-  for (const t of tokens) {
-    if (QUALITY_SET.has(t.toLowerCase())) quality.push(t);
-    else core.push(t);
-  }
-  // Asegurar que hay al menos 3 posiciones al final para outfit/pose/location
-  while (core.length < 3) core.push("");
-  if (nextTriplet.outfit !== undefined)
-    core[core.length - 3] = nextTriplet.outfit;
-  if (nextTriplet.pose !== undefined) core[core.length - 2] = nextTriplet.pose;
-  if (nextTriplet.location !== undefined)
-    core[core.length - 1] = nextTriplet.location;
-  const all = [...core, ...quality];
-  return all.join(", ");
-}
-
-// Heurística para extraer Lighting y Camera cuando existan en el prompt
-function extractExtras(prompt: string): {
-  lighting?: string;
-  camera?: string;
-  expression?: string;
-  hairstyle?: string;
-} {
-  const tokens = splitPrompt(prompt);
-  const core: string[] = [];
-  for (const t of tokens) {
-    if (!QUALITY_SET.has(t.toLowerCase())) core.push(t);
-  }
-  // Ignorar las últimas 3 posiciones (Outfit, Pose, Location)
-  const scan = core.slice(0, Math.max(0, core.length - 3));
-  const isLighting = (s: string) => {
-    const low = s.toLowerCase();
-    return [
-      "light",
-      "lighting",
-      "shadow",
-      "shadows",
-      "glow",
-      "ambient",
-      "rim light",
-      "neon",
-      "backlight",
-      "backlit",
-      "studio light",
-      "soft lighting",
-    ].some((k) => low.includes(k));
-  };
-  const isCamera = (s: string) => {
-    const low = s.toLowerCase();
-    return [
-      "angle",
-      "shot",
-      "lens",
-      "close-up",
-      "portrait",
-      "fov",
-      "zoom",
-      "fisheye",
-      "bokeh",
-      "wide angle",
-      "low angle",
-      "high angle",
-      "front view",
-      "cowboy shot",
-    ].some((k) => low.includes(k));
-  };
-  const EXPRESSION_HINTS = [
-    "smile",
-    "blushing",
-    "angry",
-    "crying",
-    "ahegao",
-    "wink",
-    "shy",
-    "confident",
-    "surprised",
-    "determined",
-    "smug",
-    "pout",
-    "teary eyes",
-    "embarrassed",
-    "happy",
-  ];
-  const HAIRSTYLE_HINTS = [
-    "ponytail",
-    "twintails",
-    "bob cut",
-    "long hair",
-    "braid",
-    "side ponytail",
-    "messy hair",
-    "bun",
-    "short hair",
-    "wavy hair",
-    "curly hair",
-    "straight hair",
-    "half up",
-    "half down",
-  ];
-  const isExpression = (s: string) =>
-    EXPRESSION_HINTS.includes(s.toLowerCase());
-  const isHairstyle = (s: string) => HAIRSTYLE_HINTS.includes(s.toLowerCase());
-  let lighting: string | undefined;
-  let camera: string | undefined;
-  let expression: string | undefined;
-  let hairstyle: string | undefined;
-  for (const t of scan) {
-    if (!lighting && isLighting(t)) lighting = t;
-    if (!camera && isCamera(t)) camera = t;
-    if (!expression && isExpression(t)) expression = t;
-    if (!hairstyle && isHairstyle(t)) hairstyle = t;
-    if (lighting && camera && expression && hairstyle) break;
-  }
-  return { lighting, camera, expression, hairstyle };
-}
-
-function rebuildPromptWithExtras(
-  original: string,
-  extras: {
-    lighting?: string;
-    camera?: string;
-    expression?: string;
-    hairstyle?: string;
-  }
-) {
-  const tokens = splitPrompt(original);
-  const core: string[] = [];
-  const quality: string[] = [];
-  for (const t of tokens) {
-    if (QUALITY_SET.has(t.toLowerCase())) quality.push(t);
-    else core.push(t);
-  }
-  const EXPRESSION_HINTS = [
-    "smile",
-    "blushing",
-    "angry",
-    "crying",
-    "ahegao",
-    "wink",
-    "shy",
-    "confident",
-    "surprised",
-    "determined",
-    "smug",
-    "pout",
-    "teary eyes",
-    "embarrassed",
-    "happy",
-  ];
-  const HAIRSTYLE_HINTS = [
-    "ponytail",
-    "twintails",
-    "bob cut",
-    "long hair",
-    "braid",
-    "side ponytail",
-    "messy hair",
-    "bun",
-    "short hair",
-    "wavy hair",
-    "curly hair",
-    "straight hair",
-    "half up",
-    "half down",
-  ];
-  const tail = core.slice(-3);
-  const head = core.slice(0, Math.max(0, core.length - 3)).filter((t) => {
-    const low = t.toLowerCase();
-    const isLight = [
-      "light",
-      "lighting",
-      "shadow",
-      "shadows",
-      "glow",
-      "ambient",
-      "rim light",
-      "neon",
-      "backlight",
-      "backlit",
-      "studio light",
-      "soft lighting",
-    ].some((k) => low.includes(k));
-    const isCam = [
-      "angle",
-      "shot",
-      "lens",
-      "close-up",
-      "portrait",
-      "fov",
-      "zoom",
-      "fisheye",
-      "bokeh",
-      "wide angle",
-      "low angle",
-      "high angle",
-      "front view",
-      "cowboy shot",
-    ].some((k) => low.includes(k));
-    const isExpr = EXPRESSION_HINTS.includes(low);
-    const isHair = HAIRSTYLE_HINTS.includes(low);
-    return !(isLight || isCam || isExpr || isHair);
-  });
-  const pre: string[] = [];
-  if (extras.camera) pre.push(extras.camera);
-  if (extras.expression) pre.push(extras.expression);
-  if (extras.hairstyle) pre.push(extras.hairstyle);
-  if (extras.lighting) pre.push(extras.lighting);
-  const nextCore = [...pre, ...head, ...tail];
-  return [...nextCore, ...quality].join(", ");
-}
+import HiresSettings from "./HiresSettings";
+import PromptsEditor from "./PromptsEditor";
+import TechnicalModelPanel from "./TechnicalModelPanel";
+import {
+  QUALITY_SET,
+  DEFAULT_NEGATIVE_ANIME,
+  splitPrompt,
+  extractTriplet,
+  extractExtras,
+  rebuildPromptWithExtras,
+  rebuildPromptWithTriplet,
+  getIntensity,
+  mergePositive,
+  mergeNegative,
+  handleSetCheckpoint,
+  handleRefreshTech,
+  refreshUpscalersHelper,
+  refreshVaesHelper,
+  refreshCheckpointsHelper,
+} from "../../helpers/planner";
 
 export default function PlannerView() {
   const [jobs, setJobs] = React.useState<PlannerJob[]>([]);
@@ -391,10 +147,10 @@ export default function PlannerView() {
   const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
   const [checkpointVersion, setCheckpointVersion] = React.useState(0);
 
-  const [vaes, setVaes] = React.useState<string[]>([]);
   const [reforgeUpscalers, setReforgeUpscalers] = React.useState<string[]>([]);
   const [refreshingUpscalers, setRefreshingUpscalers] = React.useState(false);
   const [upscalerVersion, setUpscalerVersion] = React.useState(0);
+  const [vaes, setVaes] = React.useState<string[]>([]);
   const [globalCheckpoint, setGlobalCheckpoint] = React.useState<string | null>(
     null
   );
@@ -408,6 +164,8 @@ export default function PlannerView() {
 
   const [dryRunOpen, setDryRunOpen] = React.useState(false);
   const [dryRunPayload, setDryRunPayload] = React.useState<string>("");
+  const [presetFiles, setPresetFiles] = React.useState<string[]>([]);
+  const [openPresetMenu, setOpenPresetMenu] = React.useState<null | "pos" | "neg" | "tags">(null);
   const setTechConfig = (
     character: string | null,
     partial: Partial<{
@@ -458,6 +216,15 @@ export default function PlannerView() {
       void 0;
     }
   }, []);
+
+  const refreshPresets = async () => {
+    try {
+      const { files } = await (await import("../../lib/api")).getPresetFiles();
+      setPresetFiles(files);
+    } catch {
+      setPresetFiles([]);
+    }
+  };
 
   React.useEffect(() => {
     // Abrir prompt por defecto para todos los jobs existentes
@@ -627,19 +394,18 @@ export default function PlannerView() {
     }
   }, []);
 
-  // Cargar VAEs y opciones actuales de ReForge
+  // Cargar opciones actuales de ReForge
   React.useEffect(() => {
     (async () => {
       try {
-        const [vNames, opts, upNames] = await Promise.all([
-          getReforgeVAEs().catch(() => []),
+        const [opts, upNames, vaeNames] = await Promise.all([
           getReforgeOptions().catch(() => ({
             current_vae: "Automatic",
             current_clip_skip: 1,
           })),
           getReforgeUpscalers().catch(() => []),
+          getReforgeVAEs().catch(() => []),
         ]);
-        setVaes(Array.isArray(vNames) ? vNames : []);
         setReforgeOptionsState(opts || null);
         {
           const list = Array.isArray(upNames)
@@ -647,36 +413,31 @@ export default function PlannerView() {
             : ["Latent"];
           setReforgeUpscalers(list);
         }
+        {
+          const list = Array.isArray(vaeNames) ? vaeNames : [];
+          setVaes(list);
+        }
       } catch (e) {
-        console.warn("Error cargando VAEs/opciones/upscalers", e);
+        console.warn("Error cargando opciones/upscalers", e);
       }
     })();
   }, []);
 
-  const refreshUpscalers = async () => {
-    try {
-      setRefreshingUpscalers(true);
-      const upNames = await getReforgeUpscalers();
-      const list = Array.isArray(upNames)
-        ? Array.from(new Set([...upNames, "Latent"]))
-        : ["Latent"];
-      setReforgeUpscalers(list);
-      setUpscalerVersion((v) => v + 1);
-      if (activeCharacter) {
-        const current = techConfigByCharacter[activeCharacter]?.upscaler ?? "";
-        if (current && Array.isArray(upNames) && !upNames.includes(current)) {
-          setTechConfig(activeCharacter, { upscaler: "" });
-        } else if (current && !Array.isArray(upNames)) {
-          setTechConfig(activeCharacter, { upscaler: "" });
-        }
-      }
-    } catch {
-      setToast({ message: "❌ Error al actualizar Upscalers" });
-      setTimeout(() => setToast(null), 2500);
-    } finally {
-      setRefreshingUpscalers(false);
-    }
-  };
+  const refreshUpscalers = async () =>
+    refreshUpscalersHelper(
+      activeCharacter ?? null,
+      setReforgeUpscalers,
+      setUpscalerVersion,
+      techConfigByCharacter,
+      setTechConfig,
+      (msg) => {
+        setToast({ message: msg });
+        setTimeout(() => setToast(null), 2500);
+      },
+      (v) => setRefreshingUpscalers(v)
+    );
+
+  const refreshVaes = async () => refreshVaesHelper(setVaes);
 
   React.useEffect(() => {
     // Si no hay lore para el personaje activo, cargarlo automáticamente
@@ -742,47 +503,18 @@ export default function PlannerView() {
       }
     })();
   }, [activeCharacter, globalCheckpoint, techConfigByCharacter]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const refreshCheckpoints = async (p0: boolean) => {
-    try {
-      refreshCheckpoints(true);
-      setCheckpoints([]);
-      setCheckpointVersion((v) => v + 1);
-      try {
-        await postReforgeRefresh();
-      } catch {
-        void 0;
+  const refreshCheckpoints = async () =>
+    refreshCheckpointsHelper(
+      activeCharacter ?? null,
+      setCheckpoints,
+      setCheckpointVersion,
+      techConfigByCharacter,
+      setTechConfig,
+      (msg) => {
+        setToast({ message: msg });
+        setTimeout(() => setToast(null), 2500);
       }
-      await new Promise((r) => setTimeout(r, 2000));
-      const cps = await getReforgeCheckpoints();
-      setCheckpoints(cps);
-      if (activeCharacter) {
-        const current =
-          techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
-        if (!current) {
-          const first = cps && cps.length > 0 ? cps[0] : "";
-          if (first) {
-            setTechConfig(activeCharacter, { checkpoint: first });
-            try {
-              await postReforgeSetCheckpoint(first);
-            } catch {
-              void 0;
-            }
-          }
-        } else if (!cps.includes(current)) {
-          const first = cps && cps.length > 0 ? cps[0] : "";
-          if (first) setTechConfig(activeCharacter, { checkpoint: first });
-        }
-      }
-      setCheckpointVersion((v) => v + 1);
-    } catch (e) {
-      console.warn("Refresh checkpoints falló", e);
-      setToast({ message: "❌ Error al actualizar checkpoints" });
-      setTimeout(() => setToast(null), 2500);
-    } finally {
-      refreshCheckpoints(false);
-    }
-  };
+    );
 
   // Cargar lore por personaje desde localStorage
   React.useEffect(() => {
@@ -1155,15 +887,31 @@ export default function PlannerView() {
           const trig = (
             trigList.length > 0 ? trigList : [j.character_name]
           ).join(", ");
+          let presetPos: string | undefined;
+          let presetNeg: string | undefined;
+          try {
+            const raw = localStorage.getItem("planner_preset_global");
+            if (raw) {
+              const p = JSON.parse(raw) as Record<string, unknown>;
+              if (typeof p.positivePrompt === "string")
+                presetPos = p.positivePrompt as string;
+              if (typeof p.negativePrompt === "string")
+                presetNeg = p.negativePrompt as string;
+            }
+          } catch {}
           const finalPrompt =
             base && base.trim().length > 0
-              ? `${base.trim()}, ${bodyPrompt}`
-              : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+              ? mergePositive(presetPos, base.trim(), bodyPrompt)
+              : mergePositive(
+                  presetPos,
+                  `${loraTag}, ${trig}`,
+                  `${bodyPrompt}, ${qualityEnd}`
+                );
           out.push({
             ...j,
             prompt: finalPrompt,
             seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
-            negative_prompt: tech?.negativePrompt,
+            negative_prompt: mergeNegative(presetNeg, tech?.negativePrompt),
           });
         }
         return out;
@@ -1262,7 +1010,6 @@ export default function PlannerView() {
     });
     const ensured = ensureTriplet(provisional);
     updatePrompt(row, ensured);
-    setOpenEditor(null);
   };
 
   const applyExtrasEdit = (
@@ -1279,26 +1026,6 @@ export default function PlannerView() {
   const handleDeleteJob = (character: string, localIndex: number) => {
     const idx = perCharacter[character]?.indices[localIndex];
     if (typeof idx === "number") deleteRow(idx);
-  };
-
-  const getIntensity = (
-    prompt: string
-  ): { label: "SFW" | "ECCHI" | "NSFW"; className: string } => {
-    const low = (prompt || "").toLowerCase();
-    if (low.includes("rating_explicit") || low.includes("nsfw"))
-      return {
-        label: "NSFW",
-        className: "bg-red-600 text-white border-red-700",
-      };
-    if (low.includes("rating_questionable") || low.includes("cleavage"))
-      return {
-        label: "ECCHI",
-        className: "bg-yellow-500 text-black border-yellow-600",
-      };
-    return {
-      label: "SFW",
-      className: "bg-green-600 text-white border-green-700",
-    };
   };
 
   const IntensitySelector: React.FC<{
@@ -1553,16 +1280,35 @@ export default function PlannerView() {
                   const trig = (
                     trigList.length > 0 ? trigList : [j.character_name]
                   ).join(", ");
+                  let presetPos: string | undefined;
+                  let presetNeg: string | undefined;
+                  try {
+                    const raw = localStorage.getItem("planner_preset_global");
+                    if (raw) {
+                      const p = JSON.parse(raw) as Record<string, unknown>;
+                      if (typeof p.positivePrompt === "string")
+                        presetPos = p.positivePrompt as string;
+                      if (typeof p.negativePrompt === "string")
+                        presetNeg = p.negativePrompt as string;
+                    }
+                  } catch {}
                   const finalPrompt =
                     base && base.trim().length > 0
-                      ? `${base.trim()}, ${bodyPrompt}`
-                      : `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+                      ? mergePositive(presetPos, base.trim(), bodyPrompt)
+                      : mergePositive(
+                          presetPos,
+                          `${loraTag}, ${trig}`,
+                          `${bodyPrompt}, ${qualityEnd}`
+                        );
                   preparedJobs.push({
                     ...j,
                     prompt: finalPrompt,
                     seed:
                       tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
-                    negative_prompt: tech?.negativePrompt,
+                    negative_prompt: mergeNegative(
+                      presetNeg,
+                      tech?.negativePrompt
+                    ),
                   });
                 }
                 const groupConfig = Object.keys(perCharacter).map(
@@ -1671,181 +1417,67 @@ export default function PlannerView() {
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-12 gap-2 items-end">
-            <div className="col-span-6">
-              <label className="text-xs text-slate-300">
-                Stable Diffusion Checkpoint
-              </label>
-              <select
-                value={
-                  techConfigByCharacter[activeCharacter!]?.checkpoint ??
-                  globalCheckpoint ??
-                  ""
-                }
-                onChange={async (e) => {
-                  const title = e.target.value;
-                  setTechConfig(activeCharacter, { checkpoint: title });
-                  try {
-                    if (title) await postReforgeSetCheckpoint(title);
-                    setGlobalCheckpoint(title);
-                    try {
-                      localStorage.setItem("planner_checkpoint_global", title);
-                    } catch {
-                      void 0;
-                    }
-                  } catch {
-                    void 0;
-                  }
-                }}
-                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                key={`ckpt-${checkpointVersion}`}
-              >
-                <option value="">(Sin cambio)</option>
-                {checkpoints.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="col-span-3">
-              <label className="text-xs text-slate-300">VAE</label>
-              <select
-                value={
-                  techConfigByCharacter[activeCharacter!]?.vae ??
-                  reforgeOptions?.current_vae ??
-                  "Automatic"
-                }
-                onChange={(e) =>
-                  setTechConfig(activeCharacter, { vae: e.target.value })
-                }
-                className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-              >
-                <option value="Automatic">Automatic</option>
-                {vaes.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-slate-300">Clip Skip</label>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="flex-1">
-                  {SliderBar({
-                    value:
-                      techConfigByCharacter[activeCharacter!]?.clipSkip ??
-                      reforgeOptions?.current_clip_skip ??
-                      1,
-                    min: 1,
-                    max: 4,
-                    step: 1,
-                    onChange: (v) =>
-                      setTechConfig(activeCharacter, { clipSkip: v }),
-                  })}
-                </div>
-                <input
-                  type="number"
-                  min={1}
-                  max={4}
-                  step={1}
-                  value={
-                    techConfigByCharacter[activeCharacter!]?.clipSkip ??
-                    reforgeOptions?.current_clip_skip ??
-                    1
-                  }
-                  onChange={(e) =>
-                    setTechConfig(activeCharacter, {
-                      clipSkip: Number(e.target.value),
-                    })
-                  }
-                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                />
-              </div>
-            </div>
-            <div className="col-span-1 flex items-center justify-end">
-              <button
-                onClick={async () => {
-                  try {
-                    await postReforgeRefresh();
-                  } catch {
-                    void 0;
-                  }
-                  await refreshUpscalers();
-                  if (activeCharacter) await refreshCheckpoints(false);
-                }}
-                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-              >
-                <RefreshCw className="h-3 w-3" /> Actualizar
-              </button>
-            </div>
-          </div>
+          <TechnicalModelPanel
+            activeCharacter={activeCharacter!}
+            checkpoints={checkpoints}
+            vaes={vaes}
+            reforgeOptions={reforgeOptions}
+            checkpointVersion={checkpointVersion}
+            techConfigByCharacter={techConfigByCharacter}
+            onSetCheckpoint={async (title) =>
+              handleSetCheckpoint(title, activeCharacter!, setTechConfig, setGlobalCheckpoint)
+            }
+            onSetVae={(value) => setTechConfig(activeCharacter, { vae: value })}
+            onSetClipSkip={(value) => setTechConfig(activeCharacter, { clipSkip: value })}
+            onRefreshAll={async () =>
+              handleRefreshTech(activeCharacter, refreshVaes, refreshCheckpoints)
+            }
+          />
         </div>
       </section>
+
+      {/* Configuración Global removida: la lógica de defaults se unifica dentro de Prompt Positivo/Negativo */}
 
       <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
         <div className="p-3">
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-9">
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="text-xs text-slate-300">
-                    Prompt Positivo
-                  </label>
-                  <textarea
-                    value={plannerContext[activeCharacter!]?.base_prompt || ""}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setPlannerContext((prev) => {
-                        const next = {
-                          ...prev,
-                          [activeCharacter!]: {
-                            ...(prev[activeCharacter!] || {}),
-                            base_prompt: v,
-                          },
-                        };
-                        try {
-                          localStorage.setItem(
-                            "planner_context",
-                            JSON.stringify(next)
-                          );
-                        } catch {
-                          void 0;
-                        }
-                        return next;
-                      });
-                    }}
-                    className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-slate-300">
-                    Prompt Negativo
-                  </label>
-                  <textarea
-                    value={
-                      techConfigByCharacter[activeCharacter!]?.negativePrompt ??
-                      ""
-                    }
-                    onChange={(e) =>
-                      setTechConfig(activeCharacter, {
-                        negativePrompt: e.target.value,
-                      })
-                    }
-                    className="mt-2 h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                  />
-                </div>
-              </div>
+              <PromptsEditor
+                basePrompt={plannerContext[activeCharacter!]?.base_prompt || ""}
+                negativePrompt={
+                  techConfigByCharacter[activeCharacter!]?.negativePrompt ?? ""
+                }
+                onChangeBase={(v) => {
+                  setPlannerContext((prev) => {
+                    const next = {
+                      ...prev,
+                      [activeCharacter!]: {
+                        ...(prev[activeCharacter!] || {}),
+                        base_prompt: v,
+                      },
+                    };
+                    try {
+                      localStorage.setItem(
+                        "planner_context",
+                        JSON.stringify(next)
+                      );
+                    } catch {}
+                    return next;
+                  });
+                }}
+                onChangeNegative={(v) =>
+                  setTechConfig(activeCharacter, { negativePrompt: v })
+                }
+              />
             </div>
             <div className="col-span-3">
-              <button
-                onClick={startProduction}
-                disabled={jobs.length === 0}
-                className="w-full h-32 rounded-lg bg-green-600 text-white text-lg font-semibold hover:bg-green-500 disabled:opacity-60"
-              >
-                Generar
-              </button>
+                <button
+                  onClick={startProduction}
+                  disabled={jobs.length === 0}
+                  className="w-full h-32 rounded-lg bg-green-600 text-white text-lg font-semibold hover:bg-green-500 disabled:opacity-60"
+                >
+                  Generar
+                </button>
               <div className="mt-2 grid grid-cols-3 gap-2">
                 <button
                   onClick={() => {
@@ -1869,6 +1501,91 @@ export default function PlannerView() {
                   Borrar
                 </button>
                 <button className="hidden" />
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 relative">
+                <button
+                  onClick={async () => {
+                    await refreshPresets();
+                    setOpenPresetMenu(openPresetMenu === "pos" ? null : "pos");
+                  }}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                >
+                  Cargar Positivo
+                </button>
+                <button
+                  onClick={async () => {
+                    await refreshPresets();
+                    setOpenPresetMenu(openPresetMenu === "neg" ? null : "neg");
+                  }}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                >
+                  Cargar Negativo
+                </button>
+                <button
+                  onClick={async () => {
+                    await refreshPresets();
+                    setOpenPresetMenu(openPresetMenu === "tags" ? null : "tags");
+                  }}
+                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                >
+                  Cargar Tags
+                </button>
+                {openPresetMenu && (
+                  <div className="absolute z-20 mt-1 w-64 rounded border border-slate-700 bg-slate-900 shadow-lg">
+                    {presetFiles.length === 0 ? (
+                      <div className="px-2 py-2 text-xs text-slate-300">Sin presets .txt</div>
+                    ) : (
+                      <ul className="max-h-48 overflow-auto">
+                        {presetFiles.map((f) => (
+                          <li key={f}>
+                            <button
+                              type="button"
+                              className="block w-full text-left px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                              onClick={async () => {
+                                try {
+                                  const api = await import("../../lib/api");
+                                  const content = await api.getPresetContent(f);
+                                  if (openPresetMenu === "pos") {
+                                    setPlannerContext((prev) => {
+                                      const before = prev[activeCharacter!] || {};
+                                      const base = String(before.base_prompt || "");
+                                      const nextBase = mergePositive(content, base, "");
+                                      const next = {
+                                        ...prev,
+                                        [activeCharacter!]: { ...before, base_prompt: nextBase },
+                                      };
+                                      try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
+                                      return next;
+                                    });
+                                  } else if (openPresetMenu === "neg") {
+                                    setTechConfig(activeCharacter, {
+                                      negativePrompt: mergeNegative(content, techConfigByCharacter[activeCharacter!]?.negativePrompt || ""),
+                                    });
+                                  } else {
+                                    setPlannerContext((prev) => {
+                                      const before = prev[activeCharacter!] || {};
+                                      const base = String(before.base_prompt || "");
+                                      const nextBase = mergePositive("", base, content);
+                                      const next = {
+                                        ...prev,
+                                        [activeCharacter!]: { ...before, base_prompt: nextBase },
+                                      };
+                                      try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
+                                      return next;
+                                    });
+                                  }
+                                } catch {}
+                                setOpenPresetMenu(null);
+                              }}
+                            >
+                              {f}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2397,238 +2114,70 @@ export default function PlannerView() {
                             </div>
                           ) : null}
                           {paramTab === "hires" && (
-                            <>
-                              <div className="col-span-2 flex gap-6 items-center">
-                                <label className="flex items-center gap-2 text-slate-300 text-sm">
-                                  <input
-                                    type="checkbox"
-                                    checked={
-                                      techConfigByCharacter[activeCharacter]
-                                        ?.hiresFix ??
-                                      configByCharacter[activeCharacter]
-                                        ?.hiresFix ??
-                                      true
-                                    }
-                                    onChange={(e) =>
-                                      setTechConfig(activeCharacter, {
-                                        hiresFix: e.target.checked,
-                                      })
-                                    }
-                                    className="accent-blue-500"
-                                  />
-                                  Hires. Fix
-                                </label>
-                              </div>
-                              {(techConfigByCharacter[activeCharacter]
-                                ?.hiresFix ??
+                            <HiresSettings
+                              hiresFix={
+                                techConfigByCharacter[activeCharacter]
+                                  ?.hiresFix ??
                                 configByCharacter[activeCharacter]?.hiresFix ??
-                                true) && (
-                                <div className="col-span-2 w-full space-y-2">
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <div className="min-w-0">
-                                      <label className="text-xs text-slate-300 flex items-center justify-between">
-                                        <span>VAE</span>
-                                      </label>
-                                      <select
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.vae ??
-                                          reforgeOptions?.current_vae ??
-                                          "Automatic"
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            vae: e.target.value,
-                                          })
-                                        }
-                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                      >
-                                        <option value="Automatic">
-                                          Automatic
-                                        </option>
-                                        {vaes.map((v) => (
-                                          <option key={v} value={v}>
-                                            {v}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                    <div className="min-w-0">
-                                      <label className="text-xs text-slate-300 flex items-center justify-between">
-                                        <span>Upscaler</span>
-                                        <button
-                                          type="button"
-                                          onClick={refreshUpscalers}
-                                          disabled={refreshingUpscalers}
-                                          className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-60"
-                                        >
-                                          {refreshingUpscalers ? (
-                                            <span className="inline-flex items-center gap-1">
-                                              <Loader2 className="h-3 w-3 animate-spin" />{" "}
-                                              Actualizando
-                                            </span>
-                                          ) : (
-                                            <span className="inline-flex items-center gap-1">
-                                              <RefreshCw className="h-3 w-3" />{" "}
-                                              Actualizar
-                                            </span>
-                                          )}
-                                        </button>
-                                      </label>
-                                      <select
-                                        key={`upscaler-${upscalerVersion}`}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.upscaler ?? ""
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            upscaler: e.target.value,
-                                          })
-                                        }
-                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                      >
-                                        <option value="">(none)</option>
-                                        {reforgeUpscalers.map((u) => (
-                                          <option key={u} value={u}>
-                                            {u}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-                                    <div className="min-w-0">
-                                      <label className="text-xs text-slate-300 flex items-center justify-between">
-                                        <span>Denoise</span>
-                                        <input
-                                          type="number"
-                                          step={0.01}
-                                          value={
-                                            configByCharacter[activeCharacter]
-                                              ?.denoising ?? 0.35
-                                          }
-                                          onChange={(e) =>
-                                            setConfigByCharacter((prev) => {
-                                              const next = {
-                                                ...prev,
-                                                [activeCharacter]: {
-                                                  ...(prev[activeCharacter] || {
-                                                    hiresFix: true,
-                                                    denoising: 0.35,
-                                                    outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
-                                                  }),
-                                                  denoising: Number(
-                                                    e.target.value
-                                                  ),
-                                                },
-                                              };
-                                              localStorage.setItem(
-                                                "planner_config",
-                                                JSON.stringify(next)
-                                              );
-                                              return next;
-                                            })
-                                          }
-                                          className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                        />
-                                      </label>
-                                      {SliderBar({
-                                        value:
-                                          configByCharacter[activeCharacter]
-                                            ?.denoising ?? 0.35,
-                                        min: 0,
-                                        max: 1,
-                                        step: 0.01,
-                                        onChange: (v) =>
-                                          setConfigByCharacter((prev) => {
-                                            const next = {
-                                              ...prev,
-                                              [activeCharacter]: {
-                                                ...(prev[activeCharacter] || {
-                                                  hiresFix: true,
-                                                  denoising: 0.35,
-                                                  outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
-                                                }),
-                                                denoising: v,
-                                              },
-                                            };
-                                            localStorage.setItem(
-                                              "planner_config",
-                                              JSON.stringify(next)
-                                            );
-                                            return next;
-                                          }),
-                                      })}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <label className="text-xs text-slate-300 flex items-center justify-between">
-                                        <span>Upscale By (x)</span>
-                                      </label>
-                                      <input
-                                        type="number"
-                                        step={0.05}
-                                        min={1}
-                                        max={4}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.upscaleBy ?? 1.5
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            upscaleBy: Number(e.target.value),
-                                          })
-                                        }
-                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                      {SliderBar({
-                                        value:
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.upscaleBy ?? 1.5,
-                                        min: 1,
-                                        max: 4,
-                                        step: 0.05,
-                                        onChange: (v) =>
-                                          setTechConfig(activeCharacter, {
-                                            upscaleBy: v,
-                                          }),
-                                      })}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <label className="text-xs text-slate-300 flex items-center justify-between">
-                                        <span>Hires Steps</span>
-                                      </label>
-                                      <input
-                                        type="number"
-                                        step={1}
-                                        min={0}
-                                        max={60}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.hiresSteps ?? 10
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            hiresSteps: Number(e.target.value),
-                                          })
-                                        }
-                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                      {SliderBar({
-                                        value:
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.hiresSteps ?? 10,
-                                        min: 0,
-                                        max: 60,
-                                        step: 1,
-                                        onChange: (v) =>
-                                          setTechConfig(activeCharacter, {
-                                            hiresSteps: v,
-                                          }),
-                                      })}
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </>
+                                true
+                              }
+                              onToggleHiresFix={(v) =>
+                                setTechConfig(activeCharacter, { hiresFix: v })
+                              }
+                              upscalerList={reforgeUpscalers}
+                              currentUpscaler={
+                                techConfigByCharacter[activeCharacter]
+                                  ?.upscaler ?? ""
+                              }
+                              onChangeUpscaler={(v) =>
+                                setTechConfig(activeCharacter, { upscaler: v })
+                              }
+                              refreshUpscalers={refreshUpscalers}
+                              refreshing={refreshingUpscalers}
+                              upscalerVersion={upscalerVersion}
+                              denoise={
+                                configByCharacter[activeCharacter]?.denoising ??
+                                0.35
+                              }
+                              onChangeDenoise={(v) =>
+                                setConfigByCharacter((prev) => {
+                                  const next = {
+                                    ...prev,
+                                    [activeCharacter]: {
+                                      ...(prev[activeCharacter] || {
+                                        hiresFix: true,
+                                        denoising: 0.35,
+                                        outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
+                                      }),
+                                      denoising: v,
+                                    },
+                                  };
+                                  try {
+                                    localStorage.setItem(
+                                      "planner_config",
+                                      JSON.stringify(next)
+                                    );
+                                  } catch {}
+                                  return next;
+                                })
+                              }
+                              upscaleBy={
+                                techConfigByCharacter[activeCharacter]
+                                  ?.upscaleBy ?? 1.5
+                              }
+                              onChangeUpscaleBy={(v) =>
+                                setTechConfig(activeCharacter, { upscaleBy: v })
+                              }
+                              hiresSteps={
+                                techConfigByCharacter[activeCharacter]
+                                  ?.hiresSteps ?? 10
+                              }
+                              onChangeHiresSteps={(v) =>
+                                setTechConfig(activeCharacter, {
+                                  hiresSteps: v,
+                                })
+                              }
+                            />
                           )}
                           {paramTab === "adetailer" && (
                             <div className="col-span-2 flex items-center gap-6">
@@ -2699,8 +2248,7 @@ export default function PlannerView() {
                               <label className="text-xs text-slate-300">
                                 LORE CONTEXT
                               </label>
-                              <input
-                                type="text"
+                              <textarea
                                 value={loreByCharacter[character] || ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
@@ -2719,6 +2267,7 @@ export default function PlannerView() {
                                 }}
                                 placeholder="Contexto breve del encargo / personaje"
                                 className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                rows={2}
                               />
                             </div>
                             <div>
@@ -3202,8 +2751,4 @@ function EngineHealthIndicator() {
       {status === "ok" ? "Motor: Online" : "Motor: Offline"}
     </span>
   );
-}
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function setOpenEditor(arg0: null) {
-  throw new Error("Function not implemented.");
 }

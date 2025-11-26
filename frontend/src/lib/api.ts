@@ -331,3 +331,36 @@ export async function postDownloadCheckpoint(url: string, filename?: string): Pr
   }
   return res.json();
 }
+
+export async function getPresetFiles(): Promise<{ files: string[]; path?: string }> {
+  const res = await fetch(`${BASE_URL}/presets/list`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Presets list failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return { files: Array.isArray(data?.files) ? data.files : [], path: typeof data?.path === "string" ? data.path : undefined };
+}
+
+export async function getPresetContent(name: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}/presets/read?name=${encodeURIComponent(name)}`, { cache: "no-store" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Preset read failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  return typeof data?.content === "string" ? data.content : "";
+}
+
+export async function postPresetSave(name: string, content: string): Promise<{ status: string; saved: string }> {
+  const res = await fetch(`${BASE_URL}/presets/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Preset save failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}

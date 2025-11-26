@@ -12,7 +12,7 @@ export interface RadarViewProps {
   items: CivitaiModel[];
   loading: boolean;
   error: string | null;
-  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string) => void;
+  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string, page?: number) => void;
 }
 
 function SkeletonCard() {
@@ -42,6 +42,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [blacklistInput, setBlacklistInput] = React.useState("");
   const [query, setQuery] = React.useState("");
   const lastFiredRef = React.useRef<string>("");
+  const [page, setPage] = React.useState<number>(1);
 
   React.useEffect(() => {
     try {
@@ -86,7 +87,8 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     const h = setTimeout(() => {
       const q = query.trim();
       if (q.length >= 3 && q !== lastFiredRef.current) {
-        onScan(period, sort, q);
+        setPage(1);
+        onScan(period, sort, q, 1);
         lastFiredRef.current = q;
       }
     }, 800);
@@ -167,14 +169,15 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
       trigger_words: deriveTriggerWords(m),
     }));
     try {
-      // Leer batch_count desde preset global si existe
+      // Leer preset global (batch_count y prompts)
       let jobCount: number | undefined = undefined;
+      let preset: Record<string, unknown> | null = null;
       try {
         const raw = localStorage.getItem("planner_preset_global");
         if (raw) {
-          const preset = JSON.parse(raw);
-          if (preset && typeof preset.batch_count === "number" && preset.batch_count > 0) {
-            jobCount = preset.batch_count;
+          preset = JSON.parse(raw) as Record<string, unknown>;
+          if (typeof preset.batch_count === "number" && (preset.batch_count as number) > 0) {
+            jobCount = preset.batch_count as number;
           }
         }
       } catch {}
@@ -184,8 +187,11 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
       try {
         const contextByCharacter: Record<string, unknown> = {};
         for (const d of res.drafts || []) {
+          const pos = typeof preset?.positivePrompt === "string" && (preset!.positivePrompt as string).trim().length > 0
+            ? (preset!.positivePrompt as string)
+            : d.base_prompt;
           contextByCharacter[d.character] = {
-            base_prompt: d.base_prompt,
+            base_prompt: pos,
             recommended_params: d.recommended_params,
             reference_images: d.reference_images,
           };
@@ -256,7 +262,7 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
             onClick={() => {
               const q = query.trim();
               const qArg = q.length >= 3 ? q : undefined;
-              onScan(period, sort, qArg);
+              onScan(period, sort, qArg, page);
               if (qArg) lastFiredRef.current = qArg;
             }}
             disabled={loading}
@@ -277,6 +283,34 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
             Filtros Negativos
           </button>
         </div>
+      </div>
+      {/* Paginación */}
+      <div className="mt-3 flex items-center justify-end gap-2">
+        <button
+          onClick={() => {
+            const next = Math.max(1, page - 1);
+            setPage(next);
+            const qArg = query.trim().length >= 3 ? query.trim() : undefined;
+            onScan(period, sort, qArg, next);
+          }}
+          disabled={loading || page <= 1}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-slate-800 disabled:opacity-60"
+        >
+          ← Anterior
+        </button>
+        <span className="text-xs text-zinc-400">Página {page}</span>
+        <button
+          onClick={() => {
+            const next = page + 1;
+            setPage(next);
+            const qArg = query.trim().length >= 3 ? query.trim() : undefined;
+            onScan(period, sort, qArg, next);
+          }}
+          disabled={loading}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-slate-800 disabled:opacity-60"
+        >
+          Siguiente →
+        </button>
       </div>
       {error && <p className="-mt-4 mb-4 text-xs text-red-400">{error}</p>}
 

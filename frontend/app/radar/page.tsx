@@ -7,11 +7,24 @@ export default function RadarPage() {
   const [items, setItems] = React.useState<CivitaiModel[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const dedupById = (arr: CivitaiModel[]): CivitaiModel[] => {
+    const seen = new Set<number>();
+    const out: CivitaiModel[] = [];
+    for (const it of arr) {
+      const id = Number(it?.id ?? -1);
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(it);
+      }
+    }
+    return out;
+  };
 
   const onScan = async (
     period: "Day" | "Week" | "Month" = "Week",
     sort: "Rating" | "Downloads" = "Rating",
-    query?: string
+    query?: string,
+    page: number = 1
   ) => {
     setLoading(true);
     setError(null);
@@ -25,11 +38,16 @@ export default function RadarPage() {
       if (query && query.trim().length > 0) {
         u.searchParams.set("query", query.trim());
       }
-      const res = await fetch(u.toString());
+      u.searchParams.set("page", String(Math.max(1, page)));
+      const res = await fetch(u.toString(), { cache: 'no-store' });
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
-      setItems(list);
+      if (page > 1) {
+        setItems((prev) => dedupById([...prev, ...list]));
+      } else {
+        setItems(list);
+      }
       try { localStorage.setItem('radar_cache', JSON.stringify(list)); } catch {}
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
