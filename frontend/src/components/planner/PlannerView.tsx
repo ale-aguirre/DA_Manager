@@ -402,8 +402,8 @@ export default function PlannerView() {
   const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
   const [checkpointVersion, setCheckpointVersion] = React.useState(0);
   const [localLoras, setLocalLoras] = React.useState<string[]>([]);
-  const [lorasPath, setLorasPath] = React.useState<string | null>(null);
-  const [loraQuery, setLoraQuery] = React.useState<string>("");
+  const [ _lorasPath, setLorasPath ] = React.useState<string | null>(null);
+  const [ _loraQuery, _setLoraQuery ] = React.useState<string>("");
   const [vaes, setVaes] = React.useState<string[]>([]);
   const [reforgeUpscalers, setReforgeUpscalers] = React.useState<string[]>([]);
   const [refreshingUpscalers, setRefreshingUpscalers] = React.useState(false);
@@ -416,10 +416,10 @@ export default function PlannerView() {
   const [paramTab, setParamTab] = React.useState<
     "generation" | "hires" | "adetailer"
   >("generation");
-  const [rightTab, setRightTab] = React.useState<"personajes" | "helpers">(
+  const [ _rightTab, _setRightTab ] = React.useState<"personajes" | "helpers">(
     "personajes"
   );
-  const [refreshingCheckpoints, setRefreshingCheckpoints] =
+  const [ _refreshingCheckpoints, setRefreshingCheckpoints ] =
     React.useState(false);
   const [dryRunOpen, setDryRunOpen] = React.useState(false);
   const [dryRunPayload, setDryRunPayload] = React.useState<string>("");
@@ -483,8 +483,8 @@ export default function PlannerView() {
         const parsed = JSON.parse(raw) as PlannerJob[];
         setJobs(parsed);
       }
-    } catch (e) {
-      console.error("Failed to load planner_jobs", e);
+    } catch {
+      console.error("Failed to load planner_jobs");
     }
   }, []);
 
@@ -793,18 +793,7 @@ export default function PlannerView() {
       }
     })();
   }, []);
-  const refreshLocalLoras = async () => {
-    try {
-      setLocalLoras([]);
-      const { files, path } = await getLocalLoras();
-      setLocalLoras(files);
-      setLorasPath(path || null);
-    } catch (e) {
-      console.warn("Refresh LoRAs falló", e);
-      setToast({ message: "❌ Error al actualizar LoRAs" });
-      setTimeout(() => setToast(null), 2500);
-    }
-  };
+  
 
   // Cargar lore por personaje desde localStorage
   React.useEffect(() => {
@@ -1104,7 +1093,6 @@ export default function PlannerView() {
     try {
       setLoading(true);
       setError(null);
-      const { postPlannerExecute } = await import("../../lib/api");
       // Cargar metadatos desde localStorage y normalizar claves
       let resourcesMeta: ResourceMeta[] = [];
       try {
@@ -1273,18 +1261,7 @@ export default function PlannerView() {
   
 
   // Controles globales
-  const toggleAllDetailsGlobal = () => {
-    if (!activeCharacter) return;
-    const indices = perCharacter[activeCharacter]?.indices || [];
-    setShowDetails((prev) => {
-      if (prev.size === indices.length) return new Set();
-      const s = new Set<number>();
-      for (const idx of indices) {
-        if (typeof idx === "number") s.add(idx);
-      }
-      return s;
-    });
-  };
+  
 
   
 

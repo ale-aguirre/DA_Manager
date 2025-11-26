@@ -134,7 +134,7 @@ export default function StudioView() {
         if (p >= 1) {
           if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
         }
-      } catch (_) {
+      } catch {
         // silent
       }
     }, 1000);
@@ -301,6 +301,7 @@ export default function StudioView() {
           <h3 className="font-medium mb-3">Session Gallery</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {sessionImages.map((item, idx) => (
+              /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 key={idx}
                 src={`data:image/png;base64,${item.b64}`}

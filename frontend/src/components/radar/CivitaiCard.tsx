@@ -1,6 +1,5 @@
 "use client";
 import React from "react";
-// eslint-disable-next-line @next/next/no-img-element
 import { ImageOff, Heart, Download, Calendar, ExternalLink, CheckCircle } from "lucide-react";
 import type { CivitaiModel, CivitaiImage } from "../../types/civitai";
 
@@ -123,6 +122,7 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
               onError={() => setVideoError(true)}
             />
           ) : imageUrl && !imageError ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={imageUrl}
               alt={model.name || "Civitai preview"}

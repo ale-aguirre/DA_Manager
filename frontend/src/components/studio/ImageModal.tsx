@@ -42,10 +42,10 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       setDescription(typeof parsed.description === "string" ? parsed.description : "");
       const tags = Array.isArray(parsed.tags) ? parsed.tags.join(", ") : (typeof parsed.tags === "string" ? parsed.tags : "");
       setTagsText(tags || "");
-    } catch (_) {
+    } catch {
       // ignore parse errors
     }
-  }, [image?.path]);
+  }, [image?.path, getFileKey]);
 
   // Persistencia automática si cambian campos
   useEffect(() => {
@@ -54,10 +54,10 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       if (!key) return;
       const payload = { title, description, tags: tagsText };
       localStorage.setItem(key, JSON.stringify(payload));
-    } catch (_) {
+    } catch {
       // ignore write errors
     }
-  }, [title, description, tagsText, image?.path]);
+  }, [title, description, tagsText, image?.path, getFileKey]);
 
   const generateInfo = async () => {
     setLoading(true);
@@ -87,7 +87,7 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
           const payload = { title: outTitle, description: outDesc, tags: outTags.join(", ") };
           localStorage.setItem(key, JSON.stringify(payload));
         }
-      } catch (_) {}
+      } catch {}
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg || "Error generando metadata");
@@ -137,6 +137,7 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
         <div className="flex flex-col md:flex-row">
           {/* Imagen grande */}
           <div className="md:w-1/2 p-4 border-b md:border-b-0 md:border-r border-slate-800">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={image.url ? image.url : `data:image/png;base64,${image.b64}`}
               alt="Imagen generada"
