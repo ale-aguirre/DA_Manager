@@ -1,4 +1,4 @@
-export const QUALITY_SET = new Set(["masterpiece", "best quality", "absurdres", "nsfw"]);
+export const QUALITY_SET = new Set(["masterpiece", "best quality", "amazing quality", "absurdres", "nsfw"]);
 
 export const DEFAULT_NEGATIVE_ANIME =
   "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name";
@@ -44,11 +44,29 @@ export function rebuildPromptWithTriplet(
     else core.push(t);
   }
   while (core.length < 3) core.push("");
-  if (nextTriplet.outfit !== undefined) core[core.length - 3] = nextTriplet.outfit as string;
-  if (nextTriplet.pose !== undefined) core[core.length - 2] = nextTriplet.pose as string;
-  if (nextTriplet.location !== undefined) core[core.length - 1] = nextTriplet.location as string;
-  const all = [...core, ...quality];
-  return all.join(", ");
+  const tail = core.slice(-3);
+  const prev = { outfit: tail[0], pose: tail[1], location: tail[2] };
+  const head = core
+    .slice(0, Math.max(0, core.length - 3))
+    .filter((t) => {
+      const low = t.toLowerCase();
+      const rmPrev =
+        low === String(prev.outfit || "").toLowerCase() ||
+        low === String(prev.pose || "").toLowerCase() ||
+        low === String(prev.location || "").toLowerCase();
+      const rmNext =
+        low === String(nextTriplet.outfit || "").toLowerCase() ||
+        low === String(nextTriplet.pose || "").toLowerCase() ||
+        low === String(nextTriplet.location || "").toLowerCase();
+      return !(rmPrev || rmNext);
+    });
+  const outfit =
+    nextTriplet.outfit !== undefined ? (nextTriplet.outfit as string) : prev.outfit;
+  const pose = nextTriplet.pose !== undefined ? (nextTriplet.pose as string) : prev.pose;
+  const location =
+    nextTriplet.location !== undefined ? (nextTriplet.location as string) : prev.location;
+  const nextCore = [...head, outfit, pose, location];
+  return [...nextCore, ...quality].join(", ");
 }
 
 export function extractExtras(prompt: string): {
@@ -193,6 +211,7 @@ export function rebuildPromptWithExtras(
     "half down",
   ];
   const tail = core.slice(-3);
+  const current = extractExtras(original);
   const head = core.slice(0, Math.max(0, core.length - 3)).filter((t) => {
     const low = t.toLowerCase();
     const isLight = [
@@ -227,7 +246,17 @@ export function rebuildPromptWithExtras(
     ].some((k) => low.includes(k));
     const isExpr = EXPRESSION_HINTS.includes(low);
     const isHair = HAIRSTYLE_HINTS.includes(low);
-    return !(isLight || isCam || isExpr || isHair);
+    const matchCurrent =
+      low === String(current.lighting || "").toLowerCase() ||
+      low === String(current.camera || "").toLowerCase() ||
+      low === String(current.expression || "").toLowerCase() ||
+      low === String(current.hairstyle || "").toLowerCase();
+    const matchNext =
+      low === String(extras.lighting || "").toLowerCase() ||
+      low === String(extras.camera || "").toLowerCase() ||
+      low === String(extras.expression || "").toLowerCase() ||
+      low === String(extras.hairstyle || "").toLowerCase();
+    return !(isLight || isCam || isExpr || isHair || matchCurrent || matchNext);
   });
   const pre: string[] = [];
   if (extras.camera) pre.push(extras.camera);
@@ -290,7 +319,7 @@ export function mergeNegative(preset?: string, neg?: string): string {
 
 // Lógica técnica (checkpoint/refresh) trasladada a helpers
 import { postReforgeSetCheckpoint, postReforgeRefresh } from "../lib/api";
-import { getReforgeUpscalers, getReforgeVAEs, getReforgeCheckpoints } from "../lib/api";
+import { getReforgeUpscalers, getReforgeVAEs, getReforgeCheckpoints, getReforgeOptions } from "../lib/api";
 
 export async function handleSetCheckpoint(
   title: string,
@@ -404,4 +433,102 @@ export async function refreshCheckpointsHelper(
     console.warn("Refresh checkpoints falló", e);
     setToastMessage("❌ Error al actualizar checkpoints");
   }
+}
+
+export async function initTechBootstrap(
+  setReforgeOptionsState: (opts: { current_vae: string; current_clip_skip: number } | null) => void,
+  setVaes: (names: string[]) => void,
+  setReforgeUpscalers: (names: string[]) => void,
+  setCheckpoints: (names: string[]) => void,
+  activeCharacter: string | null,
+  techConfigByCharacter: Record<string, { checkpoint?: string }>,
+  setTechConfig: (character: string, patch: { checkpoint?: string }) => void,
+  globalCheckpoint: string | null
+) {
+  try {
+    const [opts, upNames, vaeNames, cpsRaw] = await Promise.all([
+      getReforgeOptions().catch(() => ({ current_vae: "Automatic", current_clip_skip: 1 })),
+      getReforgeUpscalers().catch(() => []),
+      getReforgeVAEs().catch(() => []),
+      getReforgeCheckpoints().catch(() => []),
+    ]);
+    setReforgeOptionsState(opts || null);
+    const upList = Array.isArray(upNames) ? Array.from(new Set([...upNames, "Latent"])) : ["Latent"];
+    setReforgeUpscalers(upList);
+    setVaes(Array.isArray(vaeNames) ? vaeNames : []);
+    const cps: string[] = Array.isArray(cpsRaw) ? (cpsRaw as string[]) : [];
+    setCheckpoints(cps);
+    if (activeCharacter) {
+      const current = techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
+      const fallback = globalCheckpoint && cps.includes(globalCheckpoint)
+        ? globalCheckpoint
+        : (cps.length > 0 ? cps[0] : "");
+      if (!current && fallback) {
+        setTechConfig(activeCharacter, { checkpoint: fallback });
+        try { await postReforgeSetCheckpoint(fallback); } catch {}
+      }
+    }
+  } catch (e) {
+    console.warn("initTechBootstrap error", e);
+  }
+}
+
+// Puro: computa listas normalizadas y sugerencia de checkpoint sin efectos
+export function computeTechBootstrap(params: {
+  activeCharacter: string | null;
+  techConfigByCharacter: Record<string, { checkpoint?: string }>;
+  globalCheckpoint: string | null;
+  options?: { current_vae: string; current_clip_skip: number } | null;
+  upscalers?: string[];
+  vaes?: string[];
+  checkpoints?: string[];
+}) {
+  const opts = params.options || null;
+  const upList = Array.isArray(params.upscalers) ? Array.from(new Set([...(params.upscalers || []), "Latent"])) : ["Latent"];
+  const vaeList = Array.isArray(params.vaes) ? params.vaes! : [];
+  const cps: string[] = Array.isArray(params.checkpoints) ? (params.checkpoints as string[]) : [];
+  let suggestedCheckpoint: string | undefined;
+  if (params.activeCharacter) {
+    const current = params.techConfigByCharacter[params.activeCharacter]?.checkpoint ?? "";
+    const fallback = params.globalCheckpoint && cps.includes(params.globalCheckpoint)
+      ? params.globalCheckpoint
+      : (cps.length > 0 ? cps[0] : "");
+    if (!current && fallback) suggestedCheckpoint = fallback;
+  }
+  return {
+    options: opts,
+    upscalers: upList,
+    vaes: vaeList,
+    checkpoints: cps,
+    suggestedCheckpoint,
+  };
+}
+
+// Puro: arma payload de draft según metadatos y configuración
+export function buildDraftPayload(input: {
+  metaByCharacter: Record<string, { trigger_words?: string[] }>;
+  activeCharacter: string | null;
+  techConfigByCharacter: Record<string, { batch_count?: number }>;
+  allowExtra: boolean;
+}): { items: { character_name: string; trigger_words: string[]; batch_count?: number }[]; jobCount: number; allowExtraLoras: boolean } {
+  const characterNames = Object.keys(input.metaByCharacter);
+  const baseCharacter = input.activeCharacter || characterNames[0] || null;
+  const count = baseCharacter ? (input.techConfigByCharacter[baseCharacter]?.batch_count ?? 10) : 10;
+  const items = characterNames.map((name) => ({
+    character_name: name,
+    trigger_words: input.metaByCharacter[name]?.trigger_words || [name],
+    batch_count: count,
+  }));
+  return { items, jobCount: count, allowExtraLoras: input.allowExtra };
+}
+
+// Puro: construye prompt final a partir de triplet y extras
+export function constructFinalPrompt(core: string[], extras: { camera?: string; expression?: string; hairstyle?: string; lighting?: string }, quality: string[] = []) {
+  const pre: string[] = [];
+  if (extras.camera) pre.push(extras.camera);
+  if (extras.expression) pre.push(extras.expression);
+  if (extras.hairstyle) pre.push(extras.hairstyle);
+  if (extras.lighting) pre.push(extras.lighting);
+  const nextCore = [...pre, ...core];
+  return [...nextCore, ...quality].join(', ');
 }

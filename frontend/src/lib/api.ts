@@ -158,6 +158,8 @@ export async function getReforgeProgress(): Promise<ReforgeProgress> {
   return res.json();
 }
 
+// Throttle/memoize checkpoints to avoid backend spam
+let _ckptCache: { data: string[]; ts: number } | null = null;
 export async function getLocalLoras(): Promise<{ files: string[]; path?: string }> {
   const res = await fetch(`${BASE_URL}/local/loras`, { cache: "no-store" });
   if (!res.ok) {
@@ -241,13 +243,17 @@ export async function postPlannerAnalyze(character_name: string, tags: string[] 
 }
 
 export async function getReforgeCheckpoints(): Promise<string[]> {
+  const now = Date.now();
+  if (_ckptCache && now - _ckptCache.ts < 4000) return _ckptCache.data;
   const res = await fetch(`${BASE_URL}/reforge/checkpoints`, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`ReForge checkpoints failed (${res.status}): ${text}`);
   }
   const data = await res.json();
-  return Array.isArray(data?.titles) ? data.titles : [];
+  const list = Array.isArray(data?.titles) ? data.titles : [];
+  _ckptCache = { data: list, ts: now };
+  return list;
 }
 
 export async function postReforgeRefresh(): Promise<{ status?: string } | Record<string, unknown>> {

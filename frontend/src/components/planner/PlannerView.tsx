@@ -1,23 +1,6 @@
 "use client";
 import React from "react";
-import {
-  Wand2,
-  Trash2,
-  Play,
-  Radar,
-  Search,
-  Cog,
-  Camera,
-  ChevronDown,
-  ChevronUp,
-  Bot,
-  Loader2,
-  User,
-  Shirt,
-  MapPin,
-  Zap,
-  Shuffle,
-} from "lucide-react";
+import { Trash2, Play, Radar, Search, Cog } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
 import {
   magicFixPrompt,
@@ -32,19 +15,18 @@ import {
   getReforgeUpscalers,
 } from "../../lib/api";
 import { useRouter } from "next/navigation";
-import type { ResourceMeta } from "../../lib/api";
-import HiresSettings from "./HiresSettings";
+import type { ResourceMeta } from "../../types/planner";
 import PromptsEditor from "./PromptsEditor";
 import TechnicalModelPanel from "./TechnicalModelPanel";
+import ProductionQueue from "./ProductionQueue";
+import ControlPanel from "./ControlPanel";
 import {
   QUALITY_SET,
-  DEFAULT_NEGATIVE_ANIME,
   splitPrompt,
   extractTriplet,
   extractExtras,
   rebuildPromptWithExtras,
   rebuildPromptWithTriplet,
-  getIntensity,
   mergePositive,
   mergeNegative,
   handleSetCheckpoint,
@@ -161,11 +143,109 @@ export default function PlannerView() {
   const [paramTab, setParamTab] = React.useState<
     "generation" | "hires" | "adetailer"
   >("generation");
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem("planner_param_tab");
+      if (raw === "generation" || raw === "hires" || raw === "adetailer") {
+        setParamTab(raw as "generation" | "hires" | "adetailer");
+      }
+    } catch {}
+  }, []);
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("planner_param_tab", paramTab);
+    } catch {}
+  }, [paramTab]);
+
+  const onRegenerateDrafts = async () => {
+    const characterNames = Object.keys(metaByCharacter);
+    if (characterNames.length === 0) return;
+    const count =
+      techConfigByCharacter[activeCharacter || characterNames[0]]
+        ?.batch_count ?? 10;
+    const allowExtra =
+      allowExtraLorasByCharacter[activeCharacter || characterNames[0]] ?? true;
+    const payload = characterNames.map((name) => ({
+      character_name: name,
+      trigger_words: metaByCharacter[name]?.trigger_words || [name],
+      batch_count: count,
+    }));
+    try {
+      setIsRegenerating(true);
+      const res = await postPlannerDraft(payload, count, allowExtra);
+      setJobs((prev) => {
+        const blocked = new Set(payload.map((p) => p.character_name));
+        const others = prev.filter((j) => !blocked.has(j.character_name));
+        const next = [...others, ...res.jobs];
+        try {
+          localStorage.setItem("planner_jobs", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+      try {
+        const draftsList: unknown[] = Array.isArray(res.drafts)
+          ? (res.drafts as unknown[])
+          : [];
+        setPlannerContext((prev) => {
+          const next = { ...prev } as typeof prev;
+          draftsList.forEach((d) => {
+            const item = d as {
+              character?: string;
+              base_prompt?: string;
+              recommended_params?: {
+                cfg: number;
+                steps: number;
+                sampler: string;
+              };
+              reference_images?: Array<{
+                url: string;
+                meta: Record<string, unknown>;
+              }>;
+            };
+            const key = item.character;
+            if (key) {
+              next[key] = {
+                base_prompt: item.base_prompt,
+                recommended_params: item.recommended_params,
+                reference_images: item.reference_images,
+              } as {
+                base_prompt?: string;
+                recommended_params?: {
+                  cfg: number;
+                  steps: number;
+                  sampler: string;
+                };
+                reference_images?: Array<{
+                  url: string;
+                  meta: Record<string, unknown>;
+                }>;
+              };
+            }
+          });
+          try {
+            localStorage.setItem("planner_context", JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      } catch {
+        void 0;
+      }
+    } catch (e) {
+      console.error("Regeneración fallida", e);
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
 
   const [dryRunOpen, setDryRunOpen] = React.useState(false);
   const [dryRunPayload, setDryRunPayload] = React.useState<string>("");
   const [presetFiles, setPresetFiles] = React.useState<string[]>([]);
-  const [openPresetMenu, setOpenPresetMenu] = React.useState<null | "pos" | "neg" | "tags">(null);
+  const [openPresetMenu, setOpenPresetMenu] = React.useState<
+    null | "pos" | "neg"
+  >(null);
+  const [savePresetKind, setSavePresetKind] = React.useState<null | "pos" | "neg">(null);
+  const [savePresetName, setSavePresetName] = React.useState("");
+  const [savingPreset, setSavingPreset] = React.useState(false);
   const setTechConfig = (
     character: string | null,
     partial: Partial<{
@@ -226,6 +306,14 @@ export default function PlannerView() {
     }
   };
 
+  const stripLoraTags = (s: string): string => {
+    return (s || "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && !/^<lora:[^>]+>$/i.test(t))
+      .join(", ");
+  };
+
   React.useEffect(() => {
     // Abrir prompt por defecto para todos los jobs existentes
     const s = new Set<number>();
@@ -277,7 +365,7 @@ export default function PlannerView() {
         typeof preset.negativePrompt === "string" &&
         preset.negativePrompt.trim()
           ? preset.negativePrompt.trim()
-          : DEFAULT_NEGATIVE_ANIME;
+          : "bad quality, worst quality, worst detail, sketch, censor";
       patchTech.negativePrompt = presetNeg;
     }
     if (typeof tech.steps !== "number") {
@@ -345,7 +433,7 @@ export default function PlannerView() {
             ...(prev[activeCharacter] || {
               hiresFix: true,
               denoising: 0.35,
-              outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
+              outputPath: `OUTPUTS_DIR/{Character}/`,
             }),
             denoising: nextDenoise,
           },
@@ -394,34 +482,54 @@ export default function PlannerView() {
     }
   }, []);
 
-  // Cargar opciones actuales de ReForge
+  // Carga inicial técnica: sólo una vez
   React.useEffect(() => {
     (async () => {
       try {
-        const [opts, upNames, vaeNames] = await Promise.all([
-          getReforgeOptions().catch(() => ({
-            current_vae: "Automatic",
-            current_clip_skip: 1,
-          })),
+        const [opts, upNames, vaeNames, cps] = await Promise.all([
+          getReforgeOptions().catch(() => ({ current_vae: "Automatic", current_clip_skip: 1 })),
           getReforgeUpscalers().catch(() => []),
           getReforgeVAEs().catch(() => []),
+          getReforgeCheckpoints().catch(() => []),
         ]);
-        setReforgeOptionsState(opts || null);
-        {
-          const list = Array.isArray(upNames)
-            ? Array.from(new Set([...upNames, "Latent"]))
-            : ["Latent"];
-          setReforgeUpscalers(list);
-        }
-        {
-          const list = Array.isArray(vaeNames) ? vaeNames : [];
-          setVaes(list);
-        }
+        const { computeTechBootstrap } = await import("../../helpers/planner");
+        const computed = computeTechBootstrap({
+          activeCharacter: null,
+          techConfigByCharacter,
+          globalCheckpoint: null,
+          options: opts || null,
+          upscalers: Array.isArray(upNames) ? upNames : [],
+          vaes: Array.isArray(vaeNames) ? vaeNames : [],
+          checkpoints: Array.isArray(cps) ? cps : [],
+        });
+        setReforgeOptionsState(computed.options);
+        setReforgeUpscalers(computed.upscalers);
+        setVaes(computed.vaes);
+        setCheckpoints(computed.checkpoints);
       } catch (e) {
-        console.warn("Error cargando opciones/upscalers", e);
+        console.warn("Bootstrap técnico falló", e);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Autoselección de checkpoint cuando cambian personaje o preferencias globales
+  const autoselectOnceRef = React.useRef<Record<string, boolean>>({});
+  React.useEffect(() => {
+    if (!activeCharacter) return;
+    if (autoselectOnceRef.current[activeCharacter]) return;
+    const current = techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
+    if (current) return;
+    const fallback =
+      (globalCheckpoint && checkpoints.includes(globalCheckpoint))
+        ? globalCheckpoint
+        : (checkpoints.length > 0 ? checkpoints[0] : "");
+    if (!fallback) return;
+    setTechConfig(activeCharacter, { checkpoint: fallback });
+    (async () => { try { await postReforgeSetCheckpoint(fallback); } catch {} })();
+    autoselectOnceRef.current[activeCharacter] = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCharacter, globalCheckpoint, checkpoints]);
 
   const refreshUpscalers = async () =>
     refreshUpscalersHelper(
@@ -472,37 +580,6 @@ export default function PlannerView() {
     })();
   }, []);
 
-  React.useEffect(() => {
-    // Cargar checkpoints disponibles
-    (async () => {
-      try {
-        const cps = await getReforgeCheckpoints();
-        setCheckpoints(cps);
-        if (activeCharacter) {
-          const current =
-            techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
-          const fallback =
-            globalCheckpoint && cps.includes(globalCheckpoint)
-              ? globalCheckpoint
-              : cps && cps.length > 0
-              ? cps[0]
-              : "";
-          if (!current && fallback) {
-            setTechConfig(activeCharacter, { checkpoint: fallback });
-            try {
-              await postReforgeSetCheckpoint(fallback);
-            } catch {
-              void 0;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("No se pudieron cargar checkpoints:", e);
-        setToast({ message: "❌ Error: no se pudieron cargar checkpoints" });
-        setTimeout(() => setToast(null), 2500);
-      }
-    })();
-  }, [activeCharacter, globalCheckpoint, techConfigByCharacter]);
   const refreshCheckpoints = async () =>
     refreshCheckpointsHelper(
       activeCharacter ?? null,
@@ -627,42 +704,7 @@ export default function PlannerView() {
 
   // Slider visual personalizado (barra gris con relleno azul). No usa input range.
   // Calcula porcentaje y permite clic para ajustar valor. Reusa para Steps, CFG, Denoise, Hires Steps.
-  const SliderBar = ({
-    value,
-    min,
-    max,
-    step = 1,
-    onChange,
-  }: {
-    value: number;
-    min: number;
-    max: number;
-    step?: number;
-    onChange: (v: number) => void;
-  }) => {
-    const pct = Math.max(
-      0,
-      Math.min(100, ((value - min) / Math.max(1, max - min)) * 100)
-    );
-    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const p = Math.max(0, Math.min(1, x / rect.width));
-      const raw = min + p * (max - min);
-      // Ajuste por step (soporta decimales)
-      const scaled = Math.round(raw / step) * step;
-      const fixed = Number(scaled.toFixed(2));
-      onChange(Math.max(min, Math.min(max, fixed)));
-    };
-    return (
-      <div
-        className="mt-2 w-full h-4 bg-slate-700 rounded cursor-pointer"
-        onClick={handleClick}
-      >
-        <div style={{ width: `${pct}%` }} className="h-4 bg-blue-600 rounded" />
-      </div>
-    );
-  };
+  
 
   const magicFix = async (idx: number) => {
     try {
@@ -866,7 +908,7 @@ export default function PlannerView() {
               .replace(/\s+/g, "_")
               .replace(/[^a-z0-9_\-]/g, "");
           const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
-          const qualityEnd = "masterpiece, best quality, absurdres";
+          const qualityEnd = "masterpiece, best quality, amazing quality";
           let trigList: string[] = [];
           if (!base || base.trim().length === 0) {
             if (cache[j.character_name]) {
@@ -922,7 +964,7 @@ export default function PlannerView() {
           const conf = configByCharacter[character] ?? {
             hiresFix: true,
             denoising: 0.35,
-            outputPath: `OUTPUTS_DIR/${character}/`,
+            outputPath: `OUTPUTS_DIR/{Character}/`,
           };
           const rec = plannerContext[character]?.recommended_params;
           const tech = techConfigByCharacter[character] || {};
@@ -1028,68 +1070,7 @@ export default function PlannerView() {
     if (typeof idx === "number") deleteRow(idx);
   };
 
-  const IntensitySelector: React.FC<{
-    value: "SFW" | "ECCHI" | "NSFW";
-    onChange: (v: "SFW" | "ECCHI" | "NSFW") => void;
-    stop?: (e: React.MouseEvent) => void;
-  }> = ({ value, onChange, stop }) => {
-    const [open, setOpen] = React.useState(false);
-    const styles: Record<
-      "SFW" | "ECCHI" | "NSFW",
-      { trigger: string; text: string; hover: string }
-    > = {
-      SFW: {
-        trigger: "bg-green-600 text-white border-green-700",
-        text: "text-green-400",
-        hover: "hover:bg-green-700/30",
-      },
-      ECCHI: {
-        trigger: "bg-yellow-500 text-black border-yellow-600",
-        text: "text-yellow-400",
-        hover: "hover:bg-yellow-600/30",
-      },
-      NSFW: {
-        trigger: "bg-red-600 text-white border-red-700",
-        text: "text-red-400",
-        hover: "hover:bg-red-700/30",
-      },
-    };
-    const st = styles[value];
-    return (
-      <div className="relative" onClick={(e) => (stop ? stop(e) : undefined)}>
-        <button
-          type="button"
-          className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs border ${st.trigger}`}
-          onClick={() => setOpen((v) => !v)}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-        >
-          {value}
-          <ChevronDown className="h-3 w-3" aria-hidden />
-        </button>
-        {open && (
-          <div
-            className="absolute right-0 z-20 mt-1 w-28 rounded border border-slate-700 bg-slate-900 shadow-lg"
-            role="listbox"
-          >
-            {(["SFW", "ECCHI", "NSFW"] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                className={`block w-full text-left px-2 py-1 text-xs ${styles[opt].text} ${styles[opt].hover}`}
-                onClick={() => {
-                  onChange(opt);
-                  setOpen(false);
-                }}
-              >
-                {opt}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
+  
 
   const setIntensity = (idx: number, nextLabel: "SFW" | "ECCHI" | "NSFW") => {
     // Remover tags de rating existentes y aplicar nuevos según la intensidad
@@ -1292,14 +1273,22 @@ export default function PlannerView() {
                         presetNeg = p.negativePrompt as string;
                     }
                   } catch {}
-                  const finalPrompt =
-                    base && base.trim().length > 0
-                      ? mergePositive(presetPos, base.trim(), bodyPrompt)
-                      : mergePositive(
-                          presetPos,
-                          `${loraTag}, ${trig}`,
-                          `${bodyPrompt}, ${qualityEnd}`
-                        );
+                  const charKey = sanitize(j.character_name);
+                  const stripCharLora = (s?: string) => {
+                    const src = String(s || "");
+                    return src
+                      .split(",")
+                      .map((t) => t.trim())
+                      .filter((t) => {
+                        const low = t.toLowerCase();
+                        if (low.startsWith(`<lora:${charKey.toLowerCase()}`)) return false;
+                        return true;
+                      })
+                      .join(", ");
+                  };
+                  const cleanedPos = stripCharLora(presetPos);
+                  const coreBody = `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
+                  const finalPrompt = mergePositive(cleanedPos, base?.trim() || "", coreBody);
                   preparedJobs.push({
                     ...j,
                     prompt: finalPrompt,
@@ -1316,7 +1305,7 @@ export default function PlannerView() {
                     const conf = configByCharacter[character] ?? {
                       hiresFix: true,
                       denoising: 0.35,
-                      outputPath: `OUTPUTS_DIR/${character}/`,
+                      outputPath: `OUTPUTS_DIR/{Character}/`,
                     };
                     const rec = plannerContext[character]?.recommended_params;
                     const tech = techConfigByCharacter[character] || {};
@@ -1406,7 +1395,7 @@ export default function PlannerView() {
 
       {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
 
-      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
+      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-visible">
         <div className="p-2">
           <div className="mb-3">
             <div className="section-title">
@@ -1425,12 +1414,23 @@ export default function PlannerView() {
             checkpointVersion={checkpointVersion}
             techConfigByCharacter={techConfigByCharacter}
             onSetCheckpoint={async (title) =>
-              handleSetCheckpoint(title, activeCharacter!, setTechConfig, setGlobalCheckpoint)
+              handleSetCheckpoint(
+                title,
+                activeCharacter!,
+                setTechConfig,
+                setGlobalCheckpoint
+              )
             }
             onSetVae={(value) => setTechConfig(activeCharacter, { vae: value })}
-            onSetClipSkip={(value) => setTechConfig(activeCharacter, { clipSkip: value })}
+            onSetClipSkip={(value) =>
+              setTechConfig(activeCharacter, { clipSkip: value })
+            }
             onRefreshAll={async () =>
-              handleRefreshTech(activeCharacter, refreshVaes, refreshCheckpoints)
+              handleRefreshTech(
+                activeCharacter,
+                refreshVaes,
+                refreshCheckpoints
+              )
             }
           />
         </div>
@@ -1438,7 +1438,7 @@ export default function PlannerView() {
 
       {/* Configuración Global removida: la lógica de defaults se unifica dentro de Prompt Positivo/Negativo */}
 
-      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
+      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-visible">
         <div className="p-3">
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-9">
@@ -1471,81 +1471,130 @@ export default function PlannerView() {
               />
             </div>
             <div className="col-span-3">
-                <button
-                  onClick={startProduction}
-                  disabled={jobs.length === 0}
-                  className="w-full h-32 rounded-lg bg-green-600 text-white text-lg font-semibold hover:bg-green-500 disabled:opacity-60"
-                >
-                  Generar
-                </button>
-              <div className="mt-2 grid grid-cols-3 gap-2">
+              <button
+                onClick={startProduction}
+                disabled={jobs.length === 0}
+                className="w-full h-32 rounded-lg bg-green-600 text-white text-lg font-semibold hover:bg-green-500 disabled:opacity-60"
+              >
+                Generar
+              </button>
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
                   onClick={() => {
-                    try {
-                      localStorage.setItem(
-                        "planner_jobs",
-                        JSON.stringify(jobs)
-                      );
-                    } catch {
-                      void 0;
-                    }
+                    setSavePresetKind("pos");
+                    setSavePresetName("");
                   }}
-                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
                 >
-                  Guardar
+                  Guardar Positivo
                 </button>
                 <button
-                  onClick={() => deleteCharacter(activeCharacter!)}
-                  className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
+                  onClick={() => {
+                    setSavePresetKind("neg");
+                    setSavePresetName("");
+                  }}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
                 >
-                  Borrar
+                  Guardar Negativo
                 </button>
-                <button className="hidden" />
               </div>
-              <div className="mt-2 grid grid-cols-3 gap-2 relative">
-                <button
-                  onClick={async () => {
-                    await refreshPresets();
-                    setOpenPresetMenu(openPresetMenu === "pos" ? null : "pos");
-                  }}
-                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                >
-                  Cargar Positivo
-                </button>
-                <button
-                  onClick={async () => {
-                    await refreshPresets();
-                    setOpenPresetMenu(openPresetMenu === "neg" ? null : "neg");
-                  }}
-                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                >
-                  Cargar Negativo
-                </button>
-                <button
-                  onClick={async () => {
-                    await refreshPresets();
-                    setOpenPresetMenu(openPresetMenu === "tags" ? null : "tags");
-                  }}
-                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                >
-                  Cargar Tags
-                </button>
-                {openPresetMenu && (
-                  <div className="absolute z-20 mt-1 w-64 rounded border border-slate-700 bg-slate-900 shadow-lg">
-                    {presetFiles.length === 0 ? (
-                      <div className="px-2 py-2 text-xs text-slate-300">Sin presets .txt</div>
-                    ) : (
-                      <ul className="max-h-48 overflow-auto">
-                        {presetFiles.map((f) => (
-                          <li key={f}>
-                            <button
-                              type="button"
-                              className="block w-full text-left px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-                              onClick={async () => {
-                                try {
-                                  const api = await import("../../lib/api");
-                                  const content = await api.getPresetContent(f);
-                                  if (openPresetMenu === "pos") {
+              {savePresetKind && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
+                  <div className="w-[420px] max-w-[90vw] rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
+                      <div className="text-sm font-medium text-slate-100">
+                        {savePresetKind === "pos" ? "Guardar Positivo" : "Guardar Negativo"}
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                        onClick={() => setSavePresetKind(null)}
+                      >
+                        Cerrar
+                      </button>
+                    </div>
+                    <div className="p-4 space-y-3">
+                      <label className="text-xs text-slate-300">Nombre del preset</label>
+                      <input
+                        type="text"
+                        value={savePresetName}
+                        onChange={(e) => setSavePresetName(e.target.value)}
+                        className="w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                          onClick={() => setSavePresetKind(null)}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-2 rounded-md border border-green-600 bg-green-600/20 px-2 py-1 text-xs text-green-100 hover:bg-green-600/30 disabled:opacity-60"
+                          disabled={savingPreset || !savePresetName.trim()}
+                          onClick={async () => {
+                            try {
+                              setSavingPreset(true);
+                              const api = await import("../../lib/api");
+                              const name = savePresetName.trim();
+                              let content = "";
+                              if (savePresetKind === "pos") {
+                                const base = plannerContext[activeCharacter!]?.base_prompt || "";
+                                content = stripLoraTags(base);
+                              } else {
+                                content = String(
+                                  techConfigByCharacter[activeCharacter!]?.negativePrompt || ""
+                                );
+                              }
+                              await api.postPresetSave(name, content);
+                              setToast({ message: `Preset guardado: ${name}` });
+                              setTimeout(() => setToast(null), 2500);
+                              setSavePresetKind(null);
+                              setSavePresetName("");
+                            } catch (e: unknown) {
+                              const msg = e instanceof Error ? e.message : String(e);
+                              setToast({ message: msg || "Error guardando preset" });
+                              setTimeout(() => setToast(null), 2500);
+                            } finally {
+                              setSavingPreset(false);
+                            }
+                          }}
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div className="relative w-full">
+                  <button
+                    onClick={async () => {
+                      await refreshPresets();
+                      setOpenPresetMenu(openPresetMenu === "pos" ? null : "pos");
+                    }}
+                    className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                  >
+                    Cargar Positivo
+                  </button>
+                  {openPresetMenu === "pos" && (
+                    <div className="absolute z-30 top-full mt-2 left-0 w-full rounded border border-slate-700 bg-slate-900 shadow-lg">
+                      {presetFiles.length === 0 ? (
+                        <div className="px-2 py-2 text-xs text-slate-300">Sin presets .txt</div>
+                      ) : (
+                        <ul className="max-h-48 overflow-auto">
+                          {presetFiles.map((f) => (
+                            <li key={f}>
+                              <button
+                                type="button"
+                                className="block w-full text-left px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                                onClick={async () => {
+                                  try {
+                                    const api = await import("../../lib/api");
+                                    let content = await api.getPresetContent(f);
+                                    content = stripLoraTags(content);
                                     setPlannerContext((prev) => {
                                       const before = prev[activeCharacter!] || {};
                                       const base = String(before.base_prompt || "");
@@ -1554,38 +1603,68 @@ export default function PlannerView() {
                                         ...prev,
                                         [activeCharacter!]: { ...before, base_prompt: nextBase },
                                       };
-                                      try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
+                                      try {
+                                        localStorage.setItem("planner_context", JSON.stringify(next));
+                                      } catch {}
                                       return next;
                                     });
-                                  } else if (openPresetMenu === "neg") {
+                                  } catch {}
+                                  setOpenPresetMenu(null);
+                                }}
+                              >
+                                {f}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="relative w-full">
+                  <button
+                    onClick={async () => {
+                      await refreshPresets();
+                      setOpenPresetMenu(openPresetMenu === "neg" ? null : "neg");
+                    }}
+                    className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                  >
+                    Cargar Negativo
+                  </button>
+                  {openPresetMenu === "neg" && (
+                    <div className="absolute z-30 top-full mt-2 left-0 w-full rounded border border-slate-700 bg-slate-900 shadow-lg">
+                      {presetFiles.length === 0 ? (
+                        <div className="px-2 py-2 text-xs text-slate-300">Sin presets .txt</div>
+                      ) : (
+                        <ul className="max-h-48 overflow-auto">
+                          {presetFiles.map((f) => (
+                            <li key={f}>
+                              <button
+                                type="button"
+                                className="block w-full text-left px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                                onClick={async () => {
+                                  try {
+                                    const api = await import("../../lib/api");
+                                    const content = await api.getPresetContent(f);
                                     setTechConfig(activeCharacter, {
-                                      negativePrompt: mergeNegative(content, techConfigByCharacter[activeCharacter!]?.negativePrompt || ""),
+                                      negativePrompt: mergeNegative(
+                                        content,
+                                        techConfigByCharacter[activeCharacter!]?.negativePrompt || ""
+                                      ),
                                     });
-                                  } else {
-                                    setPlannerContext((prev) => {
-                                      const before = prev[activeCharacter!] || {};
-                                      const base = String(before.base_prompt || "");
-                                      const nextBase = mergePositive("", base, content);
-                                      const next = {
-                                        ...prev,
-                                        [activeCharacter!]: { ...before, base_prompt: nextBase },
-                                      };
-                                      try { localStorage.setItem("planner_context", JSON.stringify(next)); } catch {}
-                                      return next;
-                                    });
-                                  }
-                                } catch {}
-                                setOpenPresetMenu(null);
-                              }}
-                            >
-                              {f}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
+                                  } catch {}
+                                  setOpenPresetMenu(null);
+                                }}
+                              >
+                                {f}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1606,601 +1685,37 @@ export default function PlannerView() {
                         <span>Panel de Configuración</span>
                       </div>
 
-                      <div className="mt-4">
-                        <div className="mb-2 flex items-center justify-between">
-                          <div className="text-xs uppercase tracking-wide text-slate-400 flex items-center gap-3">
-                            <EngineHealthIndicator />
-                          </div>
-                        </div>
-                        <div className="mb-3 flex items-center gap-2">
-                          <button
-                            onClick={() => setParamTab("generation")}
-                            className={`rounded-md px-3 py-1 text-xs border ${
-                              paramTab === "generation"
-                                ? "border-slate-600 bg-slate-800 text-slate-100"
-                                : "border-slate-700 bg-slate-900 text-slate-300"
-                            }`}
+                      <ControlPanel
+                        activeCharacter={activeCharacter!}
+                        paramTab={paramTab}
+                        setParamTab={setParamTab}
+                        techConfigByCharacter={techConfigByCharacter}
+                        configByCharacter={configByCharacter}
+                        plannerContext={plannerContext}
+                        setTechConfig={(character, partial) =>
+                          setTechConfig(character, partial)
+                        }
+                        setConfigByCharacter={
+                          setConfigByCharacter as React.Dispatch<
+                            React.SetStateAction<
+                              Record<
+                                string,
+                                {
+                                  denoising?: number;
+                                  hiresFix?: boolean;
+                                  outputPath?: string;
+                                }
+                              >
+                            >
                           >
-                            Generation
-                          </button>
-                          <button
-                            onClick={() => setParamTab("hires")}
-                            className={`rounded-md px-3 py-1 text-xs border ${
-                              paramTab === "hires"
-                                ? "border-slate-600 bg-slate-800 text-slate-100"
-                                : "border-slate-700 bg-slate-900 text-slate-300"
-                            }`}
-                          >
-                            Hires. Fix
-                          </button>
-                          <button
-                            onClick={() => setParamTab("adetailer")}
-                            className={`rounded-md px-3 py-1 text-xs border ${
-                              paramTab === "adetailer"
-                                ? "border-slate-600 bg-slate-800 text-slate-100"
-                                : "border-slate-700 bg-slate-900 text-slate-300"
-                            }`}
-                          >
-                            ADetailer
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
-                          {paramTab === "generation" ? (
-                            <div>
-                              <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
-                                <div className="col-span-2">
-                                  <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                      <label className="text-xs text-slate-300">
-                                        Sampling method
-                                      </label>
-                                      <select
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.sampler ??
-                                          plannerContext[activeCharacter]
-                                            ?.recommended_params?.sampler ??
-                                          "Euler a"
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            sampler: e.target.value,
-                                          })
-                                        }
-                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                      >
-                                        <option>Euler a</option>
-                                        <option>Euler</option>
-                                        <option>DDIM</option>
-                                        <option>DPM++ 2M Karras</option>
-                                      </select>
-                                    </div>
-                                    <div>
-                                      <label className="text-xs text-slate-300">
-                                        Schedule type
-                                      </label>
-                                      <select
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.schedulerType ?? "Automatic"
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            schedulerType: e.target.value,
-                                          })
-                                        }
-                                        className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                      >
-                                        <option>Automatic</option>
-                                        <option>Karras</option>
-                                        <option>Default</option>
-                                      </select>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div>
-                                  <label className="text-xs text-slate-300">
-                                    Steps
-                                  </label>
-                                  <div className="mt-2 flex items-center gap-2">
-                                    <div className="flex-1">
-                                      {SliderBar({
-                                        value:
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.steps ??
-                                          plannerContext[activeCharacter]
-                                            ?.recommended_params?.steps ??
-                                          30,
-                                        min: 1,
-                                        max: 60,
-                                        step: 1,
-                                        onChange: (v) =>
-                                          setTechConfig(activeCharacter, {
-                                            steps: v,
-                                          }),
-                                      })}
-                                    </div>
-                                    <input
-                                      type="number"
-                                      value={
-                                        techConfigByCharacter[activeCharacter]
-                                          ?.steps ??
-                                        plannerContext[activeCharacter]
-                                          ?.recommended_params?.steps ??
-                                        30
-                                      }
-                                      onChange={(e) =>
-                                        setTechConfig(activeCharacter, {
-                                          steps: Number(e.target.value),
-                                        })
-                                      }
-                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <label className="text-xs text-slate-300">
-                                    CFG
-                                  </label>
-                                  <div className="mt-2 flex items-center gap-2">
-                                    <div className="flex-1">
-                                      {SliderBar({
-                                        value:
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.cfg ??
-                                          plannerContext[activeCharacter]
-                                            ?.recommended_params?.cfg ??
-                                          7,
-                                        min: 1,
-                                        max: 20,
-                                        step: 0.5,
-                                        onChange: (v) =>
-                                          setTechConfig(activeCharacter, {
-                                            cfg: v,
-                                          }),
-                                      })}
-                                    </div>
-                                    <input
-                                      type="number"
-                                      step={0.5}
-                                      value={
-                                        techConfigByCharacter[activeCharacter]
-                                          ?.cfg ??
-                                        plannerContext[activeCharacter]
-                                          ?.recommended_params?.cfg ??
-                                        7
-                                      }
-                                      onChange={(e) =>
-                                        setTechConfig(activeCharacter, {
-                                          cfg: Number(e.target.value),
-                                        })
-                                      }
-                                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="col-span-2 grid grid-cols-2 gap-4">
-                                <div className="space-y-4">
-                                  <div>
-                                    <label className="text-xs text-slate-300">
-                                      Width
-                                    </label>
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <div className="flex-1">
-                                        {SliderBar({
-                                          value:
-                                            techConfigByCharacter[
-                                              activeCharacter
-                                            ]?.width ?? 832,
-                                          min: 512,
-                                          max: 2048,
-                                          step: 8,
-                                          onChange: (v) =>
-                                            setTechConfig(activeCharacter, {
-                                              width: v,
-                                            }),
-                                        })}
-                                      </div>
-                                      <input
-                                        type="number"
-                                        min={512}
-                                        max={2048}
-                                        step={8}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.width ?? 832
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            width: Number(e.target.value),
-                                          })
-                                        }
-                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <label className="text-xs text-slate-300">
-                                      Height
-                                    </label>
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <div className="flex-1">
-                                        {SliderBar({
-                                          value:
-                                            techConfigByCharacter[
-                                              activeCharacter
-                                            ]?.height ?? 1216,
-                                          min: 512,
-                                          max: 2048,
-                                          step: 8,
-                                          onChange: (v) =>
-                                            setTechConfig(activeCharacter, {
-                                              height: v,
-                                            }),
-                                        })}
-                                      </div>
-                                      <input
-                                        type="number"
-                                        min={512}
-                                        max={2048}
-                                        step={8}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.height ?? 1216
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            height: Number(e.target.value),
-                                          })
-                                        }
-                                        className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="space-y-4">
-                                  <div>
-                                    <label className="text-xs text-slate-300">
-                                      Batch count
-                                    </label>
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <input
-                                        type="range"
-                                        min={1}
-                                        max={20}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.batch_count ?? 10
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            batch_count: Number(e.target.value),
-                                          })
-                                        }
-                                        className="flex-1"
-                                      />
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        max={20}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.batch_count ?? 10
-                                        }
-                                        onChange={(e) => {
-                                          let v = Number(e.target.value);
-                                          if (!Number.isFinite(v)) v = 10;
-                                          if (v < 1) v = 1;
-                                          if (v > 20) v = 20;
-                                          setTechConfig(activeCharacter, {
-                                            batch_count: v,
-                                          });
-                                        }}
-                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          const characterNames =
-                                            Object.keys(metaByCharacter);
-                                          if (characterNames.length === 0)
-                                            return;
-                                          const count =
-                                            techConfigByCharacter[
-                                              activeCharacter ||
-                                                characterNames[0]
-                                            ]?.batch_count ?? 10;
-                                          const allowExtra =
-                                            allowExtraLorasByCharacter[
-                                              activeCharacter ||
-                                                characterNames[0]
-                                            ] ?? true;
-                                          const payload = characterNames.map(
-                                            (name) => ({
-                                              character_name: name,
-                                              trigger_words: metaByCharacter[
-                                                name
-                                              ]?.trigger_words || [name],
-                                              batch_count: count,
-                                            })
-                                          );
-                                          try {
-                                            setIsRegenerating(true);
-                                            const res = await postPlannerDraft(
-                                              payload,
-                                              count,
-                                              allowExtra
-                                            );
-                                            setJobs((prev) => {
-                                              const blocked = new Set(
-                                                payload.map(
-                                                  (p) => p.character_name
-                                                )
-                                              );
-                                              const others = prev.filter(
-                                                (j) =>
-                                                  !blocked.has(j.character_name)
-                                              );
-                                              const next = [
-                                                ...others,
-                                                ...res.jobs,
-                                              ];
-                                              try {
-                                                localStorage.setItem(
-                                                  "planner_jobs",
-                                                  JSON.stringify(next)
-                                                );
-                                              } catch {
-                                                void 0;
-                                              }
-                                              return next;
-                                            });
-                                            try {
-                                              const draftsList: unknown[] =
-                                                Array.isArray(res.drafts)
-                                                  ? (res.drafts as unknown[])
-                                                  : [];
-                                              setPlannerContext((prev) => {
-                                                const next = { ...prev };
-                                                draftsList.forEach((d) => {
-                                                  const item = d as {
-                                                    character?: string;
-                                                    base_prompt?: string;
-                                                    recommended_params?: {
-                                                      cfg: number;
-                                                      steps: number;
-                                                      sampler: string;
-                                                    };
-                                                    reference_images?: Array<{
-                                                      url: string;
-                                                      meta: Record<
-                                                        string,
-                                                        unknown
-                                                      >;
-                                                    }>;
-                                                  };
-                                                  const key = item.character;
-                                                  if (key) {
-                                                    next[key] = {
-                                                      base_prompt:
-                                                        item.base_prompt,
-                                                      recommended_params:
-                                                        item.recommended_params,
-                                                      reference_images:
-                                                        item.reference_images,
-                                                    };
-                                                  }
-                                                });
-                                                try {
-                                                  localStorage.setItem(
-                                                    "planner_context",
-                                                    JSON.stringify(next)
-                                                  );
-                                                } catch {
-                                                  void 0;
-                                                }
-                                                return next;
-                                              });
-                                            } catch {
-                                              void 0;
-                                            }
-                                          } catch (e) {
-                                            console.error(
-                                              "Regeneración fallida",
-                                              e
-                                            );
-                                          } finally {
-                                            setIsRegenerating(false);
-                                          }
-                                        }}
-                                        className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-                                        title="Generar"
-                                        disabled={isRegenerating}
-                                      >
-                                        {isRegenerating ? (
-                                          <span className="inline-flex items-center gap-1">
-                                            <Loader2 className="h-3 w-3 animate-spin" />{" "}
-                                            Generando...
-                                          </span>
-                                        ) : (
-                                          "🔄 Generar"
-                                        )}
-                                      </button>
-                                    </div>
-                                    <div className="mt-1 text-[11px] text-slate-400">
-                                      {techConfigByCharacter[activeCharacter]
-                                        ?.batch_count ?? 10}{" "}
-                                      jobs planificados
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <label className="text-xs text-slate-300">
-                                      Batch size
-                                    </label>
-                                    <div className="mt-2 flex items-center gap-2">
-                                      <input
-                                        type="range"
-                                        min={1}
-                                        max={8}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.batch_size ?? 1
-                                        }
-                                        onChange={(e) =>
-                                          setTechConfig(activeCharacter, {
-                                            batch_size: Number(e.target.value),
-                                          })
-                                        }
-                                        className="flex-1"
-                                      />
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        max={8}
-                                        value={
-                                          techConfigByCharacter[activeCharacter]
-                                            ?.batch_size ?? 1
-                                        }
-                                        onChange={(e) => {
-                                          let v = Number(e.target.value);
-                                          if (!Number.isFinite(v)) v = 1;
-                                          if (v < 1) v = 1;
-                                          if (v > 8) v = 8;
-                                          setTechConfig(activeCharacter, {
-                                            batch_size: v,
-                                          });
-                                        }}
-                                        className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="col-span-2">
-                                <label className="text-xs text-slate-300">
-                                  Seed
-                                </label>
-                                <div className="mt-2 flex items-center gap-2">
-                                  <input
-                                    type="number"
-                                    placeholder="Random (-1)"
-                                    value={
-                                      techConfigByCharacter[activeCharacter]
-                                        ?.seed ?? -1
-                                    }
-                                    onChange={(e) =>
-                                      setTechConfig(activeCharacter, {
-                                        seed: Number(e.target.value),
-                                      })
-                                    }
-                                    className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                                  />
-                                  <button
-                                    type="button"
-                                    className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                                    onClick={() =>
-                                      setTechConfig(activeCharacter, {
-                                        seed: -1,
-                                      })
-                                    }
-                                    aria-label="Seed aleatorio"
-                                    title="Seed aleatorio (-1)"
-                                  >
-                                    <Shuffle className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ) : null}
-                          {paramTab === "hires" && (
-                            <HiresSettings
-                              hiresFix={
-                                techConfigByCharacter[activeCharacter]
-                                  ?.hiresFix ??
-                                configByCharacter[activeCharacter]?.hiresFix ??
-                                true
-                              }
-                              onToggleHiresFix={(v) =>
-                                setTechConfig(activeCharacter, { hiresFix: v })
-                              }
-                              upscalerList={reforgeUpscalers}
-                              currentUpscaler={
-                                techConfigByCharacter[activeCharacter]
-                                  ?.upscaler ?? ""
-                              }
-                              onChangeUpscaler={(v) =>
-                                setTechConfig(activeCharacter, { upscaler: v })
-                              }
-                              refreshUpscalers={refreshUpscalers}
-                              refreshing={refreshingUpscalers}
-                              upscalerVersion={upscalerVersion}
-                              denoise={
-                                configByCharacter[activeCharacter]?.denoising ??
-                                0.35
-                              }
-                              onChangeDenoise={(v) =>
-                                setConfigByCharacter((prev) => {
-                                  const next = {
-                                    ...prev,
-                                    [activeCharacter]: {
-                                      ...(prev[activeCharacter] || {
-                                        hiresFix: true,
-                                        denoising: 0.35,
-                                        outputPath: `OUTPUTS_DIR/${activeCharacter}/`,
-                                      }),
-                                      denoising: v,
-                                    },
-                                  };
-                                  try {
-                                    localStorage.setItem(
-                                      "planner_config",
-                                      JSON.stringify(next)
-                                    );
-                                  } catch {}
-                                  return next;
-                                })
-                              }
-                              upscaleBy={
-                                techConfigByCharacter[activeCharacter]
-                                  ?.upscaleBy ?? 1.5
-                              }
-                              onChangeUpscaleBy={(v) =>
-                                setTechConfig(activeCharacter, { upscaleBy: v })
-                              }
-                              hiresSteps={
-                                techConfigByCharacter[activeCharacter]
-                                  ?.hiresSteps ?? 10
-                              }
-                              onChangeHiresSteps={(v) =>
-                                setTechConfig(activeCharacter, {
-                                  hiresSteps: v,
-                                })
-                              }
-                            />
-                          )}
-                          {paramTab === "adetailer" && (
-                            <div className="col-span-2 flex items-center gap-6">
-                              <label className="flex items-center gap-2 text-slate-300 text-sm">
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    techConfigByCharacter[activeCharacter]
-                                      ?.adetailer ?? true
-                                  }
-                                  onChange={(e) =>
-                                    setTechConfig(activeCharacter, {
-                                      adetailer: e.target.checked,
-                                    })
-                                  }
-                                  className="accent-blue-500"
-                                />
-                                ADetailer
-                              </label>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                        }
+                        reforgeUpscalers={reforgeUpscalers}
+                        refreshingUpscalers={refreshingUpscalers}
+                        upscalerVersion={upscalerVersion}
+                        refreshUpscalers={refreshUpscalers}
+                        isRegenerating={isRegenerating}
+                        onRegenerateDrafts={onRegenerateDrafts}
+                      />
                     </div>
                   </div>
                 </div>
@@ -2221,447 +1736,28 @@ export default function PlannerView() {
                     {jobs.length}
                   </span>
                 </div>
-                <div className="space-y-3">
-                  <div className="mt-3 space-y-6" role="list">
-                    {Object.keys(perCharacter).map((character) => (
-                      <article
-                        key={`production-${character}`}
-                        id={`production-${character}`}
-                        role="listitem"
-                        aria-labelledby={`production-title-${character}`}
-                        className="rounded-lg border border-slate-800 bg-slate-900 p-3"
-                      >
-                        <header className="pb-2 border-b border-slate-700">
-                          <div className="flex items-center justify-between">
-                            <h4
-                              id={`production-title-${character}`}
-                              className="text-base md:text-lg font-semibold text-slate-100"
-                            >
-                              {character}
-                            </h4>
-                            <div className="text-xs text-zinc-400">
-                              {perCharacter[character]?.jobs.length ?? 0} jobs
-                            </div>
-                          </div>
-                          <div className="mt-2 flex items-end gap-2">
-                            <div className="flex-1 min-w-0">
-                              <label className="text-xs text-slate-300">
-                                LORE CONTEXT
-                              </label>
-                              <textarea
-                                value={loreByCharacter[character] || ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setLoreByCharacter((prev) => {
-                                    const next = { ...prev, [character]: v };
-                                    try {
-                                      localStorage.setItem(
-                                        "planner_lore_context",
-                                        JSON.stringify(next)
-                                      );
-                                    } catch {
-                                      void 0;
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                placeholder="Contexto breve del encargo / personaje"
-                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                rows={2}
-                              />
-                            </div>
-                            <div>
-                              <button
-                                onClick={() => analyzeLore(character)}
-                                className="rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-1.5 text-xs text-indigo-100 hover:bg-indigo-700/30"
-                              >
-                                Analizar
-                              </button>
-                            </div>
-                          </div>
-                        </header>
-                        <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
-                          <figure className="lg:col-span-1">
-                            {metaByCharacter[character]?.image_url ? (
-                              /* eslint-disable-next-line @next/next/no-img-element */
-                              <img
-                                src={metaByCharacter[character]!.image_url!}
-                                alt={character}
-                                className="aspect-[3/4] w-full rounded-md object-cover border border-slate-800"
-                              />
-                            ) : (
-                              <div className="aspect-[3/4] w-full rounded-md border border-slate-800 bg-slate-800/40 flex items-center justify-center text-xs text-slate-400">
-                                Sin imagen
-                              </div>
-                            )}
-                            <figcaption className="sr-only">
-                              Imagen representativa de {character}
-                            </figcaption>
-                          </figure>
-                          <div className="lg:col-span-2">
-                            <ul className="space-y-2">
-                              {perCharacter[character]?.jobs.map((job, i) => {
-                                const idx = perCharacter[character]!.indices[i];
-                                const triplet = extractTriplet(job.prompt);
-                                const intensity = getIntensity(job.prompt);
-                                const topColor =
-                                  intensity.label === "SFW"
-                                    ? "border-green-600"
-                                    : intensity.label === "ECCHI"
-                                    ? "border-yellow-500"
-                                    : "border-red-600";
-                                return (
-                                  <li
-                                    key={`${character}-${i}`}
-                                    className={`rounded-lg border border-slate-700 bg-slate-900 p-3 border-t-2 ${topColor}`}
-                                  >
-                                    <div
-                                      onClick={() => toggleDetails(idx)}
-                                      className="flex items-center justify-between border-b border-slate-700 pb-2 cursor-pointer"
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-sm font-medium text-slate-200">
-                                          Job #{i + 1}
-                                        </span>
-                                      </div>
-                                      <IntensitySelector
-                                        value={
-                                          intensity.label as
-                                            | "SFW"
-                                            | "ECCHI"
-                                            | "NSFW"
-                                        }
-                                        onChange={(v) =>
-                                          handleIntensityChange(idx, v)
-                                        }
-                                        stop={(e) => e.stopPropagation()}
-                                      />
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteJob(character, i);
-                                          }}
-                                          className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
-                                        >
-                                          <Trash2
-                                            className="h-3 w-3"
-                                            aria-hidden
-                                          />
-                                        </button>
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            toggleDetails(idx);
-                                          }}
-                                          className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-                                        >
-                                          {showDetails.has(idx) ? (
-                                            <ChevronUp
-                                              className="h-3 w-3"
-                                              aria-hidden
-                                            />
-                                          ) : (
-                                            <ChevronDown
-                                              className="h-3 w-3"
-                                              aria-hidden
-                                            />
-                                          )}
-                                        </button>
-                                      </div>
-                                    </div>
-                                    {showDetails.has(idx) && (
-                                      <div className="pt-3 relative">
-                                        {intensityBusy.has(idx) && (
-                                          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                                            <Loader2 className="h-5 w-5 animate-spin text-slate-200" />
-                                          </div>
-                                        )}
-                                        <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                          <div>
-                                            <label className="text-xs text-slate-400 flex items-center gap-1">
-                                              <Shirt className="h-3 w-3 text-slate-400" />
-                                              <span>Outfit</span>
-                                              {job?.ai_meta?.outfit && (
-                                                <span
-                                                  title="Sugerido por IA por coherencia"
-                                                  className="inline-flex items-center text-blue-300"
-                                                >
-                                                  <Bot className="h-3 w-3" />
-                                                </span>
-                                              )}
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={triplet.outfit || ""}
-                                              onChange={(e) =>
-                                                applyQuickEdit(
-                                                  idx,
-                                                  "outfit",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">(vacío)</option>
-                                              {resources &&
-                                                resources.outfits.map((o) => (
-                                                  <option key={o} value={o}>
-                                                    {o}
-                                                  </option>
-                                                ))}
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-xs text-slate-400 flex items-center gap-1">
-                                              <User className="h-3 w-3 text-slate-400" />{" "}
-                                              <span>Pose</span>
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={triplet.pose || ""}
-                                              onChange={(e) =>
-                                                applyQuickEdit(
-                                                  idx,
-                                                  "pose",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">(vacío)</option>
-                                              {resources &&
-                                                resources.poses.map((p) => (
-                                                  <option key={p} value={p}>
-                                                    {p}
-                                                  </option>
-                                                ))}
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-xs text-slate-400 flex items-center gap-1">
-                                              <MapPin className="h-3 w-3 text-slate-400" />{" "}
-                                              <span>Location</span>
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={triplet.location || ""}
-                                              onChange={(e) =>
-                                                applyQuickEdit(
-                                                  idx,
-                                                  "location",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">(vacío)</option>
-                                              {resources &&
-                                                resources.locations.map((l) => (
-                                                  <option key={l} value={l}>
-                                                    {l}
-                                                  </option>
-                                                ))}
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-xs text-slate-400 flex items-center gap-1">
-                                              <Zap className="h-3 w-3 text-slate-400" />
-                                              <span>Lighting</span>
-                                              {job?.ai_meta?.lighting && (
-                                                <span
-                                                  title="Sugerido por IA por coherencia"
-                                                  className="inline-flex items-center text-blue-300"
-                                                >
-                                                  <Bot className="h-3 w-3" />
-                                                </span>
-                                              )}
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={
-                                                extractExtras(job.prompt)
-                                                  .lighting || ""
-                                              }
-                                              onChange={(e) =>
-                                                applyExtrasEdit(
-                                                  idx,
-                                                  "lighting",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">(vacío)</option>
-                                              {resources &&
-                                                resources.lighting?.map(
-                                                  (it) => (
-                                                    <option key={it} value={it}>
-                                                      {it}
-                                                    </option>
-                                                  )
-                                                )}
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-xs text-slate-400 flex items-center gap-1">
-                                              <Camera className="h-3 w-3 text-slate-400" />
-                                              <span>Camera</span>
-                                              {job?.ai_meta?.camera && (
-                                                <span
-                                                  title="Sugerido por IA por coherencia"
-                                                  className="inline-flex items-center text-blue-300"
-                                                >
-                                                  <Bot className="h-3 w-3" />
-                                                </span>
-                                              )}
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={
-                                                extractExtras(job.prompt)
-                                                  .camera || ""
-                                              }
-                                              onChange={(e) =>
-                                                applyExtrasEdit(
-                                                  idx,
-                                                  "camera",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">(vacío)</option>
-                                              {resources &&
-                                                resources.camera?.map((it) => (
-                                                  <option key={it} value={it}>
-                                                    {it}
-                                                  </option>
-                                                ))}
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-xs text-slate-400">
-                                              Expression
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={
-                                                extractExtras(job.prompt)
-                                                  .expression || ""
-                                              }
-                                              onChange={(e) =>
-                                                applyExtrasEdit(
-                                                  idx,
-                                                  "expression",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">(vacío)</option>
-                                              {resources &&
-                                                resources.expressions?.map(
-                                                  (it) => (
-                                                    <option key={it} value={it}>
-                                                      {it}
-                                                    </option>
-                                                  )
-                                                )}
-                                            </select>
-                                          </div>
-                                          <div>
-                                            <label className="text-xs text-slate-400">
-                                              Hairstyle
-                                            </label>
-                                            <select
-                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                              value={
-                                                extractExtras(job.prompt)
-                                                  .hairstyle || ""
-                                              }
-                                              onChange={(e) =>
-                                                applyExtrasEdit(
-                                                  idx,
-                                                  "hairstyle",
-                                                  e.target.value
-                                                )
-                                              }
-                                            >
-                                              <option value="">
-                                                (Original/Vacío)
-                                              </option>
-                                              {resources &&
-                                                resources.hairstyles?.map(
-                                                  (it) => (
-                                                    <option key={it} value={it}>
-                                                      {it}
-                                                    </option>
-                                                  )
-                                                )}
-                                            </select>
-                                          </div>
-                                        </div>
-                                        <div className="mt-3 flex items-center justify-end gap-2">
-                                          <button
-                                            onClick={() => magicFix(idx)}
-                                            disabled={loading}
-                                            className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60"
-                                          >
-                                            <Wand2 className="h-4 w-4" />{" "}
-                                            <span>Magic Fix</span>
-                                          </button>
-                                          <button
-                                            onClick={() => {
-                                              const ensured = ensureTriplet(
-                                                jobs[idx].prompt
-                                              );
-                                              updatePrompt(idx, ensured);
-                                            }}
-                                            className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40"
-                                          >
-                                            <Cog className="h-4 w-4" />{" "}
-                                            <span>Aplicar</span>
-                                          </button>
-                                          <button
-                                            onClick={() => toggleDetails(idx)}
-                                            className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
-                                          >
-                                            <Camera className="h-4 w-4" />{" "}
-                                            <span>Ver Prompt</span>
-                                          </button>
-                                        </div>
-                                        <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
-                                          <textarea
-                                            value={job.prompt}
-                                            onChange={(e) =>
-                                              updatePrompt(idx, e.target.value)
-                                            }
-                                            className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                                          />
-                                          {aiReasoningByJob[idx] ? (
-                                            <p className="mt-1 text-xs text-zinc-400">
-                                              {aiReasoningByJob[idx]}
-                                            </p>
-                                          ) : aiReasoningByCharacter[
-                                              character
-                                            ] ? (
-                                            <p className="mt-1 text-xs text-zinc-400">
-                                              {
-                                                aiReasoningByCharacter[
-                                                  character
-                                                ]
-                                              }
-                                            </p>
-                                          ) : null}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
+                <ProductionQueue
+                  perCharacter={perCharacter}
+                  resources={resources}
+                  metaByCharacter={metaByCharacter}
+                  loreByCharacter={loreByCharacter}
+                  setLoreByCharacter={setLoreByCharacter}
+                  analyzeLore={analyzeLore}
+                  applyQuickEdit={applyQuickEdit}
+                  applyExtrasEdit={applyExtrasEdit}
+                  updatePrompt={updatePrompt}
+                  aiReasoningByJob={aiReasoningByJob}
+                  aiReasoningByCharacter={aiReasoningByCharacter}
+                  magicFix={magicFix}
+                  toggleDetails={toggleDetails}
+                  showDetails={showDetails}
+                  intensityBusy={intensityBusy}
+                  handleDeleteJob={handleDeleteJob}
+                  handleDeleteCharacter={deleteCharacter}
+                  handleIntensityChange={handleIntensityChange}
+                  loading={loading}
+                />
                 </div>
-              </div>
             </section>
           </>
         ) : (
