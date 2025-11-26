@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 
 export interface SessionImage {
   b64?: string;
@@ -15,7 +15,14 @@ interface Props {
   onDeleted: () => void;
 }
 
-export default function ImageModal({ image, promptUsed, character, baseUrl, onClose, onDeleted }: Props) {
+export default function ImageModal({
+  image,
+  promptUsed,
+  character,
+  baseUrl,
+  onClose,
+  onDeleted,
+}: Props) {
   const [title, setTitle] = useState<string>("");
   const [description, setDescription] = useState<string>("");
   const [tagsText, setTagsText] = useState<string>("");
@@ -24,11 +31,11 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
   const [copied, setCopied] = useState<boolean>(false);
 
   // LocalStorage helpers
-  const getFileKey = (): string | null => {
+  const getFileKey = useCallback((): string | null => {
     const p = image?.path || "";
     const base = p.split(/[\\/]/).pop() || "";
     return base ? `marketing_meta::${base}` : null;
-  };
+  }, [image?.path]);
 
   // Carga inicial si existen metadatos guardados para la imagen
   useEffect(() => {
@@ -39,8 +46,14 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       if (!raw) return;
       const parsed = JSON.parse(raw);
       setTitle(typeof parsed.title === "string" ? parsed.title : "");
-      setDescription(typeof parsed.description === "string" ? parsed.description : "");
-      const tags = Array.isArray(parsed.tags) ? parsed.tags.join(", ") : (typeof parsed.tags === "string" ? parsed.tags : "");
+      setDescription(
+        typeof parsed.description === "string" ? parsed.description : ""
+      );
+      const tags = Array.isArray(parsed.tags)
+        ? parsed.tags.join(", ")
+        : typeof parsed.tags === "string"
+        ? parsed.tags
+        : "";
       setTagsText(tags || "");
     } catch {
       // ignore parse errors
@@ -67,7 +80,10 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       const res = await fetch(`${baseUrl}/marketing/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt_used: promptUsed ?? "", character: character ?? "" }),
+        body: JSON.stringify({
+          prompt_used: promptUsed ?? "",
+          character: character ?? "",
+        }),
       });
       if (!res.ok) {
         const msg = await res.text();
@@ -84,7 +100,11 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       try {
         const key = getFileKey();
         if (key) {
-          const payload = { title: outTitle, description: outDesc, tags: outTags.join(", ") };
+          const payload = {
+            title: outTitle,
+            description: outDesc,
+            tags: outTags.join(", "),
+          };
           localStorage.setItem(key, JSON.stringify(payload));
         }
       } catch {}
@@ -115,10 +135,15 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
       return;
     }
     // Confirmación nativa antes de borrar
-    const ok = window.confirm("¿Seguro que quieres borrar esta imagen permanentemente?");
+    const ok = window.confirm(
+      "¿Seguro que quieres borrar esta imagen permanentemente?"
+    );
     if (!ok) return;
     try {
-      const res = await fetch(`${baseUrl}/files?path=${encodeURIComponent(image.path)}`, { method: "DELETE" });
+      const res = await fetch(
+        `${baseUrl}/files?path=${encodeURIComponent(image.path)}`,
+        { method: "DELETE" }
+      );
       if (!res.ok) {
         const msg = await res.text();
         throw new Error(msg || `HTTP ${res.status}`);
@@ -132,7 +157,11 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden="true" />
+      <div
+        className="absolute inset-0 bg-black/70"
+        onClick={onClose}
+        aria-hidden="true"
+      />
       <div className="relative z-10 w-full max-w-6xl mx-4 md:mx-6 lg:mx-8 rounded-lg border border-slate-800 bg-slate-900 shadow-xl">
         <div className="flex flex-col md:flex-row">
           {/* Imagen grande */}
@@ -149,7 +178,9 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
             <div>
               <h3 className="text-lg font-semibold">Inspector de Marketing</h3>
               <p className="text-sm text-slate-300 mt-1">Prompt usado:</p>
-              <p className="text-sm text-slate-200 line-clamp-3">{promptUsed || "(vacío)"}</p>
+              <p className="text-sm text-slate-200 line-clamp-3">
+                {promptUsed || "(vacío)"}
+              </p>
             </div>
 
             <button
@@ -164,7 +195,9 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
             {error && <p className="text-red-400 text-sm">{error}</p>}
 
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="title">Título</label>
+              <label className="text-sm font-medium" htmlFor="title">
+                Título
+              </label>
               <input
                 id="title"
                 value={title}
@@ -175,7 +208,9 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="desc">Descripción</label>
+              <label className="text-sm font-medium" htmlFor="desc">
+                Descripción
+              </label>
               <textarea
                 id="desc"
                 value={description}
@@ -187,7 +222,9 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="tags">Tags (separados por comas)</label>
+              <label className="text-sm font-medium" htmlFor="tags">
+                Tags (separados por comas)
+              </label>
               <textarea
                 id="tags"
                 value={tagsText}
@@ -205,7 +242,11 @@ export default function ImageModal({ image, promptUsed, character, baseUrl, onCl
               >
                 Copiar Todo
               </button>
-              {copied && <span className="text-xs text-emerald-400 self-center">Copiado ✓</span>}
+              {copied && (
+                <span className="text-xs text-emerald-400 self-center">
+                  Copiado ✓
+                </span>
+              )}
               <button
                 onClick={deleteImage}
                 className="rounded-md bg-red-600 hover:bg-red-500 px-3 py-2 text-sm"

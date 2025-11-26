@@ -50,7 +50,7 @@ export default function FactoryView() {
                 setLiveImage(null);
               }
             }
-          } catch (e) {
+          } catch {
             // Ignorar error de progreso para no spamear
           }
         } else {

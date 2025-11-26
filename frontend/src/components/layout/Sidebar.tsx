@@ -12,7 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 const NavLink = ({
   href,
@@ -91,7 +91,7 @@ export default function Sidebar() {
         {/* Header con TU LOGO restaurado */}
         <div className="p-4 mb-2 flex items-center justify-between">
           <div className="flex items-center gap-3 overflow-hidden">
-            {/* Tu Logo Original */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/logo.jpg"
               alt="LadyManager Logo"

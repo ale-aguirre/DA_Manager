@@ -30,7 +30,7 @@ export default function RadarPage() {
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
       setItems(list);
-      try { localStorage.setItem('radar_cache', JSON.stringify(list)); } catch (e) {}
+      try { localStorage.setItem('radar_cache', JSON.stringify(list)); } catch {}
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -47,7 +47,7 @@ export default function RadarPage() {
         const list = JSON.parse(cached);
         if (Array.isArray(list)) setItems(list as CivitaiModel[]);
       }
-    } catch (e) {
+    } catch {
       // noop
     }
     // No auto-scan: el usuario decide cuándo escanear

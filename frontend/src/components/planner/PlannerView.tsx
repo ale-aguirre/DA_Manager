@@ -13,15 +13,11 @@ import {
   ChevronUp,
   Bot,
   Loader2,
-  Brain,
   User,
   Shirt,
   MapPin,
   Zap,
-  Save,
   Shuffle,
-  Plus,
-  CheckCircle,
 } from "lucide-react";
 import type { PlannerJob } from "../../types/planner";
 import {
@@ -30,7 +26,6 @@ import {
   postPlannerAnalyze,
   getReforgeCheckpoints,
   postReforgeSetCheckpoint,
-  getLocalLoras,
   getReforgeVAEs,
   getReforgeOptions,
   postPlannerDraft,
@@ -320,10 +315,6 @@ export default function PlannerView() {
     upscalers?: string[];
   } | null>(null);
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
-  const [openEditor, setOpenEditor] = React.useState<{
-    row: number;
-    field: "outfit" | "pose" | "location";
-  } | null>(null);
   const [metaByCharacter, setMetaByCharacter] = React.useState<
     Record<
       string,
@@ -340,19 +331,17 @@ export default function PlannerView() {
   const [loreByCharacter, setLoreByCharacter] = React.useState<
     Record<string, string>
   >({});
-  const [configOpen, setConfigOpen] = React.useState<Record<string, boolean>>(
-    {}
-  );
-  const [intensityTick, setIntensityTick] = React.useState(0);
-  const [allowExtraLorasByCharacter, setAllowExtraLorasByCharacter] =
-    React.useState<Record<string, boolean>>(() => {
+
+  const [allowExtraLorasByCharacter] = React.useState<Record<string, boolean>>(
+    () => {
       try {
         const raw = localStorage.getItem("planner_allow_extra_loras");
         return raw ? JSON.parse(raw) : {};
       } catch {
         return {};
       }
-    });
+    }
+  );
   const [intensityBusy, setIntensityBusy] = React.useState<Set<number>>(
     new Set()
   );
@@ -401,14 +390,14 @@ export default function PlannerView() {
   >({});
   const [checkpoints, setCheckpoints] = React.useState<string[]>([]);
   const [checkpointVersion, setCheckpointVersion] = React.useState(0);
-  const [localLoras, setLocalLoras] = React.useState<string[]>([]);
-  const [ _lorasPath, setLorasPath ] = React.useState<string | null>(null);
-  const [ _loraQuery, _setLoraQuery ] = React.useState<string>("");
+
   const [vaes, setVaes] = React.useState<string[]>([]);
   const [reforgeUpscalers, setReforgeUpscalers] = React.useState<string[]>([]);
   const [refreshingUpscalers, setRefreshingUpscalers] = React.useState(false);
   const [upscalerVersion, setUpscalerVersion] = React.useState(0);
-  const [globalCheckpoint, setGlobalCheckpoint] = React.useState<string | null>(null);
+  const [globalCheckpoint, setGlobalCheckpoint] = React.useState<string | null>(
+    null
+  );
   const [reforgeOptions, setReforgeOptionsState] = React.useState<{
     current_vae: string;
     current_clip_skip: number;
@@ -416,11 +405,7 @@ export default function PlannerView() {
   const [paramTab, setParamTab] = React.useState<
     "generation" | "hires" | "adetailer"
   >("generation");
-  const [ _rightTab, _setRightTab ] = React.useState<"personajes" | "helpers">(
-    "personajes"
-  );
-  const [ _refreshingCheckpoints, setRefreshingCheckpoints ] =
-    React.useState(false);
+
   const [dryRunOpen, setDryRunOpen] = React.useState(false);
   const [dryRunPayload, setDryRunPayload] = React.useState<string>("");
   const setTechConfig = (
@@ -453,10 +438,13 @@ export default function PlannerView() {
       const next = { ...prev, [character]: { ...prev[character], ...partial } };
       try {
         localStorage.setItem("planner_tech", JSON.stringify(next));
-      } catch {}
+      } catch {
+        void 0;
+      }
       return next;
     });
   };
+
   const [showDetails, setShowDetails] = React.useState<Set<number>>(new Set());
   const [activeCharacter, setActiveCharacter] = React.useState<string | null>(
     null
@@ -466,7 +454,9 @@ export default function PlannerView() {
     try {
       const raw = localStorage.getItem("planner_checkpoint_global");
       setGlobalCheckpoint(raw && raw.trim() ? raw : null);
-    } catch {}
+    } catch {
+      void 0;
+    }
   }, []);
 
   React.useEffect(() => {
@@ -496,7 +486,9 @@ export default function PlannerView() {
     try {
       const raw = localStorage.getItem("planner_preset_global");
       if (raw) preset = JSON.parse(raw);
-    } catch {}
+    } catch {
+      void 0;
+    }
     const patchTech: Partial<{
       steps: number;
       cfg: number;
@@ -593,11 +585,13 @@ export default function PlannerView() {
         };
         try {
           localStorage.setItem("planner_config", JSON.stringify(next));
-        } catch {}
+        } catch {
+          void 0;
+        }
         return next;
       });
     }
-  }, [activeCharacter]);
+  }, [activeCharacter, configByCharacter, techConfigByCharacter]);
 
   // Cargar configuración técnica (incluye Prompt Negativo) desde localStorage
   React.useEffect(() => {
@@ -676,7 +670,7 @@ export default function PlannerView() {
           setTechConfig(activeCharacter, { upscaler: "" });
         }
       }
-    } catch (e) {
+    } catch {
       setToast({ message: "❌ Error al actualizar Upscalers" });
       setTimeout(() => setToast(null), 2500);
     } finally {
@@ -691,7 +685,8 @@ export default function PlannerView() {
     if (!existing) {
       analyzeLore(activeCharacter);
     }
-  }, [activeCharacter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCharacter, loreByCharacter]);
 
   // Auto-ajuste de Clip Skip = 2 para checkpoints Anime/Pony si el usuario aún no lo definió
   React.useEffect(() => {
@@ -725,14 +720,19 @@ export default function PlannerView() {
         if (activeCharacter) {
           const current =
             techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
-          const fallback = (globalCheckpoint && cps.includes(globalCheckpoint))
-            ? globalCheckpoint
-            : (cps && cps.length > 0 ? cps[0] : "");
+          const fallback =
+            globalCheckpoint && cps.includes(globalCheckpoint)
+              ? globalCheckpoint
+              : cps && cps.length > 0
+              ? cps[0]
+              : "";
           if (!current && fallback) {
             setTechConfig(activeCharacter, { checkpoint: fallback });
             try {
               await postReforgeSetCheckpoint(fallback);
-            } catch {}
+            } catch {
+              void 0;
+            }
           }
         }
       } catch (e) {
@@ -741,15 +741,18 @@ export default function PlannerView() {
         setTimeout(() => setToast(null), 2500);
       }
     })();
-  }, [activeCharacter, globalCheckpoint]);
-  const refreshCheckpoints = async () => {
+  }, [activeCharacter, globalCheckpoint, techConfigByCharacter]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const refreshCheckpoints = async (p0: boolean) => {
     try {
-      setRefreshingCheckpoints(true);
+      refreshCheckpoints(true);
       setCheckpoints([]);
       setCheckpointVersion((v) => v + 1);
       try {
         await postReforgeRefresh();
-      } catch {}
+      } catch {
+        void 0;
+      }
       await new Promise((r) => setTimeout(r, 2000));
       const cps = await getReforgeCheckpoints();
       setCheckpoints(cps);
@@ -762,7 +765,9 @@ export default function PlannerView() {
             setTechConfig(activeCharacter, { checkpoint: first });
             try {
               await postReforgeSetCheckpoint(first);
-            } catch {}
+            } catch {
+              void 0;
+            }
           }
         } else if (!cps.includes(current)) {
           const first = cps && cps.length > 0 ? cps[0] : "";
@@ -775,25 +780,9 @@ export default function PlannerView() {
       setToast({ message: "❌ Error al actualizar checkpoints" });
       setTimeout(() => setToast(null), 2500);
     } finally {
-      setRefreshingCheckpoints(false);
+      refreshCheckpoints(false);
     }
   };
-
-  React.useEffect(() => {
-    // Cargar LoRAs locales
-    (async () => {
-      try {
-        const { files, path } = await getLocalLoras();
-        setLocalLoras(files);
-        setLorasPath(path || null);
-      } catch (e) {
-        console.warn("No se pudieron cargar LoRAs locales:", e);
-        setToast({ message: "❌ Error: no se pudieron cargar LoRAs locales" });
-        setTimeout(() => setToast(null), 2500);
-      }
-    })();
-  }, []);
-  
 
   // Cargar lore por personaje desde localStorage
   React.useEffect(() => {
@@ -891,8 +880,6 @@ export default function PlannerView() {
     });
   };
 
-  
-
   const deleteRow = (idx: number) => {
     setJobs((prev) => {
       const next = prev.filter((_, i) => i !== idx);
@@ -985,7 +972,9 @@ export default function PlannerView() {
         setAiReasoningByJob((prev) => ({ ...prev, [idx]: msg }));
         setToast({ message: msg });
         setTimeout(() => setToast(null), 3000);
-      } catch {}
+      } catch {
+        void 0;
+      }
     } catch (e) {
       console.warn("Magic Fix fallo, aplicando relleno aleatorio", e);
       const outfit = resources
@@ -1016,7 +1005,7 @@ export default function PlannerView() {
     }
   };
 
-  const analyzeLore = async (character: string) => {
+  async function analyzeLore(character: string) {
     try {
       setLoading(true);
       setError(null);
@@ -1050,7 +1039,9 @@ export default function PlannerView() {
         setAiReasoningByCharacter((prev) => ({ ...prev, [character]: msg }));
         setToast({ message: msg });
         setTimeout(() => setToast(null), 3500);
-      } catch {}
+      } catch {
+        void 0;
+      }
       setSelected(new Set());
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1058,7 +1049,7 @@ export default function PlannerView() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   // Eliminar todos los trabajos de un personaje y limpiar selección
   const deleteCharacter = (character: string) => {
@@ -1258,12 +1249,7 @@ export default function PlannerView() {
     setSelected(new Set());
   };
 
-  
-
   // Controles globales
-  
-
-  
 
   const applyQuickEdit = (
     row: number,
@@ -1372,8 +1358,8 @@ export default function PlannerView() {
                 {opt}
               </button>
             ))}
-            </div>
-      )}
+          </div>
+        )}
       </div>
     );
   };
@@ -1442,7 +1428,7 @@ export default function PlannerView() {
       return s;
     });
     setIntensity(idx, nextLabel);
-    setIntensityTick((x) => x + 1);
+    setIntensity(idx, "NSFW");
     setTimeout(() => {
       setIntensityBusy((prev) => {
         const s = new Set(prev);
@@ -1536,7 +1522,9 @@ export default function PlannerView() {
                           m.download_url.trim().length > 0
                       );
                   }
-                } catch {}
+                } catch {
+                  void 0;
+                }
                 const preparedJobs: PlannerJob[] = [];
                 for (const j of jobs) {
                   const tech = techConfigByCharacter[j.character_name];
@@ -1621,7 +1609,9 @@ export default function PlannerView() {
                     const j = await res.json();
                     outputsPath = j?.path || "";
                   }
-                } catch {}
+                } catch {
+                  void 0;
+                }
                 const sanitize = (s: string) =>
                   s.replace(/[^a-zA-Z0-9_\-\s]/g, "_");
                 const expected = groupConfig.map((gc) => {
@@ -1648,7 +1638,9 @@ export default function PlannerView() {
                 };
                 setDryRunPayload(JSON.stringify(preview, null, 2));
                 setDryRunOpen(true);
-              } catch {}
+              } catch {
+                void 0;
+              }
             }}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-transparent px-4 py-2 text-sm text-slate-200 hover:bg-slate-700/10 cursor-pointer transition-all active:scale-95"
           >
@@ -1674,7 +1666,9 @@ export default function PlannerView() {
             <div className="section-title">
               <Cog className="section-title__icon" aria-hidden />
               <span>Panel Técnico</span>
-              <span className="ml-auto"><EngineHealthIndicator /></span>
+              <span className="ml-auto">
+                <EngineHealthIndicator />
+              </span>
             </div>
           </div>
           <div className="grid grid-cols-12 gap-2 items-end">
@@ -1684,7 +1678,9 @@ export default function PlannerView() {
               </label>
               <select
                 value={
-                  techConfigByCharacter[activeCharacter!]?.checkpoint ?? globalCheckpoint ?? ""
+                  techConfigByCharacter[activeCharacter!]?.checkpoint ??
+                  globalCheckpoint ??
+                  ""
                 }
                 onChange={async (e) => {
                   const title = e.target.value;
@@ -1692,8 +1688,14 @@ export default function PlannerView() {
                   try {
                     if (title) await postReforgeSetCheckpoint(title);
                     setGlobalCheckpoint(title);
-                    try { localStorage.setItem("planner_checkpoint_global", title); } catch {}
-                  } catch {}
+                    try {
+                      localStorage.setItem("planner_checkpoint_global", title);
+                    } catch {
+                      void 0;
+                    }
+                  } catch {
+                    void 0;
+                  }
                 }}
                 className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
                 key={`ckpt-${checkpointVersion}`}
@@ -1767,9 +1769,11 @@ export default function PlannerView() {
                 onClick={async () => {
                   try {
                     await postReforgeRefresh();
-                  } catch {}
+                  } catch {
+                    void 0;
+                  }
                   await refreshUpscalers();
-                  await refreshCheckpoints();
+                  if (activeCharacter) await refreshCheckpoints(false);
                 }}
                 className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
               >
@@ -1806,7 +1810,9 @@ export default function PlannerView() {
                             "planner_context",
                             JSON.stringify(next)
                           );
-                        } catch {}
+                        } catch {
+                          void 0;
+                        }
                         return next;
                       });
                     }}
@@ -1848,7 +1854,9 @@ export default function PlannerView() {
                         "planner_jobs",
                         JSON.stringify(jobs)
                       );
-                    } catch {}
+                    } catch {
+                      void 0;
+                    }
                   }}
                   className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
                 >
@@ -1860,9 +1868,7 @@ export default function PlannerView() {
                 >
                   Borrar
                 </button>
-                <button
-                  className="hidden"
-                />
+                <button className="hidden" />
               </div>
             </div>
           </div>
@@ -1876,11 +1882,12 @@ export default function PlannerView() {
             <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden">
               <div className="p-3">
                 <div className="grid grid-cols-12 gap-4 items-start">
-
                   <div className="col-span-12 md:col-span-12 md:order-1">
                     <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
-                      <div className="section-title"><Cog className="section-title__icon" aria-hidden /><span>Panel de Configuración</span></div>
-
+                      <div className="section-title">
+                        <Cog className="section-title__icon" aria-hidden />
+                        <span>Panel de Configuración</span>
+                      </div>
 
                       <div className="mt-4">
                         <div className="mb-2 flex items-center justify-between">
@@ -2178,62 +2185,114 @@ export default function PlannerView() {
                                       <button
                                         type="button"
                                         onClick={async () => {
-                                          const characterNames = Object.keys(metaByCharacter);
-                                          if (characterNames.length === 0) return;
+                                          const characterNames =
+                                            Object.keys(metaByCharacter);
+                                          if (characterNames.length === 0)
+                                            return;
                                           const count =
                                             techConfigByCharacter[
-                                              activeCharacter || characterNames[0]
+                                              activeCharacter ||
+                                                characterNames[0]
                                             ]?.batch_count ?? 10;
                                           const allowExtra =
                                             allowExtraLorasByCharacter[
-                                              activeCharacter || characterNames[0]
+                                              activeCharacter ||
+                                                characterNames[0]
                                             ] ?? true;
-                                          const payload = characterNames.map((name) => ({
-                                            character_name: name,
-                                            trigger_words:
-                                              metaByCharacter[name]?.trigger_words || [name],
-                                            batch_count: count,
-                                          }));
+                                          const payload = characterNames.map(
+                                            (name) => ({
+                                              character_name: name,
+                                              trigger_words: metaByCharacter[
+                                                name
+                                              ]?.trigger_words || [name],
+                                              batch_count: count,
+                                            })
+                                          );
                                           try {
                                             setIsRegenerating(true);
-                                            const res = await postPlannerDraft(payload, count, allowExtra);
+                                            const res = await postPlannerDraft(
+                                              payload,
+                                              count,
+                                              allowExtra
+                                            );
                                             setJobs((prev) => {
-                                              const blocked = new Set(payload.map((p) => p.character_name));
-                                              const others = prev.filter((j) => !blocked.has(j.character_name));
-                                              const next = [...others, ...res.jobs];
+                                              const blocked = new Set(
+                                                payload.map(
+                                                  (p) => p.character_name
+                                                )
+                                              );
+                                              const others = prev.filter(
+                                                (j) =>
+                                                  !blocked.has(j.character_name)
+                                              );
+                                              const next = [
+                                                ...others,
+                                                ...res.jobs,
+                                              ];
                                               try {
-                                                localStorage.setItem("planner_jobs", JSON.stringify(next));
-                                              } catch {}
+                                                localStorage.setItem(
+                                                  "planner_jobs",
+                                                  JSON.stringify(next)
+                                                );
+                                              } catch {
+                                                void 0;
+                                              }
                                               return next;
                                             });
                                             try {
-                                              const draftsList: unknown[] = Array.isArray(res.drafts) ? (res.drafts as unknown[]) : [];
+                                              const draftsList: unknown[] =
+                                                Array.isArray(res.drafts)
+                                                  ? (res.drafts as unknown[])
+                                                  : [];
                                               setPlannerContext((prev) => {
                                                 const next = { ...prev };
                                                 draftsList.forEach((d) => {
                                                   const item = d as {
                                                     character?: string;
                                                     base_prompt?: string;
-                                                    recommended_params?: { cfg: number; steps: number; sampler: string };
-                                                    reference_images?: Array<{ url: string; meta: Record<string, unknown> }>;
+                                                    recommended_params?: {
+                                                      cfg: number;
+                                                      steps: number;
+                                                      sampler: string;
+                                                    };
+                                                    reference_images?: Array<{
+                                                      url: string;
+                                                      meta: Record<
+                                                        string,
+                                                        unknown
+                                                      >;
+                                                    }>;
                                                   };
                                                   const key = item.character;
                                                   if (key) {
                                                     next[key] = {
-                                                      base_prompt: item.base_prompt,
-                                                      recommended_params: item.recommended_params,
-                                                      reference_images: item.reference_images,
+                                                      base_prompt:
+                                                        item.base_prompt,
+                                                      recommended_params:
+                                                        item.recommended_params,
+                                                      reference_images:
+                                                        item.reference_images,
                                                     };
                                                   }
                                                 });
                                                 try {
-                                                  localStorage.setItem("planner_context", JSON.stringify(next));
-                                                } catch {}
+                                                  localStorage.setItem(
+                                                    "planner_context",
+                                                    JSON.stringify(next)
+                                                  );
+                                                } catch {
+                                                  void 0;
+                                                }
                                                 return next;
                                               });
-                                            } catch {}
+                                            } catch {
+                                              void 0;
+                                            }
                                           } catch (e) {
-                                            console.error("Regeneración fallida", e);
+                                            console.error(
+                                              "Regeneración fallida",
+                                              e
+                                            );
                                           } finally {
                                             setIsRegenerating(false);
                                           }
@@ -2600,303 +2659,461 @@ export default function PlannerView() {
             </section>
 
             {/* Sección Inferior: Cola de Producción */}
-            <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden mt-6" aria-labelledby="production-queue-title">
+            <section
+              className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-hidden mt-6"
+              aria-labelledby="production-queue-title"
+            >
               <div className="p-3 space-y-3">
                 <div className="section-title" id="production-queue-title">
                   <Play className="section-title__icon" aria-hidden />
                   <span>Cola de Producción</span>
-                  <span className="ml-auto text-xs text-zinc-400">Personajes: {Object.keys(perCharacter).length} · Jobs: {jobs.length}</span>
+                  <span className="ml-auto text-xs text-zinc-400">
+                    Personajes: {Object.keys(perCharacter).length} · Jobs:{" "}
+                    {jobs.length}
+                  </span>
                 </div>
                 <div className="space-y-3">
-                <div className="mt-3 space-y-6" role="list">
-                  {Object.keys(perCharacter).map((character) => (
-                    <article
-                      key={`production-${character}`}
-                      id={`production-${character}`}
-                      role="listitem"
-                      aria-labelledby={`production-title-${character}`}
-                      className="rounded-lg border border-slate-800 bg-slate-900 p-3"
-                    >
-                      <header className="pb-2 border-b border-slate-700">
-                        <div className="flex items-center justify-between">
-                          <h4 id={`production-title-${character}`} className="text-base md:text-lg font-semibold text-slate-100">{character}</h4>
-                          <div className="text-xs text-zinc-400">{perCharacter[character]?.jobs.length ?? 0} jobs</div>
-                        </div>
-                        <div className="mt-2 flex items-end gap-2">
-                          <div className="flex-1 min-w-0">
-                            <label className="text-xs text-slate-300">LORE CONTEXT</label>
-                            <input
-                              type="text"
-                              value={loreByCharacter[character] || ""}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setLoreByCharacter((prev) => {
-                                  const next = { ...prev, [character]: v };
-                                  try {
-                                    localStorage.setItem("planner_lore_context", JSON.stringify(next));
-                                  } catch {}
-                                  return next;
-                                });
-                              }}
-                              placeholder="Contexto breve del encargo / personaje"
-                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                            />
-                          </div>
-                          <div>
-                            <button
-                              onClick={() => analyzeLore(character)}
-                              className="rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-1.5 text-xs text-indigo-100 hover:bg-indigo-700/30"
+                  <div className="mt-3 space-y-6" role="list">
+                    {Object.keys(perCharacter).map((character) => (
+                      <article
+                        key={`production-${character}`}
+                        id={`production-${character}`}
+                        role="listitem"
+                        aria-labelledby={`production-title-${character}`}
+                        className="rounded-lg border border-slate-800 bg-slate-900 p-3"
+                      >
+                        <header className="pb-2 border-b border-slate-700">
+                          <div className="flex items-center justify-between">
+                            <h4
+                              id={`production-title-${character}`}
+                              className="text-base md:text-lg font-semibold text-slate-100"
                             >
-                              Analizar
-                            </button>
+                              {character}
+                            </h4>
+                            <div className="text-xs text-zinc-400">
+                              {perCharacter[character]?.jobs.length ?? 0} jobs
+                            </div>
+                          </div>
+                          <div className="mt-2 flex items-end gap-2">
+                            <div className="flex-1 min-w-0">
+                              <label className="text-xs text-slate-300">
+                                LORE CONTEXT
+                              </label>
+                              <input
+                                type="text"
+                                value={loreByCharacter[character] || ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setLoreByCharacter((prev) => {
+                                    const next = { ...prev, [character]: v };
+                                    try {
+                                      localStorage.setItem(
+                                        "planner_lore_context",
+                                        JSON.stringify(next)
+                                      );
+                                    } catch {
+                                      void 0;
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Contexto breve del encargo / personaje"
+                                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                              />
+                            </div>
+                            <div>
+                              <button
+                                onClick={() => analyzeLore(character)}
+                                className="rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-1.5 text-xs text-indigo-100 hover:bg-indigo-700/30"
+                              >
+                                Analizar
+                              </button>
+                            </div>
+                          </div>
+                        </header>
+                        <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
+                          <figure className="lg:col-span-1">
+                            {metaByCharacter[character]?.image_url ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={metaByCharacter[character]!.image_url!}
+                                alt={character}
+                                className="aspect-[3/4] w-full rounded-md object-cover border border-slate-800"
+                              />
+                            ) : (
+                              <div className="aspect-[3/4] w-full rounded-md border border-slate-800 bg-slate-800/40 flex items-center justify-center text-xs text-slate-400">
+                                Sin imagen
+                              </div>
+                            )}
+                            <figcaption className="sr-only">
+                              Imagen representativa de {character}
+                            </figcaption>
+                          </figure>
+                          <div className="lg:col-span-2">
+                            <ul className="space-y-2">
+                              {perCharacter[character]?.jobs.map((job, i) => {
+                                const idx = perCharacter[character]!.indices[i];
+                                const triplet = extractTriplet(job.prompt);
+                                const intensity = getIntensity(job.prompt);
+                                const topColor =
+                                  intensity.label === "SFW"
+                                    ? "border-green-600"
+                                    : intensity.label === "ECCHI"
+                                    ? "border-yellow-500"
+                                    : "border-red-600";
+                                return (
+                                  <li
+                                    key={`${character}-${i}`}
+                                    className={`rounded-lg border border-slate-700 bg-slate-900 p-3 border-t-2 ${topColor}`}
+                                  >
+                                    <div
+                                      onClick={() => toggleDetails(idx)}
+                                      className="flex items-center justify-between border-b border-slate-700 pb-2 cursor-pointer"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-medium text-slate-200">
+                                          Job #{i + 1}
+                                        </span>
+                                      </div>
+                                      <IntensitySelector
+                                        value={
+                                          intensity.label as
+                                            | "SFW"
+                                            | "ECCHI"
+                                            | "NSFW"
+                                        }
+                                        onChange={(v) =>
+                                          handleIntensityChange(idx, v)
+                                        }
+                                        stop={(e) => e.stopPropagation()}
+                                      />
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteJob(character, i);
+                                          }}
+                                          className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
+                                        >
+                                          <Trash2
+                                            className="h-3 w-3"
+                                            aria-hidden
+                                          />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleDetails(idx);
+                                          }}
+                                          className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                                        >
+                                          {showDetails.has(idx) ? (
+                                            <ChevronUp
+                                              className="h-3 w-3"
+                                              aria-hidden
+                                            />
+                                          ) : (
+                                            <ChevronDown
+                                              className="h-3 w-3"
+                                              aria-hidden
+                                            />
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {showDetails.has(idx) && (
+                                      <div className="pt-3 relative">
+                                        {intensityBusy.has(idx) && (
+                                          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                                            <Loader2 className="h-5 w-5 animate-spin text-slate-200" />
+                                          </div>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                                          <div>
+                                            <label className="text-xs text-slate-400 flex items-center gap-1">
+                                              <Shirt className="h-3 w-3 text-slate-400" />
+                                              <span>Outfit</span>
+                                              {job?.ai_meta?.outfit && (
+                                                <span
+                                                  title="Sugerido por IA por coherencia"
+                                                  className="inline-flex items-center text-blue-300"
+                                                >
+                                                  <Bot className="h-3 w-3" />
+                                                </span>
+                                              )}
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={triplet.outfit || ""}
+                                              onChange={(e) =>
+                                                applyQuickEdit(
+                                                  idx,
+                                                  "outfit",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">(vacío)</option>
+                                              {resources &&
+                                                resources.outfits.map((o) => (
+                                                  <option key={o} value={o}>
+                                                    {o}
+                                                  </option>
+                                                ))}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-slate-400 flex items-center gap-1">
+                                              <User className="h-3 w-3 text-slate-400" />{" "}
+                                              <span>Pose</span>
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={triplet.pose || ""}
+                                              onChange={(e) =>
+                                                applyQuickEdit(
+                                                  idx,
+                                                  "pose",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">(vacío)</option>
+                                              {resources &&
+                                                resources.poses.map((p) => (
+                                                  <option key={p} value={p}>
+                                                    {p}
+                                                  </option>
+                                                ))}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-slate-400 flex items-center gap-1">
+                                              <MapPin className="h-3 w-3 text-slate-400" />{" "}
+                                              <span>Location</span>
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={triplet.location || ""}
+                                              onChange={(e) =>
+                                                applyQuickEdit(
+                                                  idx,
+                                                  "location",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">(vacío)</option>
+                                              {resources &&
+                                                resources.locations.map((l) => (
+                                                  <option key={l} value={l}>
+                                                    {l}
+                                                  </option>
+                                                ))}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-slate-400 flex items-center gap-1">
+                                              <Zap className="h-3 w-3 text-slate-400" />
+                                              <span>Lighting</span>
+                                              {job?.ai_meta?.lighting && (
+                                                <span
+                                                  title="Sugerido por IA por coherencia"
+                                                  className="inline-flex items-center text-blue-300"
+                                                >
+                                                  <Bot className="h-3 w-3" />
+                                                </span>
+                                              )}
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={
+                                                extractExtras(job.prompt)
+                                                  .lighting || ""
+                                              }
+                                              onChange={(e) =>
+                                                applyExtrasEdit(
+                                                  idx,
+                                                  "lighting",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">(vacío)</option>
+                                              {resources &&
+                                                resources.lighting?.map(
+                                                  (it) => (
+                                                    <option key={it} value={it}>
+                                                      {it}
+                                                    </option>
+                                                  )
+                                                )}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-slate-400 flex items-center gap-1">
+                                              <Camera className="h-3 w-3 text-slate-400" />
+                                              <span>Camera</span>
+                                              {job?.ai_meta?.camera && (
+                                                <span
+                                                  title="Sugerido por IA por coherencia"
+                                                  className="inline-flex items-center text-blue-300"
+                                                >
+                                                  <Bot className="h-3 w-3" />
+                                                </span>
+                                              )}
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={
+                                                extractExtras(job.prompt)
+                                                  .camera || ""
+                                              }
+                                              onChange={(e) =>
+                                                applyExtrasEdit(
+                                                  idx,
+                                                  "camera",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">(vacío)</option>
+                                              {resources &&
+                                                resources.camera?.map((it) => (
+                                                  <option key={it} value={it}>
+                                                    {it}
+                                                  </option>
+                                                ))}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-slate-400">
+                                              Expression
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={
+                                                extractExtras(job.prompt)
+                                                  .expression || ""
+                                              }
+                                              onChange={(e) =>
+                                                applyExtrasEdit(
+                                                  idx,
+                                                  "expression",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">(vacío)</option>
+                                              {resources &&
+                                                resources.expressions?.map(
+                                                  (it) => (
+                                                    <option key={it} value={it}>
+                                                      {it}
+                                                    </option>
+                                                  )
+                                                )}
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-xs text-slate-400">
+                                              Hairstyle
+                                            </label>
+                                            <select
+                                              className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                              value={
+                                                extractExtras(job.prompt)
+                                                  .hairstyle || ""
+                                              }
+                                              onChange={(e) =>
+                                                applyExtrasEdit(
+                                                  idx,
+                                                  "hairstyle",
+                                                  e.target.value
+                                                )
+                                              }
+                                            >
+                                              <option value="">
+                                                (Original/Vacío)
+                                              </option>
+                                              {resources &&
+                                                resources.hairstyles?.map(
+                                                  (it) => (
+                                                    <option key={it} value={it}>
+                                                      {it}
+                                                    </option>
+                                                  )
+                                                )}
+                                            </select>
+                                          </div>
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-end gap-2">
+                                          <button
+                                            onClick={() => magicFix(idx)}
+                                            disabled={loading}
+                                            className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60"
+                                          >
+                                            <Wand2 className="h-4 w-4" />{" "}
+                                            <span>Magic Fix</span>
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              const ensured = ensureTriplet(
+                                                jobs[idx].prompt
+                                              );
+                                              updatePrompt(idx, ensured);
+                                            }}
+                                            className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40"
+                                          >
+                                            <Cog className="h-4 w-4" />{" "}
+                                            <span>Aplicar</span>
+                                          </button>
+                                          <button
+                                            onClick={() => toggleDetails(idx)}
+                                            className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
+                                          >
+                                            <Camera className="h-4 w-4" />{" "}
+                                            <span>Ver Prompt</span>
+                                          </button>
+                                        </div>
+                                        <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
+                                          <textarea
+                                            value={job.prompt}
+                                            onChange={(e) =>
+                                              updatePrompt(idx, e.target.value)
+                                            }
+                                            className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
+                                          />
+                                          {aiReasoningByJob[idx] ? (
+                                            <p className="mt-1 text-xs text-zinc-400">
+                                              {aiReasoningByJob[idx]}
+                                            </p>
+                                          ) : aiReasoningByCharacter[
+                                              character
+                                            ] ? (
+                                            <p className="mt-1 text-xs text-zinc-400">
+                                              {
+                                                aiReasoningByCharacter[
+                                                  character
+                                                ]
+                                              }
+                                            </p>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
                           </div>
                         </div>
-                      </header>
-                      <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">
-                        <figure className="lg:col-span-1">
-                          {metaByCharacter[character]?.image_url ? (
-                            <img
-                              src={metaByCharacter[character]!.image_url!}
-                              alt={character}
-                              className="aspect-[3/4] w-full rounded-md object-cover border border-slate-800"
-                            />
-                          ) : (
-                            <div className="aspect-[3/4] w-full rounded-md border border-slate-800 bg-slate-800/40 flex items-center justify-center text-xs text-slate-400">Sin imagen</div>
-                          )}
-                          <figcaption className="sr-only">Imagen representativa de {character}</figcaption>
-                        </figure>
-                        <div className="lg:col-span-2">
-                          <ul className="space-y-2">
-                            {perCharacter[character]?.jobs.map((job, i) => {
-                              const idx = perCharacter[character]!.indices[i];
-                              const triplet = extractTriplet(job.prompt);
-                              const intensity = getIntensity(job.prompt);
-                              const topColor =
-                                intensity.label === "SFW"
-                                  ? "border-green-600"
-                                  : intensity.label === "ECCHI"
-                                  ? "border-yellow-500"
-                                  : "border-red-600";
-                              return (
-                                <li
-                                  key={`${character}-${i}`}
-                                  className={`rounded-lg border border-slate-700 bg-slate-900 p-3 border-t-2 ${topColor}`}
-                                >
-                                  <div
-                                    onClick={() => toggleDetails(idx)}
-                                    className="flex items-center justify-between border-b border-slate-700 pb-2 cursor-pointer"
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm font-medium text-slate-200">Job #{i + 1}</span>
-                                    </div>
-                                    <IntensitySelector
-                                      value={intensity.label as "SFW" | "ECCHI" | "NSFW"}
-                                      onChange={(v) => handleIntensityChange(idx, v)}
-                                      stop={(e) => e.stopPropagation()}
-                                    />
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteJob(character, i);
-                                        }}
-                                        className="rounded-md border border-red-700 bg-red-700/20 px-2 py-1 text-xs text-red-100 hover:bg-red-700/30"
-                                      >
-                                        <Trash2 className="h-3 w-3" aria-hidden />
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          toggleDetails(idx);
-                                        }}
-                                        className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-                                      >
-                                        {showDetails.has(idx) ? (
-                                          <ChevronUp className="h-3 w-3" aria-hidden />
-                                        ) : (
-                                          <ChevronDown className="h-3 w-3" aria-hidden />
-                                        )}
-                                      </button>
-                                    </div>
-                                  </div>
-                                  {showDetails.has(idx) && (
-                                    <div className="pt-3 relative">
-                                      {intensityBusy.has(idx) && (
-                                        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                                          <Loader2 className="h-5 w-5 animate-spin text-slate-200" />
-                                        </div>
-                                      )}
-                                      <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                                      <div>
-                                        <label className="text-xs text-slate-400 flex items-center gap-1">
-                                          <Shirt className="h-3 w-3 text-slate-400" />
-                                          <span>Outfit</span>
-                                          {job?.ai_meta?.outfit && (
-                                            <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300">
-                                              <Bot className="h-3 w-3" />
-                                            </span>
-                                          )}
-                                        </label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={triplet.outfit || ""}
-                                          onChange={(e) => applyQuickEdit(idx, "outfit", e.target.value)}
-                                        >
-                                          <option value="">(vacío)</option>
-                                          {resources && resources.outfits.map((o) => (
-                                            <option key={o} value={o}>{o}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <label className="text-xs text-slate-400 flex items-center gap-1">
-                                          <User className="h-3 w-3 text-slate-400" /> <span>Pose</span>
-                                        </label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={triplet.pose || ""}
-                                          onChange={(e) => applyQuickEdit(idx, "pose", e.target.value)}
-                                        >
-                                          <option value="">(vacío)</option>
-                                          {resources && resources.poses.map((p) => (
-                                            <option key={p} value={p}>{p}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <label className="text-xs text-slate-400 flex items-center gap-1">
-                                          <MapPin className="h-3 w-3 text-slate-400" /> <span>Location</span>
-                                        </label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={triplet.location || ""}
-                                          onChange={(e) => applyQuickEdit(idx, "location", e.target.value)}
-                                        >
-                                          <option value="">(vacío)</option>
-                                          {resources && resources.locations.map((l) => (
-                                            <option key={l} value={l}>{l}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <label className="text-xs text-slate-400 flex items-center gap-1">
-                                          <Zap className="h-3 w-3 text-slate-400" />
-                                          <span>Lighting</span>
-                                          {job?.ai_meta?.lighting && (
-                                            <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300">
-                                              <Bot className="h-3 w-3" />
-                                            </span>
-                                          )}
-                                        </label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={extractExtras(job.prompt).lighting || ""}
-                                          onChange={(e) => applyExtrasEdit(idx, "lighting", e.target.value)}
-                                        >
-                                          <option value="">(vacío)</option>
-                                          {resources && resources.lighting?.map((it) => (
-                                            <option key={it} value={it}>{it}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <label className="text-xs text-slate-400 flex items-center gap-1">
-                                          <Camera className="h-3 w-3 text-slate-400" />
-                                          <span>Camera</span>
-                                          {job?.ai_meta?.camera && (
-                                            <span title="Sugerido por IA por coherencia" className="inline-flex items-center text-blue-300">
-                                              <Bot className="h-3 w-3" />
-                                            </span>
-                                          )}
-                                        </label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={extractExtras(job.prompt).camera || ""}
-                                          onChange={(e) => applyExtrasEdit(idx, "camera", e.target.value)}
-                                        >
-                                          <option value="">(vacío)</option>
-                                          {resources && resources.camera?.map((it) => (
-                                            <option key={it} value={it}>{it}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <label className="text-xs text-slate-400">Expression</label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={extractExtras(job.prompt).expression || ""}
-                                          onChange={(e) => applyExtrasEdit(idx, "expression", e.target.value)}
-                                        >
-                                          <option value="">(vacío)</option>
-                                          {resources && resources.expressions?.map((it) => (
-                                            <option key={it} value={it}>{it}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      <div>
-                                        <label className="text-xs text-slate-400">Hairstyle</label>
-                                        <select
-                                          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                          value={extractExtras(job.prompt).hairstyle || ""}
-                                          onChange={(e) => applyExtrasEdit(idx, "hairstyle", e.target.value)}
-                                        >
-                                          <option value="">(Original/Vacío)</option>
-                                          {resources && resources.hairstyles?.map((it) => (
-                                            <option key={it} value={it}>{it}</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                      </div>
-                                      <div className="mt-3 flex items-center justify-end gap-2">
-                                      <button
-                                        onClick={() => magicFix(idx)}
-                                        disabled={loading}
-                                        className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60"
-                                      >
-                                        <Wand2 className="h-4 w-4" /> <span>Magic Fix</span>
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          const ensured = ensureTriplet(jobs[idx].prompt);
-                                          updatePrompt(idx, ensured);
-                                        }}
-                                        className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40"
-                                      >
-                                        <Cog className="h-4 w-4" /> <span>Aplicar</span>
-                                      </button>
-                                      <button
-                                        onClick={() => toggleDetails(idx)}
-                                        className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
-                                      >
-                                        <Camera className="h-4 w-4" /> <span>Ver Prompt</span>
-                                      </button>
-                                      </div>
-                                      <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
-                                        <textarea
-                                          value={job.prompt}
-                                          onChange={(e) => updatePrompt(idx, e.target.value)}
-                                          className="h-24 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                                        />
-                                        {aiReasoningByJob[idx] ? (
-                                          <p className="mt-1 text-xs text-zinc-400">{aiReasoningByJob[idx]}</p>
-                                        ) : aiReasoningByCharacter[character] ? (
-                                          <p className="mt-1 text-xs text-zinc-400">{aiReasoningByCharacter[character]}</p>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    ))}
+                  </div>
                 </div>
               </div>
-              </div>
-              </section>
+            </section>
           </>
         ) : (
           <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-slate-300">
@@ -2904,8 +3121,6 @@ export default function PlannerView() {
           </div>
         )}
       </div>
-
-      
 
       {selected.size > 0 && (
         <div className="fixed bottom-4 left-0 right-0 mx-auto max-w-6xl px-4">
@@ -2921,16 +3136,12 @@ export default function PlannerView() {
                 <Trash2 className="h-3 w-3" aria-hidden />
                 Eliminar seleccionadas
               </button>
-              <button
-                className="hidden"
-              >
-                
-              </button>
+              <button className="hidden"></button>
             </div>
           </div>
         </div>
       )}
-      
+
       {toast && (
         <div className="fixed top-4 right-4 z-40 rounded-md border border-slate-700 bg-slate-900/90 px-3 py-2 text-sm text-slate-200 shadow">
           {toast.message}
@@ -2954,8 +3165,8 @@ export default function PlannerView() {
               <pre className="text-xs text-slate-200 whitespace-pre-wrap break-words max-h-[60vh] overflow-auto">
                 {dryRunPayload}
               </pre>
+            </div>
           </div>
-        </div>
         </div>
       )}
     </div>
@@ -2991,4 +3202,8 @@ function EngineHealthIndicator() {
       {status === "ok" ? "Motor: Online" : "Motor: Offline"}
     </span>
   );
+}
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function setOpenEditor(arg0: null) {
+  throw new Error("Function not implemented.");
 }

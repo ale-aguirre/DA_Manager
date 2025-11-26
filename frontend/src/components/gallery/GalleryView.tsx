@@ -18,10 +18,7 @@ export default function GalleryView() {
   const [page, setPage] = React.useState<number>(1);
   const [loading, setLoading] = React.useState<boolean>(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [selectedCharacter, setSelectedCharacter] = React.useState<string>("");
-  const [availableCharacters, setAvailableCharacters] = React.useState<
-    string[]
-  >([]);
+  const [selectedCharacter] = React.useState<string>("");
   const [showModal, setShowModal] = React.useState<boolean>(false);
   const [selectedImage, setSelectedImage] = React.useState<SessionImage | null>(
     null
@@ -61,13 +58,7 @@ export default function GalleryView() {
           setItems((prev) => [...prev, ...data]);
           setPage((p) => p + 1);
         }
-        // recolectar personajes
-        const chars = Array.from(
-          new Set(
-            [...(reset ? data : [...items, ...data])].map((it) => it.character)
-          )
-        ).sort();
-        setAvailableCharacters(chars);
+        // recolectar personajes (no se usa en UI actualmente)
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         setError(msg || "Error cargando galería");
@@ -75,7 +66,7 @@ export default function GalleryView() {
         setLoading(false);
       }
     },
-    [baseUrl, page, selectedCharacter, items, overrideBase]
+    [baseUrl, page, selectedCharacter, overrideBase]
   );
 
   React.useEffect(() => {
@@ -207,6 +198,7 @@ export default function GalleryView() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {items.map((it) => (
             <div key={it.path} className="group relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={it.url}
                 alt={it.filename}
