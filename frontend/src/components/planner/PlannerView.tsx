@@ -408,6 +408,7 @@ export default function PlannerView() {
   const [reforgeUpscalers, setReforgeUpscalers] = React.useState<string[]>([]);
   const [refreshingUpscalers, setRefreshingUpscalers] = React.useState(false);
   const [upscalerVersion, setUpscalerVersion] = React.useState(0);
+  const [globalCheckpoint, setGlobalCheckpoint] = React.useState<string | null>(null);
   const [reforgeOptions, setReforgeOptionsState] = React.useState<{
     current_vae: string;
     current_clip_skip: number;
@@ -460,6 +461,13 @@ export default function PlannerView() {
   const [activeCharacter, setActiveCharacter] = React.useState<string | null>(
     null
   );
+
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem("planner_checkpoint_global");
+      setGlobalCheckpoint(raw && raw.trim() ? raw : null);
+    } catch {}
+  }, []);
 
   React.useEffect(() => {
     // Abrir prompt por defecto para todos los jobs existentes
@@ -717,11 +725,13 @@ export default function PlannerView() {
         if (activeCharacter) {
           const current =
             techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
-          const first = cps && cps.length > 0 ? cps[0] : "";
-          if (!current && first) {
-            setTechConfig(activeCharacter, { checkpoint: first });
+          const fallback = (globalCheckpoint && cps.includes(globalCheckpoint))
+            ? globalCheckpoint
+            : (cps && cps.length > 0 ? cps[0] : "");
+          if (!current && fallback) {
+            setTechConfig(activeCharacter, { checkpoint: fallback });
             try {
-              await postReforgeSetCheckpoint(first);
+              await postReforgeSetCheckpoint(fallback);
             } catch {}
           }
         }
@@ -731,7 +741,7 @@ export default function PlannerView() {
         setTimeout(() => setToast(null), 2500);
       }
     })();
-  }, []);
+  }, [activeCharacter, globalCheckpoint]);
   const refreshCheckpoints = async () => {
     try {
       setRefreshingCheckpoints(true);
@@ -1697,13 +1707,15 @@ export default function PlannerView() {
               </label>
               <select
                 value={
-                  techConfigByCharacter[activeCharacter!]?.checkpoint ?? ""
+                  techConfigByCharacter[activeCharacter!]?.checkpoint ?? globalCheckpoint ?? ""
                 }
                 onChange={async (e) => {
                   const title = e.target.value;
                   setTechConfig(activeCharacter, { checkpoint: title });
                   try {
                     if (title) await postReforgeSetCheckpoint(title);
+                    setGlobalCheckpoint(title);
+                    try { localStorage.setItem("planner_checkpoint_global", title); } catch {}
                   } catch {}
                 }}
                 className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
@@ -1888,47 +1900,10 @@ export default function PlannerView() {
               <div className="p-3">
                 <div className="grid grid-cols-12 gap-4 items-start">
 
-                  {/* Panel izquierdo: Lore Context y configuraciones del sistema */}
-                  <div className="col-span-12 md:col-span-7 md:order-1">
+                  <div className="col-span-12 md:col-span-12 md:order-1">
                     <div className="rounded-lg border border-slate-800 bg-slate-900 p-3">
                       <div className="section-title"><Cog className="section-title__icon" aria-hidden /><span>Panel de Configuración</span></div>
-                      {/* Lore Context */}
-                      <div>
-                        <label className="text-xs uppercase tracking-wide text-slate-400">
-                          Lore Context
-                        </label>
-                        <div className="mt-1 flex gap-2">
-                          <textarea
-                            value={loreByCharacter[activeCharacter] || ""}
-                            onChange={(e) =>
-                              setLoreByCharacter((prev) => {
-                                const next = {
-                                  ...prev,
-                                  [activeCharacter]: e.target.value,
-                                };
-                                localStorage.setItem(
-                                  "planner_lore",
-                                  JSON.stringify(next)
-                                );
-                                return next;
-                              })
-                            }
-                            className="h-20 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-slate-200"
-                          />
-                          <button
-                            onClick={() => analyzeLore(activeCharacter)}
-                            className="inline-flex items-center gap-2 rounded-md border border-indigo-700 bg-indigo-700/20 px-3 py-2 text-indigo-100 hover:bg-indigo-700/30"
-                          >
-                            <Search className="h-4 w-4" /> Analizar
-                          </button>
-                          {loading && (
-                            <span className="ml-2 inline-flex items-center gap-1 text-xs text-indigo-200">
-                              <Brain className="h-4 w-4 animate-pulse" />{" "}
-                              Pensando...
-                            </span>
-                          )}
-                        </div>
-                      </div>
+
 
                       <div className="mt-4">
                         <div className="mb-2 flex items-center justify-between">
