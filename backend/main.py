@@ -66,6 +66,40 @@ def sanitize_filename(name: str) -> str:
         cleaned = cleaned.replace("__", "_")
     return cleaned or "unknown"
 
+async def canonicalize_character_name(name: str) -> str:
+    try:
+        cache = FACTORY_STATE.get("canonical_cache") or {}
+        key = (name or "").strip()
+        if key in cache:
+            return cache[key]
+        base = sanitize_filename(name)
+        need = any(ord(c) > 127 for c in key)
+        if not need:
+            cache[key] = base
+            FACTORY_STATE["canonical_cache"] = cache
+            return base
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            cache[key] = base
+            FACTORY_STATE["canonical_cache"] = cache
+            return base
+        client = Groq(api_key=api_key)
+        messages = [
+            {"role": "system", "content": "Return a filesystem-safe ASCII slug for the given character name. Use underscores. Only letters, numbers, underscore or hyphen."},
+            {"role": "user", "content": key},
+        ]
+        completion = await groq_chat_with_fallbacks(client, messages, temperature=0.1)
+        try:
+            content = completion.choices[0].message.content
+        except Exception:
+            content = base
+        out = sanitize_filename(content or base)
+        cache[key] = out
+        FACTORY_STATE["canonical_cache"] = cache
+        return out
+    except Exception:
+        return sanitize_filename(name)
+
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
     id: Optional[int] = None
@@ -1586,18 +1620,37 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
         raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
     # Resolver directorio de salida respetando tokens de entorno
     base_env = Path(OUTPUTS_DIR)
-    dest_dir = base_env / sanitize_filename(character_name)
+    safe_key = await canonicalize_character_name(character_name)
+    dest_dir = base_env / safe_key
     if isinstance(override_dir, str) and override_dir.strip():
         try:
             raw = override_dir.strip()
             # Permitir tokens: OUTPUTS_DIR y {Character}
             resolved = raw.replace("OUTPUTS_DIR", str(base_env))
-            resolved = resolved.replace("{Character}", sanitize_filename(character_name))
+            resolved = resolved.replace("{Character}", safe_key)
             dest_dir = Path(resolved)
         except Exception:
             # Fallback seguro
-            dest_dir = base_env / sanitize_filename(character_name)
-    dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_dir = base_env / safe_key
+    # Intento de creación con saneamiento defensivo para Windows
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        try:
+            safe_leaf = sanitize_filename(dest_dir.name)
+            dest_dir = dest_dir.parent / safe_leaf
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            dest_dir = base_env / safe_key
+            dest_dir.mkdir(parents=True, exist_ok=True)
+    # Subcarpeta por fecha (YYYYMMDD)
+    date_str = datetime.now().strftime("%Y%m%d")
+    date_dir = dest_dir / date_str
+    try:
+        date_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Si por alguna razón falla, usar carpeta base del personaje
+        date_dir = dest_dir
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg = FACTORY_STATE.get("current_config") or {}
     flags = []
@@ -1611,7 +1664,7 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
         suffix += "_" + "_".join(flags)
     if seed_val is not None:
         suffix += f"_{seed_val}"
-    target = dest_dir / f"{ts}{suffix}.png"
+    target = date_dir / f"{ts}{suffix}.png"
     try:
         data = base64.b64decode(image_b64)
         target.write_bytes(data)
@@ -1679,6 +1732,7 @@ FACTORY_STATE: Dict[str, Any] = {
     "last_image_path": None,
     "logs": [],
     "stop_requested": False,
+    "canonical_cache": {},
 }
 
 def _log(msg: str) -> None:
@@ -2336,9 +2390,7 @@ class DeleteLoraRequest(BaseModel):
 
 @app.post("/download-lora")
 async def download_lora(req: DownloadLoraRequest):
-    """Descarga un archivo .safetensors desde Civitai usando cloudscraper y lo guarda en la carpeta de LoRAs.
-    Destino: REFORGE_PATH/../../models/Lora
-    """
+    """Descarga un LoRA y asegura metadatos .civitai.info en la carpeta de LoRAs."""
     if not REFORGE_PATH:
         raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
     if not req.url or not isinstance(req.url, str):
@@ -2348,33 +2400,23 @@ async def download_lora(req: DownloadLoraRequest):
         base = name.strip().lower().replace(" ", "_")
         if not base.endswith(".safetensors"):
             base += ".safetensors"
-        # evitar caracteres peligrosos
         return "".join(c for c in base if c.isalnum() or c in ["_", ".", "-"])
 
     async def _run() -> dict:
         try:
-            base = Path(REFORGE_PATH).resolve()
-            lora_dir = base.parents[1] / "models" / "Lora"
-            lora_dir.mkdir(parents=True, exist_ok=True)
             filename = _safe_name(req.filename or "downloaded_lora.safetensors")
-            target = lora_dir / filename
-
-            def _download():
-                scraper = cloudscraper.create_scraper()
-                with scraper.get(req.url, stream=True, timeout=120) as r:
-                    r.raise_for_status()
-                    with open(target, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=1024 * 1024):  # 1MB
-                            if chunk:
-                                f.write(chunk)
-                return target.stat().st_size
-
-            size = await asyncio.to_thread(_download)
-            return {"status": "ok", "saved": str(target), "size_bytes": size}
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=502, detail=f"Error HTTP al descargar: {str(e)}")
+            char = Path(filename).stem
+            ok = await ensure_lora(char, filename, req.url, _log)
+            if not ok:
+                raise HTTPException(status_code=502, detail="No se pudo descargar/asegurar LoRA")
+            # Buscar ruta guardada
+            lora_dir = get_lora_dir()
+            saved = str((lora_dir / filename).resolve()) if lora_dir else filename
+            return {"status": "ok", "saved": saved}
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Error descargando LORA: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"Error descargando LoRA: {str(e)}")
 
     return await _run()
 

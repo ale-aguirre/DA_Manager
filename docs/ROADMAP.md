@@ -195,9 +195,94 @@ Una vez que la fábrica sea estable, nos enfocamos en la post-producción.
 - [ ] Añadir pruebas unitarias para dedupe de LoRA/tags y `/gallery` encoding.
 - [ ] Revisar sampler/checkpoint defaults desde Planner → Backend para consistencia.
 
-## 🟢 Calidad & Config — 2025-11-25
+## 🟢 Calidad & Refactor — 2025-11-26
 
 ### Ajustes de UX del Planner
+## 🟢 Calidad & Refactor — 2025-11-26
+- [x] Planner: reemplazo del render inline de la Cola de Producción por el componente `ProductionQueue` para evitar duplicación y mejorar mantenibilidad.
+- [x] Verificación: ESLint sin errores (solo warnings no críticos) y `tsc --noEmit` OK.
+ 
+## 🟢 Planner UI V5 — Refactor Arquitectónico — 2025-11-26
+
+### Decisiones
+- Panel Técnico: Multi-LoRA Selector, Prompts Positivo/Negativo, Checkpoint, VAE, Clip Skip, botón "Actualizar tech" y botón "Generar" con acciones inferiores (Guardar, Borrar, Cargar Positivo/Negativo/Tags).
+- Control Panel: Sliders (Width/Height, Steps, CFG), Hires Fix, Hires Steps, Denoise, Upscaler y ADetailer; el botón "Generar" debe estar siempre visible.
+- Cola de Producción: lista de tarjetas con edición rápida, intensidad, detalles y borrado.
+- Arquitectura estricta: tipos en `src/types/planner.ts`, llamadas crudas en `src/lib/api.ts`, lógica de negocio en `src/helpers/planner.ts` (funciones puras: `initTechBootstrap`, `generateDrafts`, `constructFinalPrompt`).
+
+### Estado
+- `PlannerView.tsx` queda como contenedor de estado (`useState`/`useEffect`), delegando lógica a helpers y UI a subcomponentes presentacionales.
+- Persistencias críticas en `localStorage` (e.g., `paramTab`, `planner_context`, `planner_tech`, `planner_config`).
+- Silenciador aplicado para `<img>` en producción local acorde a política MVP.
+
+## 🔶 Radar → Planificación V2 — Flujo de Carrito y Descargas — 2025-11-26
+
+### Qué
+- Agregar “carrito visual” en Radar (barra inferior): miniaturas y nombres truncados (16 caracteres, con tooltip opcional) de los ítems seleccionados (Personajes, Estilos, Ropa, Poses, etc.).
+- Modal de confirmación al pulsar `Enviar a Planificación` que:
+  - Lista ítems a descargar (LoRAs + `civitai.info`) con progreso por elemento.
+  - Permite Cancelar (retorna al Radar, conservando selección y marcando qué se descargó) o Aceptar (continúa flujo).
+- Tras Aceptar, mostrar Loader full-screen indicando que la IA está trabajando sobre los prompts.
+- Generación de jobs: aplicar solo el primer trigger word por LoRA de personaje; respetar `batch_count` por personaje (ej.: 5 personajes × batch_count=2 → 10 jobs en total, 2 por personaje).
+- Soporte de LoRA global vs por-job: LoRAs de estilo/mejora visual se pueden aplicar globalmente; los LoRAs de personaje se aplican por-job sin duplicar listas de personajes. Sección separada en Planificación para cargar LoRA global y por-job.
+- Invariante: no modificar el `base_prompt` global/preset por enviar desde Radar.
+- No crear listas independientes por cada ítem: múltiples selecciones (e.g., 2 personajes + estilo + ropa) producen un único plan coherente con LoRAs aplicados en el alcance elegido.
+
+### Cómo
+- Radar: añadir estado de “carrito” unificado y vista compacta; implementar modal con pipeline de descargas (pre-check, sanitización de nombre, progreso, cancelación segura).
+- Planner: ajustar defaults técnicos para respetar `batch_count`=1 cuando no está definido; integración de LoRA global/por-job con un solo trigger por LoRA de personaje.
+- Helpers: mejorar extractores (Location/Expression) para aceptar sinónimos y no depender estrictamente del orden final del prompt.
+- Backend: mantener pre-checks de existencia, rutas derivadas de `LORA_PATH`, y evitar vacíos críticos (fallbacks). No hay cambios de contratos.
+
+### Validación
+- E2E: Seleccionar combinaciones en Radar, confirmar en modal, verificar descargas, transición con Loader y creación de jobs por personaje × batch_count.
+- Unit: verificación de “primer trigger” aplicado; distribución correcta de jobs; merge no destructivo del `base_prompt`.
+- Manual: UI compacta (WCAG AA), sin textos hardcodeados (usar `copy_blocks`/`site_settings`).
+
+### Estado
+- Pendiente de implementación (UI/flows/modal/progreso/ajustes de helpers y defaults).
+
+### Preservación de funcionalidad
+- Batch Count intacto en el contenedor y visible en panel.
+- Multi-LoRA Selector integrado en Panel Técnico con pesos (`extraLorasWeighted`).
+- Fallbacks obligatorios para Outfit/Pose/Location (no vacíos) usando `resources`.
+
+### Próximos pasos
+- Tipar `cps: string[]` en `initTechBootstrap` para eliminar error de TypeScript.
+- Eliminar `any` de `ai_meta` en `ProductionQueue.tsx` y mantener warning `<img>` silenciado bajo directiva.
+- Ubicar "Generar" en posición fija y consolidar acciones inferiores en Panel Técnico.
+
+---
+
+## 🔥 OBJETIVO PRINCIPAL — Reducción de `PlannerView.tsx`
+
+`PlannerView.tsx` debe reducirse drásticamente, delegando la lógica a `helpers` y la UI a sub-componentes "tontos" (Stateless/Presentational), manteniendo la gestión de estado centralizada.
+
+### Reglas de Arquitectura de Carpetas
+- `src/types/planner.ts`: definir TODAS las interfaces (`TechConfig`, `PlannerJob`, `ResourceMeta`). Los componentes deben importar los tipos, no redefinirlos.
+- `src/lib/api.ts`: solo llamadas crudas a la API (fetch). Usar las funciones existentes.
+- `src/helpers/planner.ts`: mover AQUÍ toda la lógica de negocio pesada.
+  - `initTechBootstrap()`: lógica de carga inicial (función pura, sin hooks).
+  - `generateDrafts()`: lógica de creación de jobs (función pura; contenedor realiza el fetch).
+  - `constructFinalPrompt()`: ensamblaje de strings (función pura).
+
+### Componente Contenedor (`PlannerView.tsx`)
+- Único lugar con `useState` y `useEffect` principales.
+- Responsabilidades:
+  1) Mantener `techConfig` y lista `jobs`.
+  2) Llamar a `helpers` ante eventos.
+  3) Pasar datos y `handleUpdate` a hijos.
+
+### Sub-componentes (UI Pura)
+- `TechnicalModelPanel.tsx` (Panel Superior Izquierdo): Renderizar Checkpoint, VAE, ClipSkip, prompts positivo/negativo y **Botón Generar** con botones inferiores (Guardar, Borrar, Cargar Positivo/Negativo/Tags). Prohibido fetch interno.
+- `ControlPanel.tsx`: Renderizar Sliders (Width/Height, Steps, CFG), Hires Fix, ADetailer; **Generar** visible siempre.
+- `ProductionQueue.tsx`: Renderizar la lista de tarjetas.
+
+### Preservación de Funcionalidad (Vital)
+- Mantener lógica general.
+- Mantener **Batch Count**.
+- Mantener **Multi-LoRA Selector**.
+- Mantener estilo visual "Technical Dashboard".
 - Rediseño del panel técnico con tabs: `Generation / Hires / ADetailer`.
 - Botón principal renombrado a `Generar` para claridad.
 - Etiqueta `Prompt Base (Positivo)` renombrada a `Prompt Positivo`.
@@ -271,6 +356,24 @@ Una vez que la fábrica sea estable, nos enfocamos en la post-producción.
 - Se agregó `docs/STATUS_REPORT_2025-11-24.md` con detalles, riesgos y plan de mejora.
 ### Radar — Paginación (Pendiente)
 - [ ] Implementar paginación revisada para Radar (todas las pestañas), evitando repetición de resultados entre páginas.
+
+## 🟢 Planner UX & Safety — 2025-11-26
+
+### Type Safety
+- [x] Type guards para `ai_meta` en `PlannerView.tsx` para evitar acceso a propiedades de tipo `unknown`.
+
+### Control Panel
+- [x] Botón "Generar" persistente y visible siempre en `ControlPanel.tsx` (fuera de tabs), manteniendo el flujo de regeneración de drafts.
+
+### Producción
+- [x] Silenciador `<img>` en `ProductionQueue.tsx` (`loading="lazy"`, `decoding="async"`, `referrerPolicy="no-referrer"`) bajo política MVP local.
+
+### Calidad
+- [x] `tsc --noEmit` sin errores.
+- [x] ESLint con warnings tolerables (`@next/next/no-img-element`) alineados a reglas del proyecto.
+
+### Arquitectura (continuidad)
+- [x] Bootstrap técnico con función pura `computeTechBootstrap` en helpers; contenedor ejecuta fetch y aplica sugerencias.
   - Observación actual: al avanzar de página, Civitai devuelve items repetidos con algunos `sort/period`; el frontend deduplica pero no aporta nuevos LoRAs.
   - Próximo: diseñar estrategia de paginación con combinación de `sort/period` y `query` y/o “cargar más” acumulativo con señalización de “0 nuevos”.
   - Validación: ver nuevos ids por página; indicador de items agregados; rendimiento estable.

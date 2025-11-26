@@ -17,3 +17,42 @@
 ## Próximos pasos
 - Parametrización completa de BASE_URL en frontend.
 - Unificación total de utilidades de API y manejo de errores.
+
+---
+
+## Planner UI V5 — Estado (2025-11-26)
+
+### Alcance Aprobado
+- Panel Técnico: incluye Multi-LoRA, Prompts Positivo/Negativo, Checkpoint, VAE, Clip Skip, botón "Actualizar tech" y "Generar" con acciones inferiores (Guardar/Borrar/Cargar Positivo/Negativo/Tags).
+- Control Panel: sliders técnicos (Width/Height, Steps, CFG), Hires/ADetailer; "Generar" siempre visible.
+- Producción: tarjetas con edición rápida, intensidad y borrado.
+
+### Arquitectura
+- `PlannerView.tsx` como contenedor único de estado.
+- Tipos en `src/types/planner.ts`.
+- API cruda en `src/lib/api.ts`.
+- Lógica de negocio en `src/helpers/planner.ts` (`initTechBootstrap`, `generateDrafts`, `constructFinalPrompt`), funciones puras.
+
+### Reglas operativas
+- Fallbacks obligatorios para Outfit/Pose/Location.
+- Silenciador permitido para `<img>` bajo MVP local.
+- Puertos activos: Front 3000 / Back 8000.
+
+---
+
+### Objetivo Principal
+- Reducir `PlannerView.tsx` y delegar lógica a `helpers` y UI a sub-componentes presentacionales.
+
+### Arquitectura de Carpetas (estricta)
+- Tipos en `src/types/planner.ts` (e.g., `TechConfig`, `PlannerJob`, `ResourceMeta`).
+- API cruda en `src/lib/api.ts`.
+- Lógica de negocio en `src/helpers/planner.ts` (`initTechBootstrap`, `generateDrafts`, `constructFinalPrompt`) como funciones puras.
+
+### Componentes
+- `TechnicalModelPanel`: Checkpoint/VAE/ClipSkip, prompts Pos/Neg, Generar y acciones inferiores.
+- `ControlPanel`: sliders, Hires, ADetailer; Generar visible.
+- `ProductionQueue`: tarjetas y acciones.
+
+### Preservación
+- Lógica de Batch Count y Multi-LoRA Selector intactas.
+- Estilo visual técnico y densidad alta.

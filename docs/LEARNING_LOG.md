@@ -95,3 +95,20 @@
 - Cause: Toggle duplicado en Sidebar y paddings/gaps grandes en secciones del Planner.
 - Fix: Eliminar toggle interno del Sidebar y ampliar el global; reducir `p-4→p-3`, `gap-6→gap-4`, `space-y-6→space-y-4`; compactar lista de jobs a `space-y-2`; renombrar etiquetas a “Prompt Positivo” y botón principal a “Generar”.
 - Prevention: Checklist de UX denso (“Technical Dashboard”) antes de cerrar tareas; evitar controles redundantes; preferir toggles globales.
+
+## 2025-11-26
+- Issue: Errores de TypeScript por `ai_meta` (`unknown`) y advertencias de `<img>` en producción.
+- Cause: Acceso directo a propiedades de `ai_meta` sin type guards y uso intencional de `<img>` por política del proyecto.
+- Fix: Type guards en `PlannerView.tsx` para `outfit/lighting/camera`; silenciador en `<img>` (`loading="lazy"`, `decoding="async"`, `referrerPolicy="no-referrer"`). Botón "Generar" persistente en `ControlPanel` para visibilidad constante.
+- Prevention: Mantener tipos en `src/types`, validar con `tsc --noEmit` y tolerar warnings acordados de ESLint cuando la política del proyecto lo indica.
+## 2025-11-26 11:43
+- Issue: Duplicación de UI en Planner (Cola de Producción inline y componente separado).
+- Cause: Inserción del componente `ProductionQueue` sin eliminar el bloque inline previo.
+- Fix: Eliminación del render inline en `PlannerView.tsx` y uso exclusivo de `ProductionQueue`; ejecución de ESLint (warnings) y `tsc --noEmit` OK.
+- Prevention: Al refactorizar vistas, reemplazar completamente bloques antiguos y correr validaciones antes de cerrar; evitar duplicación de props/estado.
+
+## 2025-11-26 12:00
+- Issue: Especificación incompleta del flujo Radar→Planificación V2 (truncado y secciones LoRA).
+- Cause: Roadmap describía "N caracteres" y no explicitaba separación global vs por-job.
+- Fix: Actualización de `docs/ROADMAP.md` fijando truncado a 16 y secciones separadas para LoRA global/por-job.
+- Prevention: Documentar requisitos concretos (longitudes, alcances) antes de implementar UI; validar con ESLint y `tsc --noEmit` tras cambios.

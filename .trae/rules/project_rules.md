@@ -14,6 +14,8 @@ Local full-stack application for automated NSFW Anime production using Stable Di
 - **NEVER return `null`, `undefined`, or empty strings** to the Frontend for critical fields (Outfit, Pose, Location).
 - **FALLBACK LOGIC IS MANDATORY:** If AI (Groq) fails or returns empty data, the Backend MUST select a random line from `backend/resources/`.
 - **The UI must never show "(vacio)"**. It is better to show a random valid value than an empty error.
+- Always check /docs for the latest tasks.
+- if you want to check lint, with npm run lint, open a new terminal and run it.
 
 ### 🎨 UI/UX STANDARDS (High Density)
 
