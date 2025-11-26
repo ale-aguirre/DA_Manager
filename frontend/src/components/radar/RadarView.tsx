@@ -255,10 +255,9 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
           <button
             onClick={() => {
               const q = query.trim();
-              if (q.length >= 3) {
-                onScan(period, sort, q);
-                lastFiredRef.current = q;
-              }
+              const qArg = q.length >= 3 ? q : undefined;
+              onScan(period, sort, qArg);
+              if (qArg) lastFiredRef.current = qArg;
             }}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-4 py-2 text-sm font-medium text-violet-100 hover:bg-violet-600/30 hover:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-600 disabled:opacity-60 cursor-pointer transition-all active:scale-95"

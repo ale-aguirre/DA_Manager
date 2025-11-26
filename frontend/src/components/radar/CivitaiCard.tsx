@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import Image from "next/image";
+// eslint-disable-next-line @next/next/no-img-element
 import { ImageOff, Heart, Download, Calendar, ExternalLink, CheckCircle } from "lucide-react";
 import type { CivitaiModel, CivitaiImage } from "../../types/civitai";
 
@@ -123,13 +123,10 @@ export default function CivitaiCard({ model, index, selected, onToggle }: {
               onError={() => setVideoError(true)}
             />
           ) : imageUrl && !imageError ? (
-            <Image
+            <img
               src={imageUrl}
               alt={model.name || "Civitai preview"}
-              fill
-              className={`object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
-              sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 20vw"
-              priority={index <= 8}
+              className={`h-full w-full object-cover transition-transform duration-300 ${selected ? "opacity-60 saturate-90 brightness-90 scale-100" : "group-hover:scale-105"}`}
               onError={() => setImageError(true)}
             />
           ) : (
