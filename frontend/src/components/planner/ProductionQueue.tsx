@@ -10,7 +10,7 @@ import {
   User,
   Zap,
   Bot,
-  Sparkles, // Nuevo icono para Alter Fate
+  Sparkles,
   RefreshCw,
   Download,
   ExternalLink,
@@ -172,7 +172,7 @@ export default function ProductionQueue(props: {
         } else if (modelId) {
           url = `https://civitai.com/models/${modelId}`;
         }
-      } catch {}
+      } catch { }
       // Fallback a meta de la tarjeta si no hubo info local
       if (!url) {
         const raw = metaByCharacter[character]?.download_url || "";
@@ -397,7 +397,7 @@ export default function ProductionQueue(props: {
                             "planner_lore_context",
                             JSON.stringify(next)
                           );
-                        } catch {}
+                        } catch { }
                         return next;
                       });
                     }}
@@ -488,9 +488,9 @@ export default function ProductionQueue(props: {
                 <ul className="space-y-2">
                   {perCharacter[character]?.jobs.map((job, i) => {
                     const idx = perCharacter[character]!.indices[i];
-                    const triplet = extractTriplet(job.prompt);
+                    const triplet = extractTriplet(job.prompt, resources || undefined);
                     const intensity = getIntensity(job.prompt);
-                    const extras = extractExtras(job.prompt);
+                    const extras = extractExtras(job.prompt, resources || undefined);
                     const loraStem = character
                       .toLowerCase()
                       .replace(/\s+/g, "_");
@@ -499,8 +499,8 @@ export default function ProductionQueue(props: {
                       intensity.label === "SFW"
                         ? "border-green-600"
                         : intensity.label === "ECCHI"
-                        ? "border-yellow-500"
-                        : "border-red-600";
+                          ? "border-yellow-500"
+                          : "border-red-600";
                     return (
                       <li
                         key={`${character}-${i}`}
@@ -557,8 +557,8 @@ export default function ProductionQueue(props: {
                               {Array.isArray(
                                 metaByCharacter[character]?.trigger_words
                               ) &&
-                              metaByCharacter[character]!.trigger_words!
-                                .length > 0 ? (
+                                metaByCharacter[character]!.trigger_words!
+                                  .length > 0 ? (
                                 <span className="text-zinc-400">
                                   {metaByCharacter[
                                     character
@@ -574,10 +574,10 @@ export default function ProductionQueue(props: {
                                   {typeof job?.ai_meta === "object" &&
                                     job?.ai_meta !== null &&
                                     "outfit" in
-                                      (job.ai_meta as Record<
-                                        string,
-                                        unknown
-                                      >) && (
+                                    (job.ai_meta as Record<
+                                      string,
+                                      unknown
+                                    >) && (
                                       <span className="inline-flex items-center text-blue-300">
                                         <Bot className="h-3 w-3" />
                                       </span>
@@ -716,9 +716,9 @@ export default function ProductionQueue(props: {
                                   <option value="">(vacío)</option>
                                   {[
                                     ...(extras.expression &&
-                                    !(resources?.expressions || []).includes(
-                                      extras.expression
-                                    )
+                                      !(resources?.expressions || []).includes(
+                                        extras.expression
+                                      )
                                       ? [extras.expression]
                                       : []),
                                     ...((resources?.expressions ||
@@ -768,9 +768,6 @@ export default function ProductionQueue(props: {
                                 <Sparkles className="h-4 w-4 text-violet-400" />
                                 <span>Alter Fate</span>
                               </button>
-                              
-                              {/* Botón Random ELIMINADO */}
-                              {/* Botón Ver Prompt ELIMINADO */}
                             </div>
                             <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
                               <textarea

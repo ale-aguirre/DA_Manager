@@ -11,19 +11,78 @@ export function splitPrompt(prompt: string): string[] {
     .filter(Boolean);
 }
 
-export function extractTriplet(prompt: string): {
+export function extractTriplet(
+  prompt: string,
+  resources?: { outfits: string[]; poses: string[]; locations: string[] }
+): {
   outfit?: string;
   pose?: string;
   location?: string;
 } {
-  // Esta función es heurística y débil, se mantiene por compatibilidad
-  return {};
+  const tokens = splitPrompt(prompt);
+  const result: { outfit?: string; pose?: string; location?: string } = {};
+
+  if (!resources) return result;
+
+  // Helper para buscar coincidencia
+  const findMatch = (list: string[]) => {
+    return tokens.find((t) => {
+      const low = t.toLowerCase();
+      return list.some((r) => {
+        const rLow = r.toLowerCase();
+        // Match exacto o contenido si es lo suficientemente largo
+        return low === rLow || (rLow.length > 3 && low.includes(rLow));
+      });
+    });
+  };
+
+  if (resources.outfits) result.outfit = findMatch(resources.outfits);
+  if (resources.poses) result.pose = findMatch(resources.poses);
+  if (resources.locations) result.location = findMatch(resources.locations);
+
+  return result;
 }
 
 export function extractExtras(
-  prompt: string
-): Record<string, string | undefined> {
-  return {};
+  prompt: string,
+  resources?: {
+    lighting?: string[];
+    camera?: string[];
+    expressions?: string[];
+    hairstyles?: string[];
+  }
+): {
+  lighting?: string;
+  camera?: string;
+  expression?: string;
+  hairstyle?: string;
+} {
+  const tokens = splitPrompt(prompt);
+  const result: {
+    lighting?: string;
+    camera?: string;
+    expression?: string;
+    hairstyle?: string;
+  } = {};
+
+  if (!resources) return result;
+
+  const findMatch = (list: string[]) => {
+    return tokens.find((t) => {
+      const low = t.toLowerCase();
+      return list.some((r) => {
+        const rLow = r.toLowerCase();
+        return low === rLow || (rLow.length > 3 && low.includes(rLow));
+      });
+    });
+  };
+
+  if (resources.lighting) result.lighting = findMatch(resources.lighting);
+  if (resources.camera) result.camera = findMatch(resources.camera);
+  if (resources.expressions) result.expression = findMatch(resources.expressions);
+  if (resources.hairstyles) result.hairstyle = findMatch(resources.hairstyles);
+
+  return result;
 }
 
 export function mergePositive(
@@ -76,7 +135,7 @@ export function rebuildPromptWithTriplet(
     if (resourceList && resourceList.length > 0) {
       tokens = tokens.filter((t) => {
         const lowToken = t.toLowerCase();
-        
+
         // 1. Si es EXACTAMENTE el nuevo valor, mantenlo (evita borrar y re-agregar innecesariamente)
         if (lowToken === newValClean.toLowerCase()) return true;
 
@@ -90,7 +149,7 @@ export function rebuildPromptWithTriplet(
         });
 
         // Si es un recurso viejo, DEVUELVE FALSE para borrarlo del array.
-        return !isResource; 
+        return !isResource;
       });
     }
 
@@ -155,7 +214,7 @@ export const handleRefreshTech = async (
     await postReforgeRefresh();
     await refreshVaes();
     await refreshCheckpoints();
-  } catch {}
+  } catch { }
 };
 
 export const refreshUpscalersHelper = async (
@@ -197,7 +256,7 @@ export const refreshVaesHelper = async (setVaes: (list: string[]) => void) => {
     const { getReforgeVAEs } = await import("../lib/api");
     const list = await getReforgeVAEs();
     setVaes(list);
-  } catch {}
+  } catch { }
 };
 
 export const refreshCheckpointsHelper = async (

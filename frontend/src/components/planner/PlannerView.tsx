@@ -177,12 +177,12 @@ export default function PlannerView() {
       if (raw === "generation" || raw === "hires" || raw === "adetailer") {
         setParamTab(raw as "generation" | "hires" | "adetailer");
       }
-    } catch {}
+    } catch { }
   }, []);
   React.useEffect(() => {
     try {
       localStorage.setItem("planner_param_tab", paramTab);
-    } catch {}
+    } catch { }
   }, [paramTab]);
 
   const onRegenerateDrafts = async () => {
@@ -207,7 +207,7 @@ export default function PlannerView() {
         const next = [...others, ...res.jobs];
         try {
           localStorage.setItem("planner_jobs", JSON.stringify(next));
-        } catch {}
+        } catch { }
         return next;
       });
       try {
@@ -252,7 +252,7 @@ export default function PlannerView() {
           });
           try {
             localStorage.setItem("planner_context", JSON.stringify(next));
-          } catch {}
+          } catch { }
           return next;
         });
       } catch {
@@ -393,8 +393,8 @@ export default function PlannerView() {
     if (!neg) {
       const presetNeg =
         preset &&
-        typeof preset.negativePrompt === "string" &&
-        preset.negativePrompt.trim()
+          typeof preset.negativePrompt === "string" &&
+          preset.negativePrompt.trim()
           ? preset.negativePrompt.trim()
           : "bad quality, worst quality, worst detail, sketch, censor";
       patchTech.negativePrompt = presetNeg;
@@ -543,7 +543,7 @@ export default function PlannerView() {
         try {
           const lr = await getLocalLoras();
           setLocalLoras(Array.isArray(lr?.files) ? lr.files : []);
-        } catch {}
+        } catch { }
       } catch (e) {
         console.warn("Bootstrap técnico falló", e);
       }
@@ -562,14 +562,14 @@ export default function PlannerView() {
       globalCheckpoint && checkpoints.includes(globalCheckpoint)
         ? globalCheckpoint
         : checkpoints.length > 0
-        ? checkpoints[0]
-        : "";
+          ? checkpoints[0]
+          : "";
     if (!fallback) return;
     setTechConfig(activeCharacter, { checkpoint: fallback });
     (async () => {
       try {
         await postReforgeSetCheckpoint(fallback);
-      } catch {}
+      } catch { }
     })();
     autoselectOnceRef.current[activeCharacter] = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -747,62 +747,76 @@ export default function PlannerView() {
   };
 
   // --- FUNCIÓN MAESTRA: ARQUITECTO DE PROMPTS ---
+  // --- ARQUITECTO DE PROMPTS V2 (SOPORTE COMPLETO DE RECURSOS) ---
   const reconstructJobPrompt = async (
     characterName: string,
-    scene: { outfit?: string; pose?: string; location?: string },
+    // Ahora aceptamos tripletas Y extras
+    sceneChanges: {
+      outfit?: string; pose?: string; location?: string;
+      lighting?: string; camera?: string; expression?: string; hairstyle?: string;
+    },
     currentPromptForFallback: string = ""
   ): Promise<string> => {
-    // 1. Identidad (LoRA y Trigger)
-    const sanitize = (s: string) =>
-      s
-        .toLowerCase()
-        .replace(/\s+/g, "_")
-        .replace(/[^a-z0-9_\-]/g, "");
+
+    // 1. IDENTIDAD (LoRA + Trigger)
+    const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
     const loraTag = `<lora:${sanitize(characterName)}:0.8>`;
 
-    // Trigger: Intentar buscarlo en caché o metadatos. Si falla, usar nombre simple.
+    // Trigger logic (con caché local o fallback)
     let firstTrig = characterName.split(" - ")[0];
     try {
       const info = await getLocalLoraInfo(characterName);
-      if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) {
-        firstTrig = info.trainedWords[0];
-      } else if (metaByCharacter[characterName]?.trigger_words?.length) {
-        firstTrig = metaByCharacter[characterName]!.trigger_words![0];
-      }
-    } catch {}
+      if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) firstTrig = info.trainedWords[0];
+      else if (metaByCharacter[characterName]?.trigger_words?.length) firstTrig = metaByCharacter[characterName]!.trigger_words![0];
+    } catch { }
 
-    // 2. Prompt Global (Estilo del Usuario) - SIEMPRE VISIBLE
+    // 2. PROMPT GLOBAL (Estilo/Calidad) - SIEMPRE INYECTADO
     const globalPrompt = plannerContext[characterName]?.base_prompt || "";
 
-    // 3. Escena (Outfit + Pose + Location)
-    // Intentar rescatar datos faltantes del prompt anterior si es necesario
-    const fallbackTriplet = extractTriplet(currentPromptForFallback);
-    const outfit = scene.outfit || fallbackTriplet.outfit || "";
-    const pose = scene.pose || fallbackTriplet.pose || "";
-    const location = scene.location || fallbackTriplet.location || "";
-    const scenePart = [outfit, pose, location].filter(Boolean).join(", ");
+    // 3. ESCENA & EXTRAS (La parte variable del Job)
+    // Extraemos lo que ya existe para no perder datos si no se pasan en sceneChanges
+    // Pasamos resources para una extracción robusta
+    const currentTriplet = extractTriplet(currentPromptForFallback, resources || undefined);
+    const currentExtras = extractExtras(currentPromptForFallback, resources || undefined);
 
-    // 4. Calidad
+    // Fusión: Nuevo valor > Valor existente > Vacío
+    const outfit = sceneChanges.outfit !== undefined ? sceneChanges.outfit : (currentTriplet.outfit || "");
+    const pose = sceneChanges.pose !== undefined ? sceneChanges.pose : (currentTriplet.pose || "");
+    const location = sceneChanges.location !== undefined ? sceneChanges.location : (currentTriplet.location || "");
+
+    const lighting = sceneChanges.lighting !== undefined ? sceneChanges.lighting : (currentExtras.lighting || "");
+    const camera = sceneChanges.camera !== undefined ? sceneChanges.camera : (currentExtras.camera || "");
+    const expression = sceneChanges.expression !== undefined ? sceneChanges.expression : (currentExtras.expression || "");
+
+    // Lógica Hairstyle: Si es "original" o vacío explícito, lo ignoramos.
+    let hairstyle = sceneChanges.hairstyle !== undefined ? sceneChanges.hairstyle : (currentExtras.hairstyle || "");
+    if (hairstyle.toLowerCase() === "original" || hairstyle.toLowerCase() === "default") hairstyle = "";
+
+    // Construcción de bloques
+    const scenePart = [outfit, pose, location].filter(Boolean).join(", ");
+    const extrasPart = [lighting, camera, expression, hairstyle].filter(Boolean).join(", ");
+
+    // 4. CALIDAD FINAL
     const quality = "masterpiece, best quality, absurdres";
 
-    // ENSAMBLAJE FINAL (Orden Estricto)
-    // <LoRA>, Trigger, Global, Escena, Calidad
-    return [loraTag, firstTrig, globalPrompt, scenePart, quality]
-      .map((s) => s.trim())
+    // 5. ENSAMBLAJE FINAL
+    // Orden: <LoRA> + Trigger + [GLOBAL] + [ESCENA] + [EXTRAS] + [CALIDAD]
+    return [loraTag, firstTrig, globalPrompt, scenePart, extrasPart, quality]
+      .map(s => s.trim())
       .filter(Boolean)
       .join(", ");
   };
 
   // Magic Fix
-const magicFix = async (idx: number) => {
+  const magicFix = async (idx: number) => {
     try {
       setLoading(true);
       setToast({ message: "🔮 Alterando el destino..." });
       const job = jobs[idx];
-      
+
       // Pedir nueva escena a la IA
       const res = await magicFixPrompt(job.prompt);
-      
+
       // Reconstruir prompt completo usando la nueva escena + el global existente
       const newPrompt = await reconstructJobPrompt(
         job.character_name,
@@ -811,7 +825,7 @@ const magicFix = async (idx: number) => {
       );
 
       updatePrompt(idx, newPrompt);
-      
+
       // Feedback visual
       const msg = res?.ai_reasoning || `✨ Destino alterado`;
       setAiReasoningByJob((prev) => ({ ...prev, [idx]: msg }));
@@ -825,29 +839,29 @@ const magicFix = async (idx: number) => {
     }
   };
 
-async function analyzeLore(character: string) {
+  async function analyzeLore(character: string) {
     try {
       setLoading(true);
       setError(null);
       setToast({ message: "🧠 La IA está creando escenarios..." });
       const tags = metaByCharacter[character]?.trigger_words || [];
       const batchCount = techConfigByCharacter[character]?.batch_count ?? 1;
-      
+
       const { jobs: rawJobs, lore, ai_reasoning } = await postPlannerAnalyze(character, tags, batchCount);
-      
+
       if (Array.isArray(rawJobs) && rawJobs.length > 0) {
         // Normalizar jobs entrantes: Inyectar Global Prompt y Estructura Correcta
         const normalizedJobs = await Promise.all(rawJobs.map(async (j) => {
-            const triplet = extractTriplet(j.prompt);
-            const cleanPrompt = await reconstructJobPrompt(j.character_name, triplet, j.prompt);
-            return { ...j, prompt: cleanPrompt };
+          const triplet = extractTriplet(j.prompt, resources || undefined);
+          const cleanPrompt = await reconstructJobPrompt(j.character_name, triplet, j.prompt);
+          return { ...j, prompt: cleanPrompt };
         }));
 
         setJobs((prev) => {
           // Reemplazar jobs viejos de este personaje con los nuevos normalizados
           const others = prev.filter(j => j.character_name !== character);
           const next = [...others, ...normalizedJobs];
-          try { localStorage.setItem("planner_jobs", JSON.stringify(next)); } catch {}
+          try { localStorage.setItem("planner_jobs", JSON.stringify(next)); } catch { }
           return next;
         });
       }
@@ -883,7 +897,7 @@ async function analyzeLore(character: string) {
   };
 
   const ensureTriplet = (prompt: string): string => {
-    const t = extractTriplet(prompt);
+    const t = extractTriplet(prompt, resources || undefined);
     const pick = <T extends string>(def: T, arr?: T[]): T => {
       if (!arr || arr.length === 0) return def;
       return arr[Math.floor(Math.random() * arr.length)] as T;
@@ -903,10 +917,10 @@ async function analyzeLore(character: string) {
       { outfit, pose, location },
       resources
         ? {
-            outfits: resources.outfits,
-            poses: resources.poses,
-            locations: resources.locations,
-          }
+          outfits: resources.outfits,
+          poses: resources.poses,
+          locations: resources.locations,
+        }
         : undefined
     );
   };
@@ -944,7 +958,7 @@ async function analyzeLore(character: string) {
   };
 
   // === LÓGICA DE PRODUCCIÓN ===
-const startProduction = async () => {
+  const startProduction = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -954,41 +968,41 @@ const startProduction = async () => {
       try {
         const rawMeta = localStorage.getItem("planner_meta");
         if (rawMeta) resourcesMeta = JSON.parse(rawMeta); // Simplificado para brevedad
-      } catch {}
+      } catch { }
 
       // 2. Preparar Jobs (Solo inyección final de LoRAs Extra)
       const preparedJobs: PlannerJob[] = jobs.map(j => {
-          const tech = techConfigByCharacter[j.character_name] || {};
-          
-          // El prompt en la tarjeta (j.prompt) YA TIENE: LoRA Char + Trigger + Global + Escena + Calidad
-          // Solo necesitamos inyectar los Extra LoRAs antes de la calidad final.
-          
-          // Estrategia segura: Partir por "masterpiece" para insertar antes
-          const parts = j.prompt.split("masterpiece");
-          const mainPart = parts[0];
-          const qualityPart = "masterpiece" + (parts[1] || "");
-          
-          const extraLorasString = (tech.extraLoras || []).map(l => `<lora:${l}:0.7>`).join(", ");
-          
-          // Reconstruir con el ingrediente final
-          const finalPrompt = [mainPart, extraLorasString, qualityPart]
-            .map(s => s?.trim())
-            .filter(Boolean)
-            .join(", ");
-          
-          // Negativo
-          let presetNeg = "bad quality, worst quality, sketch, censor";
-          try {
-             const p = JSON.parse(localStorage.getItem("planner_preset_global") || "{}");
-             if(p.negativePrompt) presetNeg = p.negativePrompt;
-          } catch {}
+        const tech = techConfigByCharacter[j.character_name] || {};
 
-          return {
-            ...j,
-            prompt: finalPrompt,
-            seed: tech.seed ?? -1,
-            negative_prompt: mergeNegative(presetNeg, tech.negativePrompt)
-          };
+        // El prompt en la tarjeta (j.prompt) YA TIENE: LoRA Char + Trigger + Global + Escena + Calidad
+        // Solo necesitamos inyectar los Extra LoRAs antes de la calidad final.
+
+        // Estrategia segura: Partir por "masterpiece" para insertar antes
+        const parts = j.prompt.split("masterpiece");
+        const mainPart = parts[0];
+        const qualityPart = "masterpiece" + (parts[1] || "");
+
+        const extraLorasString = (tech.extraLoras || []).map(l => `<lora:${l}:0.7>`).join(", ");
+
+        // Reconstruir con el ingrediente final
+        const finalPrompt = [mainPart, extraLorasString, qualityPart]
+          .map(s => s?.trim())
+          .filter(Boolean)
+          .join(", ");
+
+        // Negativo
+        let presetNeg = "bad quality, worst quality, sketch, censor";
+        try {
+          const p = JSON.parse(localStorage.getItem("planner_preset_global") || "{}");
+          if (p.negativePrompt) presetNeg = p.negativePrompt;
+        } catch { }
+
+        return {
+          ...j,
+          prompt: finalPrompt,
+          seed: tech.seed ?? -1,
+          negative_prompt: mergeNegative(presetNeg, tech.negativePrompt)
+        };
       });
 
       // 3. Configuración de Grupo (Igual que antes)
@@ -996,25 +1010,25 @@ const startProduction = async () => {
         const tech = techConfigByCharacter[character] || {};
         const conf = configByCharacter[character] || {};
         return {
-            character_name: character,
-            hires_fix: tech.hiresFix ?? true,
-            denoising_strength: conf.denoising ?? 0.35,
-            output_path: conf.outputPath ?? `OUTPUTS_DIR/{Character}/`,
-            steps: tech.steps ?? 30,
-            cfg_scale: tech.cfg ?? 7,
-            sampler: tech.sampler,
-            upscale_by: tech.upscaleBy,
-            upscaler: tech.upscaler,
-            checkpoint: tech.checkpoint,
-            width: tech.width ?? 832,
-            height: tech.height ?? 1216,
-            adetailer_model: (tech.adetailer ?? true) ? (tech.adetailerModel || "face_yolov8n.pt") : undefined,
-            extra_loras: tech.extraLoras || [],
-            hires_steps: tech.hiresSteps,
-            batch_size: tech.batch_size ?? 1,
-            adetailer: tech.adetailer ?? true,
-            vae: tech.vae,
-            clip_skip: tech.clipSkip,
+          character_name: character,
+          hires_fix: tech.hiresFix ?? true,
+          denoising_strength: conf.denoising ?? 0.35,
+          output_path: conf.outputPath ?? `OUTPUTS_DIR/{Character}/`,
+          steps: tech.steps ?? 30,
+          cfg_scale: tech.cfg ?? 7,
+          sampler: tech.sampler,
+          upscale_by: tech.upscaleBy,
+          upscaler: tech.upscaler,
+          checkpoint: tech.checkpoint,
+          width: tech.width ?? 832,
+          height: tech.height ?? 1216,
+          adetailer_model: (tech.adetailer ?? true) ? (tech.adetailerModel || "face_yolov8n.pt") : undefined,
+          extra_loras: tech.extraLoras || [],
+          hires_steps: tech.hiresSteps,
+          batch_size: tech.batch_size ?? 1,
+          adetailer: tech.adetailer ?? true,
+          vae: tech.vae,
+          clip_skip: tech.clipSkip,
         };
       });
 
@@ -1031,15 +1045,15 @@ const startProduction = async () => {
   };
 
   // Helpers de UI
-const applyQuickEdit = async (
+  const applyQuickEdit = async (
     row: number,
     field: "outfit" | "pose" | "location",
     value: string
   ) => {
     const job = jobs[row];
     // Extraer estado actual
-    const currentTriplet = extractTriplet(job.prompt);
-    
+    const currentTriplet = extractTriplet(job.prompt, resources || undefined);
+
     // Crear nueva escena con el cambio aplicado
     const newScene = {
       outfit: currentTriplet.outfit,
@@ -1058,15 +1072,19 @@ const applyQuickEdit = async (
     updatePrompt(row, newPrompt);
   };
 
-  const applyExtrasEdit = (
+  const applyExtrasEdit = async (
     row: number,
     field: "lighting" | "camera" | "expression" | "hairstyle",
     value: string
   ) => {
-    const currentExtras = extractExtras(jobs[row].prompt);
-    const nextExtras = { ...currentExtras, [field]: value || undefined };
-    const next = rebuildPromptWithExtras(jobs[row].prompt, nextExtras);
-    updatePrompt(row, next);
+    const job = jobs[row];
+    // Pasamos el cambio específico al arquitecto
+    const newPrompt = await reconstructJobPrompt(
+      job.character_name,
+      { [field]: value }, // Solo enviamos lo que cambió, el resto se rescata
+      job.prompt
+    );
+    updatePrompt(row, newPrompt);
   };
 
   const handleDeleteJob = (character: string, localIndex: number) => {
@@ -1305,7 +1323,7 @@ const applyQuickEdit = async (
                         "planner_context",
                         JSON.stringify(next)
                       );
-                    } catch {}
+                    } catch { }
                     return next;
                   });
                 }}
@@ -1476,10 +1494,10 @@ const applyQuickEdit = async (
                                           "planner_context",
                                           JSON.stringify(next)
                                         );
-                                      } catch {}
+                                      } catch { }
                                       return next;
                                     });
-                                  } catch {}
+                                  } catch { }
                                   setOpenPresetMenu(null);
                                 }}
                               >
@@ -1530,7 +1548,7 @@ const applyQuickEdit = async (
                                           ?.negativePrompt || ""
                                       ),
                                     });
-                                  } catch {}
+                                  } catch { }
                                   setOpenPresetMenu(null);
                                 }}
                               >
