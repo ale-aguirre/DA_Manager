@@ -304,10 +304,10 @@ export default function PlannerView() {
 
   // --- VIGILANTE DE SINCRONIZACIÓN GLOBAL ---
   // Cuando el usuario escribe en el Prompt Global, actualizamos todos los jobs en tiempo real.
+  const globalPrompt = activeCharacter ? (plannerContext[activeCharacter]?.base_prompt || "") : "";
+
   React.useEffect(() => {
     if (!activeCharacter) return;
-
-    const globalPrompt = plannerContext[activeCharacter]?.base_prompt || "";
 
     setJobs(prevJobs => {
       // Solo actualizamos los jobs del personaje activo
@@ -341,7 +341,7 @@ export default function PlannerView() {
       return hasChanged ? updated : prevJobs;
     });
 
-  }, [plannerContext, activeCharacter, resources, metaByCharacter]); // Dependencias: Contexto (Global) y Personaje
+  }, [globalPrompt, activeCharacter, resources, metaByCharacter]); // Dependencias: String específico, no todo el contexto
 
   React.useEffect(() => {
     try {
@@ -461,8 +461,11 @@ export default function PlannerView() {
       patchTech.height = 1216;
     }
     if ((tech.upscaler ?? "").trim().length === 0) {
-      patchTech.upscaler =
+      const targetUpscaler =
         preset && typeof preset.upscaler === "string" ? preset.upscaler : "";
+      if (tech.upscaler !== targetUpscaler) {
+        patchTech.upscaler = targetUpscaler;
+      }
     }
     if (Object.keys(patchTech).length > 0) {
       setTechConfig(activeCharacter, patchTech);
@@ -838,33 +841,49 @@ export default function PlannerView() {
   };
 
   // Magic Fix
-  // Magic Fix
   const magicFix = async (idx: number) => {
     try {
       setLoading(true);
-      setToast({ message: "🔮 Consultando al oráculo..." });
+      setToast({ message: "🔮 Alterando el destino..." });
 
-      // Leemos el job actual directamente del estado (por si acaso el índice cambió)
-      // Nota: En closures asíncronos, 'jobs' puede ser viejo. Usar callback en setJobs es mejor,
-      // pero para lectura necesitamos el valor actual.
-      // Asumiremos que 'jobs[idx]' es correcto por ahora.
+      // 1. Obtener job actual fresco
+      // Nota: Usamos setJobs callback para leer, pero aquí simplificamos
       const currentJob = jobs[idx];
+      if (!currentJob) return;
 
+      // 2. Llamada a API
+      console.log("🪄 Enviando solicitud MagicFix...");
       const res = await magicFixPrompt(currentJob.prompt);
+      console.log("🪄 Respuesta MagicFix:", res);
 
-      // Aplicamos el cambio
-      const newScene = { outfit: res.outfit, pose: res.pose, location: res.location };
-      const newPrompt = await reconstructJobPrompt(currentJob.character_name, newScene, currentJob.prompt);
+      // 3. Construir nueva escena con TODOS los campos
+      const newScene = {
+        outfit: res.outfit,
+        pose: res.pose,
+        location: res.location,
+        // INYECCIÓN EXPLÍCITA DE EXTRAS
+        lighting: res.lighting,
+        camera: res.camera,
+        expression: res.expression,
+        // Hairstyle intencionalmente undefined para que no se toque
+      };
 
+      // 4. Reconstruir Prompt
+      const newPrompt = await reconstructJobPrompt(
+        currentJob.character_name,
+        newScene,
+        currentJob.prompt
+      );
+
+      // 5. Actualizar Estado
       updatePrompt(idx, newPrompt);
 
       const msg = res.ai_reasoning || "✨ Destino alterado";
       setAiReasoningByJob(prev => ({ ...prev, [idx]: msg }));
-      setToast({ message: msg });
-      setTimeout(() => setToast(null), 2000);
+      setToast({ message: "✨ Nuevo destino aplicado" });
 
     } catch (e) {
-      console.error(e);
+      console.error("❌ Error en MagicFix:", e);
       setToast({ message: "Error al alterar destino" });
     } finally {
       setLoading(false);

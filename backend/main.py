@@ -2740,61 +2740,158 @@ async def civitai_download_info(payload: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error guardando civitai.info: {str(e)}")
 
-@app.post("/planner/magicfix")
-async def magic_fix_endpoint(req: MagicFixRequest):
+def _read_resource_lines(rel_path: str) -> List[str]:
     try:
-        if not Groq:
-            raise HTTPException(status_code=500, detail="Groq client not available")
+        path = Path(RESOURCES_DIR) / rel_path
+        if not path.exists():
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    except Exception:
+        return []
+
+# Busca la función planner_magicfix y REEMPLÁZALA completamente por esto:
+
+@app.post("/planner/magicfix")
+async def planner_magicfix(req: MagicFixRequest):
+    """Genera una escena VÍVIDA y COMPLETA (Outfit, Pose, Location, Light, Cam, Expr)."""
+    if not req.prompt or not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt requerido")
+    
+    # 1. Cargar todos los recursos para el fallback
+    outfits = _read_lines("outfits.txt")
+    poses = _read_lines("poses.txt")
+    locations = _read_lines("locations.txt")
+    lighting = _read_lines("styles/lighting.txt")
+    camera = _read_lines("styles/camera.txt")
+    expressions = _read_lines("visuals/expressions.txt")
+
+    # 2. Fallback de Emergencia (Aleatoriedad Pura)
+    def get_random():
+        return {
+            "outfit": random.choice(outfits) if outfits else "casual",
+            "pose": random.choice(poses) if poses else "standing",
+            "location": random.choice(locations) if locations else "simple background",
+            "lighting": random.choice(lighting) if lighting else "cinematic lighting",
+            "camera": random.choice(camera) if camera else "cowboy shot",
+            "expression": random.choice(expressions) if expressions else "blush",
+            "ai_reasoning": "🎲 Fallback Aleatorio (IA no disponible)"
+        }
+
+    if not GROQ_API_KEY or Groq is None:
+        return get_random()
+
+    # 3. Generación IA con Temperatura Alta
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        system_prompt = (
+            "You are an Anime Art Director. Create a UNIQUE, VIVID scene. "
+            "Select: Outfit, Pose, Location, Lighting, Camera Angle, and Expression. "
+            "Be creative! Mix themes. "
+            "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\"}"
+        )
+        # Inyectamos ruido en el prompt para forzar variedad
+        noise = random.randint(0, 999999)
+        user_prompt = f"Current Tags: {req.prompt}\nSeed: {noise}\nTask: Create a NEW scene variation."
+
+        completion = await groq_chat_with_fallbacks(
+            client,
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            temperature=0.95  # <--- CREATIVIDAD MÁXIMA
+        )
         
+        content = completion.choices[0].message.content.strip()
+        start = content.find("{")
+        end = content.rfind("}")
+        json_str = content[start:end+1] if start != -1 and end != -1 else "{}"
+        data = json.loads(json_str)
+        
+        return {
+            "outfit": data.get("outfit") or random.choice(outfits),
+            "pose": data.get("pose") or random.choice(poses),
+            "location": data.get("location") or random.choice(locations),
+            "lighting": data.get("lighting") or random.choice(lighting),
+            "camera": data.get("camera") or random.choice(camera),
+            "expression": data.get("expression") or random.choice(expressions),
+            "ai_reasoning": "✨ Destino Alterado por IA"
+        }
+    except Exception as e:
+        print(f"MagicFix Error: {e}")
+        return get_random()
+async def magic_fix_endpoint(req: MagicFixRequest):
+    # 1. Cargar Recursos
+    outfits = _read_resource_lines("outfits.txt")
+    poses = _read_resource_lines("poses.txt")
+    locations = _read_resource_lines("locations.txt")
+    lighting = _read_resource_lines("styles/lighting.txt")
+    camera = _read_resource_lines("styles/camera.txt")
+    expressions = _read_resource_lines("visuals/expressions.txt")
+
+    # 2. Definir Fallback Aleatorio (Plan B)
+    def get_random():
+        return {
+            "outfit": random.choice(outfits) if outfits else "casual",
+            "pose": random.choice(poses) if poses else "standing",
+            "location": random.choice(locations) if locations else "simple background",
+            "lighting": random.choice(lighting) if lighting else "soft lighting",
+            "camera": random.choice(camera) if camera else "cowboy shot",
+            "expression": random.choice(expressions) if expressions else "smile",
+            "ai_reasoning": "🎲 Destino Aleatorio (IA no disponible)"
+        }
+
+    # 3. Consultar a la IA (Plan A)
+    try:
         api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="GROQ_API_KEY not set")
-            
+        if not api_key or not Groq:
+            return get_random()
+
         client = Groq(api_key=api_key)
         
-        system_prompt = """You are a creative scene director.
-Your task is to take a user's prompt (which may be simple or complex) and generate a NEW, creative variation of the scene elements: Outfit, Pose, and Location.
-You must also provide a short, witty reasoning for your choice.
-
-Return ONLY a JSON object with these keys:
-- outfit: string (detailed description)
-- pose: string (detailed description)
-- location: string (detailed description)
-- ai_reasoning: string (short, witty explanation)
-
-Do NOT return markdown blocks. Just the JSON."""
+        system_prompt = (
+            "You are an Anime Art Director. Create a UNIQUE, COHERENT scene based on the input tags. "
+            "Select specific: Outfit, Pose, Location, Lighting, Camera Angle, and Facial Expression. "
+            "Aim for variety: mix themes (e.g. Horror + Cute, SciFi + Elegant). "
+            "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\"}"
+        )
+        
+        # Añadir aleatoriedad al prompt del usuario para evitar caché de la IA
+        seed_noise = str(random.randint(0, 99999))
+        user_prompt = f"Current Tags: {req.prompt}\nSeed: {seed_noise}\nTask: Remix this into a new scenario."
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Current prompt: {req.prompt}\n\nSurprise me with a new scenario!"}
+            {"role": "user", "content": user_prompt}
         ]
-        
+
         # Use the helper if available, otherwise direct call
         if 'groq_chat_with_fallbacks' in globals():
-            completion = await groq_chat_with_fallbacks(client, messages, temperature=0.9)
+            completion = await groq_chat_with_fallbacks(client, messages, temperature=0.95)
         else:
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=messages,
-                temperature=0.9,
+                temperature=0.95,
                 max_tokens=500,
                 response_format={"type": "json_object"}
             )
             
-        content = completion.choices[0].message.content
-        data = json.loads(content)
-        return data
+        content = completion.choices[0].message.content.strip()
+        # Parseo seguro
+        start = content.find("{")
+        end = content.rfind("}")
+        json_str = content[start:end+1] if start != -1 and end != -1 else "{}"
+        data = json.loads(json_str)
+        
+        return {
+            "outfit": data.get("outfit") or (random.choice(outfits) if outfits else "casual"),
+            "pose": data.get("pose") or (random.choice(poses) if poses else "standing"),
+            "location": data.get("location") or (random.choice(locations) if locations else "simple background"),
+            "lighting": data.get("lighting") or (random.choice(lighting) if lighting else "soft lighting"),
+            "camera": data.get("camera") or (random.choice(camera) if camera else "cowboy shot"),
+            "expression": data.get("expression") or (random.choice(expressions) if expressions else "smile"),
+            "ai_reasoning": "✨ Destino Alterado por IA"
+        }
+        
     except Exception as e:
-        print(f"Error in magicfix (using fallback): {e}")
-        # Fallback randomizado GLOBAL (cubre API errors, JSON errors, etc)
-        import random
-        fallbacks = [
-            {"outfit": "casual streetwear", "pose": "walking confidently", "location": "neon city street", "ai_reasoning": "Fallback: Urban vibes."},
-            {"outfit": "elegant evening gown", "pose": "sitting on a velvet chair", "location": "luxury hotel lobby", "ai_reasoning": "Fallback: Classy evening."},
-            {"outfit": "summer dress", "pose": "standing by the shore", "location": "sunny beach", "ai_reasoning": "Fallback: Summer breeze."},
-            {"outfit": "cyberpunk armor", "pose": "holding a glowing weapon", "location": "futuristic alleyway", "ai_reasoning": "Fallback: Sci-fi action."},
-            {"outfit": "cozy sweater", "pose": "reading a book", "location": "warm library", "ai_reasoning": "Fallback: Quiet time."}
-        ]
-        data = random.choice(fallbacks)
-        print(f"DEBUG: MagicFix fallback used: {data}")
-        return data
+        print(f"MagicFix Error: {e}")
+        return get_random()
