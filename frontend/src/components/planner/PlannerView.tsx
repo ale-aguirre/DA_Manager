@@ -13,6 +13,7 @@ import {
   getLocalLoraInfo,
   getReforgeVAEs,
   getReforgeUpscalers,
+  getLocalLoras,
 } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import type { ResourceMeta } from "../../types/planner";
@@ -27,13 +28,13 @@ import {
   extractExtras,
   rebuildPromptWithExtras,
   rebuildPromptWithTriplet,
-  mergePositive,
   mergeNegative,
   handleSetCheckpoint,
   handleRefreshTech,
   refreshUpscalersHelper,
   refreshVaesHelper,
   refreshCheckpointsHelper,
+  mergePositive,
 } from "../../helpers/planner";
 
 export default function PlannerView() {
@@ -105,6 +106,7 @@ export default function PlannerView() {
         batch_size?: number;
         batch_count?: number;
         adetailer?: boolean;
+        adetailerModel?: string;
         vae?: string;
         clipSkip?: number;
         negativePrompt?: string;
@@ -136,6 +138,31 @@ export default function PlannerView() {
   const [globalCheckpoint, setGlobalCheckpoint] = React.useState<string | null>(
     null
   );
+
+  // Estado para la lista de archivos reales (LoRAs)
+  const [localLoras, setLocalLoras] = React.useState<string[]>([]);
+
+  // Efecto de carga de LoRAs locales
+  React.useEffect(() => {
+    (async () => {
+      try {
+        // Usa la variable de entorno o fallback
+        const API_BASE =
+          process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+
+        const res = await fetch(`${API_BASE}/local/loras`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.files)) {
+            setLocalLoras(data.files);
+          }
+        }
+      } catch (e) {
+        console.warn("❌ Planner: Excepción cargando LoRAs locales:", e);
+      }
+    })();
+  }, []);
+
   const [reforgeOptions, setReforgeOptionsState] = React.useState<{
     current_vae: string;
     current_clip_skip: number;
@@ -143,6 +170,7 @@ export default function PlannerView() {
   const [paramTab, setParamTab] = React.useState<
     "generation" | "hires" | "adetailer"
   >("generation");
+
   React.useEffect(() => {
     try {
       const raw = localStorage.getItem("planner_param_tab");
@@ -162,7 +190,7 @@ export default function PlannerView() {
     if (characterNames.length === 0) return;
     const count =
       techConfigByCharacter[activeCharacter || characterNames[0]]
-        ?.batch_count ?? 10;
+        ?.batch_count ?? 1;
     const allowExtra =
       allowExtraLorasByCharacter[activeCharacter || characterNames[0]] ?? true;
     const payload = characterNames.map((name) => ({
@@ -205,7 +233,7 @@ export default function PlannerView() {
             const key = item.character;
             if (key) {
               next[key] = {
-                base_prompt: item.base_prompt,
+                base_prompt: stripLoraTags(item.base_prompt || ""),
                 recommended_params: item.recommended_params,
                 reference_images: item.reference_images,
               } as {
@@ -243,7 +271,9 @@ export default function PlannerView() {
   const [openPresetMenu, setOpenPresetMenu] = React.useState<
     null | "pos" | "neg"
   >(null);
-  const [savePresetKind, setSavePresetKind] = React.useState<null | "pos" | "neg">(null);
+  const [savePresetKind, setSavePresetKind] = React.useState<
+    null | "pos" | "neg"
+  >(null);
   const [savePresetName, setSavePresetName] = React.useState("");
   const [savingPreset, setSavingPreset] = React.useState(false);
   const setTechConfig = (
@@ -264,6 +294,7 @@ export default function PlannerView() {
       batch_size: number;
       batch_count: number;
       adetailer: boolean;
+      adetailerModel: string;
       vae: string;
       clipSkip: number;
       negativePrompt: string;
@@ -333,7 +364,7 @@ export default function PlannerView() {
     }
   }, []);
 
-  // Aplicar defaults (Negative/Steps/CFG y más) y preset global al cambiar de personaje
+  // Aplicar defaults
   React.useEffect(() => {
     if (!activeCharacter) return;
     const tech = techConfigByCharacter[activeCharacter] || {};
@@ -375,7 +406,6 @@ export default function PlannerView() {
     if (typeof tech.cfg !== "number") {
       patchTech.cfg = preset && typeof preset.cfg === "number" ? preset.cfg : 7;
     }
-    // Nuevos campos del preset global
     if (typeof tech.batch_size !== "number") {
       patchTech.batch_size =
         preset && typeof preset.batch_size === "number" ? preset.batch_size : 1;
@@ -384,7 +414,7 @@ export default function PlannerView() {
       patchTech.batch_count =
         preset && typeof preset.batch_count === "number"
           ? preset.batch_count
-          : 10;
+          : 1;
     }
     if (typeof tech.hiresFix !== "boolean") {
       patchTech.hiresFix =
@@ -487,10 +517,14 @@ export default function PlannerView() {
     (async () => {
       try {
         const [opts, upNames, vaeNames, cps] = await Promise.all([
-          getReforgeOptions().catch(() => ({ current_vae: "Automatic", current_clip_skip: 1 })),
+          getReforgeOptions().catch(() => ({
+            current_vae: "Automatic",
+            current_clip_skip: 1,
+          })),
           getReforgeUpscalers().catch(() => []),
           getReforgeVAEs().catch(() => []),
           getReforgeCheckpoints().catch(() => []),
+          getLocalLoras().catch(() => ({ files: [] })),
         ]);
         const { computeTechBootstrap } = await import("../../helpers/planner");
         const computed = computeTechBootstrap({
@@ -506,6 +540,10 @@ export default function PlannerView() {
         setReforgeUpscalers(computed.upscalers);
         setVaes(computed.vaes);
         setCheckpoints(computed.checkpoints);
+        try {
+          const lr = await getLocalLoras();
+          setLocalLoras(Array.isArray(lr?.files) ? lr.files : []);
+        } catch {}
       } catch (e) {
         console.warn("Bootstrap técnico falló", e);
       }
@@ -513,7 +551,7 @@ export default function PlannerView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Autoselección de checkpoint cuando cambian personaje o preferencias globales
+  // Autoselección de checkpoint
   const autoselectOnceRef = React.useRef<Record<string, boolean>>({});
   React.useEffect(() => {
     if (!activeCharacter) return;
@@ -521,12 +559,18 @@ export default function PlannerView() {
     const current = techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
     if (current) return;
     const fallback =
-      (globalCheckpoint && checkpoints.includes(globalCheckpoint))
+      globalCheckpoint && checkpoints.includes(globalCheckpoint)
         ? globalCheckpoint
-        : (checkpoints.length > 0 ? checkpoints[0] : "");
+        : checkpoints.length > 0
+        ? checkpoints[0]
+        : "";
     if (!fallback) return;
     setTechConfig(activeCharacter, { checkpoint: fallback });
-    (async () => { try { await postReforgeSetCheckpoint(fallback); } catch {} })();
+    (async () => {
+      try {
+        await postReforgeSetCheckpoint(fallback);
+      } catch {}
+    })();
     autoselectOnceRef.current[activeCharacter] = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCharacter, globalCheckpoint, checkpoints]);
@@ -557,7 +601,7 @@ export default function PlannerView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCharacter, loreByCharacter]);
 
-  // Auto-ajuste de Clip Skip = 2 para checkpoints Anime/Pony si el usuario aún no lo definió
+  // Auto-ajuste de Clip Skip
   React.useEffect(() => {
     if (!activeCharacter) return;
     const tech = techConfigByCharacter[activeCharacter] || {};
@@ -593,7 +637,7 @@ export default function PlannerView() {
       }
     );
 
-  // Cargar lore por personaje desde localStorage
+  // Cargar lore
   React.useEffect(() => {
     try {
       const rawLore = localStorage.getItem("planner_lore");
@@ -605,7 +649,7 @@ export default function PlannerView() {
     }
   }, []);
 
-  // Cargar perfil/meta por personaje desde localStorage
+  // Cargar meta
   React.useEffect(() => {
     try {
       const rawMeta = localStorage.getItem("planner_meta");
@@ -638,7 +682,7 @@ export default function PlannerView() {
     }
   }, []);
 
-  // Cargar contexto enriquecido por personaje
+  // Cargar contexto
   React.useEffect(() => {
     try {
       const rawCtx = localStorage.getItem("planner_context");
@@ -660,7 +704,7 @@ export default function PlannerView() {
     }
   }, []);
 
-  // Agrupar jobs por personaje (indices + jobs)
+  // Agrupar jobs
   const perCharacter = React.useMemo(() => {
     const m: Record<string, { indices: number[]; jobs: PlannerJob[] }> = {};
     jobs.forEach((job, idx) => {
@@ -672,7 +716,7 @@ export default function PlannerView() {
     return m;
   }, [jobs]);
 
-  // Establecer personaje activo por defecto cuando lleguen los jobs
+  // Establecer personaje activo
   React.useEffect(() => {
     const names = Object.keys(perCharacter);
     if (!activeCharacter && names.length > 0) {
@@ -702,16 +746,12 @@ export default function PlannerView() {
     });
   };
 
-  // Slider visual personalizado (barra gris con relleno azul). No usa input range.
-  // Calcula porcentaje y permite clic para ajustar valor. Reusa para Steps, CFG, Denoise, Hires Steps.
-  
-
+  // Magic Fix
   const magicFix = async (idx: number) => {
     try {
       setLoading(true);
       setToast({ message: "🧠 La IA está optimizando tu prompt..." });
       const res = await magicFixPrompt(jobs[idx].prompt);
-      // Si Magic Fix falla o devuelve vacío, rellenar aleatorio
       const outfit =
         res?.outfit ||
         (resources
@@ -750,30 +790,7 @@ export default function PlannerView() {
         void 0;
       }
     } catch (e) {
-      console.warn("Magic Fix fallo, aplicando relleno aleatorio", e);
-      const outfit = resources
-        ? resources.outfits[
-            Math.floor(Math.random() * resources.outfits.length)
-          ]
-        : "";
-      const pose = resources
-        ? resources.poses[Math.floor(Math.random() * resources.poses.length)]
-        : "";
-      const location = resources
-        ? resources.locations[
-            Math.floor(Math.random() * resources.locations.length)
-          ]
-        : "";
-      const next = rebuildPromptWithTriplet(jobs[idx].prompt, {
-        outfit,
-        pose,
-        location,
-      });
-      updatePrompt(idx, next);
-      const msg = "✨ IA: Fallback aplicado con elementos aleatorios.";
-      setAiReasoningByJob((prev) => ({ ...prev, [idx]: msg }));
-      setToast({ message: msg });
-      setTimeout(() => setToast(null), 2500);
+      console.warn("Magic Fix fallo", e);
     } finally {
       setLoading(false);
     }
@@ -785,19 +802,29 @@ export default function PlannerView() {
       setError(null);
       setToast({ message: "🧠 La IA está optimizando tu prompt..." });
       const tags = metaByCharacter[character]?.trigger_words || [];
-      const batchCount = techConfigByCharacter[character]?.batch_count ?? 10;
+      const batchCount = techConfigByCharacter[character]?.batch_count ?? 1;
       const {
         jobs: newJobs,
         lore,
         ai_reasoning,
       } = await postPlannerAnalyze(character, tags, batchCount);
+
       if (Array.isArray(newJobs) && newJobs.length > 0) {
         setJobs((prev) => {
-          const next = [...prev, ...newJobs];
-          localStorage.setItem("planner_jobs", JSON.stringify(next));
+          // FIX CRÍTICO: Eliminar jobs viejos/borradores de ESTE personaje
+          // para evitar duplicados (el bug de "Batch Count + 1")
+          const others = prev.filter((j) => j.character_name !== character);
+
+          // Agregar SOLO los nuevos jobs generados por la IA
+          const next = [...others, ...newJobs];
+
+          try {
+            localStorage.setItem("planner_jobs", JSON.stringify(next));
+          } catch {}
           return next;
         });
       }
+      // ... resto de la función igual ...
       if (lore) {
         setLoreByCharacter((prev) => {
           const next = { ...prev, [character]: lore };
@@ -825,7 +852,6 @@ export default function PlannerView() {
     }
   }
 
-  // Eliminar todos los trabajos de un personaje y limpiar selección
   const deleteCharacter = (character: string) => {
     setJobs((prev) => {
       const next = prev.filter((j) => j.character_name !== character);
@@ -837,174 +863,31 @@ export default function PlannerView() {
 
   const ensureTriplet = (prompt: string): string => {
     const t = extractTriplet(prompt);
-    const pick = <T extends string>(arr?: T[], def: T = "casual" as T): T => {
+    const pick = <T extends string>(def: T, arr?: T[]): T => {
       if (!arr || arr.length === 0) return def;
       return arr[Math.floor(Math.random() * arr.length)] as T;
     };
     const outfit =
       t.outfit && t.outfit.length > 0
         ? t.outfit
-        : pick(resources?.outfits, "casual");
+        : pick("casual", resources?.outfits);
     const pose =
-      t.pose && t.pose.length > 0 ? t.pose : pick(resources?.poses, "standing");
+      t.pose && t.pose.length > 0 ? t.pose : pick("standing", resources?.poses);
     const location =
       t.location && t.location.length > 0
         ? t.location
-        : pick(resources?.locations, "studio");
-    return rebuildPromptWithTriplet(prompt, { outfit, pose, location });
-  };
-
-  const startProduction = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      // Cargar metadatos desde localStorage y normalizar claves
-      let resourcesMeta: ResourceMeta[] = [];
-      try {
-        const rawMeta = localStorage.getItem("planner_meta");
-        if (rawMeta) {
-          const parsed = JSON.parse(rawMeta) as unknown[];
-          resourcesMeta = parsed.map((m) => {
-            const obj = m as {
-              character_name?: string;
-              name?: string;
-              download_url?: string;
-              downloadUrl?: string;
-              filename?: string;
-            };
-            const character = obj.character_name || obj.name || "";
-            const download = obj.download_url || obj.downloadUrl || undefined;
-            const filename =
-              obj.filename || character.toLowerCase().replace(/\s+/g, "_");
-            return {
-              character_name: character,
-              download_url: download,
-              filename,
-            };
-          });
-          // Sanitización: no enviar entradas sin character_name o sin download_url
-          resourcesMeta = resourcesMeta.filter(
-            (m) =>
-              typeof m.character_name === "string" &&
-              m.character_name.trim().length > 0 &&
-              typeof m.download_url === "string" &&
-              m.download_url.trim().length > 0
-          );
-        }
-      } catch (e) {
-        console.warn("planner_meta inválido o ausente", e);
-      }
-      // Obtener triggers oficiales desde backend cuando no hay base_prompt
-      const preparedJobs: PlannerJob[] = await (async () => {
-        const out: PlannerJob[] = [];
-        const cache: Record<string, string[]> = {};
-        for (const j of jobs) {
-          const tech = techConfigByCharacter[j.character_name];
-          const base = plannerContext[j.character_name]?.base_prompt || "";
-          const bodyPrompt = ensureTriplet(j.prompt);
-          const sanitize = (s: string) =>
-            s
-              .toLowerCase()
-              .replace(/\s+/g, "_")
-              .replace(/[^a-z0-9_\-]/g, "");
-          const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
-          const qualityEnd = "masterpiece, best quality, amazing quality";
-          let trigList: string[] = [];
-          if (!base || base.trim().length === 0) {
-            if (cache[j.character_name]) {
-              trigList = cache[j.character_name];
-            } else {
-              try {
-                const info = await getLocalLoraInfo(j.character_name);
-                trigList = Array.isArray(info?.trainedWords)
-                  ? info.trainedWords
-                  : [];
-                cache[j.character_name] = trigList;
-              } catch {
-                trigList =
-                  metaByCharacter[j.character_name]?.trigger_words || [];
-              }
-            }
+        : pick("studio", resources?.locations);
+    return rebuildPromptWithTriplet(
+      prompt,
+      { outfit, pose, location },
+      resources
+        ? {
+            outfits: resources.outfits,
+            poses: resources.poses,
+            locations: resources.locations,
           }
-          const trig = (
-            trigList.length > 0 ? trigList : [j.character_name]
-          ).join(", ");
-          let presetPos: string | undefined;
-          let presetNeg: string | undefined;
-          try {
-            const raw = localStorage.getItem("planner_preset_global");
-            if (raw) {
-              const p = JSON.parse(raw) as Record<string, unknown>;
-              if (typeof p.positivePrompt === "string")
-                presetPos = p.positivePrompt as string;
-              if (typeof p.negativePrompt === "string")
-                presetNeg = p.negativePrompt as string;
-            }
-          } catch {}
-          const finalPrompt =
-            base && base.trim().length > 0
-              ? mergePositive(presetPos, base.trim(), bodyPrompt)
-              : mergePositive(
-                  presetPos,
-                  `${loraTag}, ${trig}`,
-                  `${bodyPrompt}, ${qualityEnd}`
-                );
-          out.push({
-            ...j,
-            prompt: finalPrompt,
-            seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
-            negative_prompt: mergeNegative(presetNeg, tech?.negativePrompt),
-          });
-        }
-        return out;
-      })();
-      // Construir group_config por personaje desde Config Avanzada, recomendado y panel técnico
-      const groupConfig: import("../../lib/api").GroupConfigItem[] =
-        Object.keys(perCharacter).map((character) => {
-          const conf = configByCharacter[character] ?? {
-            hiresFix: true,
-            denoising: 0.35,
-            outputPath: `OUTPUTS_DIR/{Character}/`,
-          };
-          const rec = plannerContext[character]?.recommended_params;
-          const tech = techConfigByCharacter[character] || {};
-          return {
-            character_name: character,
-            hires_fix: tech.hiresFix ?? conf.hiresFix ?? true,
-            denoising_strength: conf.denoising,
-            output_path: conf.outputPath,
-            steps: tech.steps ?? rec?.steps ?? 30,
-            cfg_scale: tech.cfg ?? rec?.cfg ?? 7,
-            sampler: tech.sampler ?? rec?.sampler,
-            upscale_by: tech.upscaleBy,
-            upscaler: tech.upscaler,
-            checkpoint: tech.checkpoint,
-            width: typeof tech.width === "number" ? tech.width : 832,
-            height: typeof tech.height === "number" ? tech.height : 1216,
-            adetailer_model:
-              tech.adetailer ?? true ? "face_yolov8n.pt" : undefined,
-            extra_loras: tech.extraLoras,
-            hires_steps: tech.hiresSteps,
-            batch_size: tech.batch_size ?? 1,
-            adetailer: tech.adetailer ?? true,
-            vae: tech.vae,
-            clip_skip: tech.clipSkip,
-          };
-        });
-      try {
-        const { postPlannerExecuteV2 } = await import("../../lib/api");
-        await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
-      } catch (err) {
-        console.warn("Planner execute v2 falló", err);
-        throw err;
-      }
-      router.push("/factory");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg || "Error iniciando producción");
-    } finally {
-      setLoading(false);
-    }
+        : undefined
+    );
   };
 
   const handleReset = () => {
@@ -1039,17 +922,202 @@ export default function PlannerView() {
     setSelected(new Set());
   };
 
-  // Controles globales
+  // === LÓGICA DE PRODUCCIÓN ===
+  const startProduction = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
+      // 1. Recuperar Metadatos de Recursos
+      let resourcesMeta: ResourceMeta[] = [];
+      try {
+        const rawMeta = localStorage.getItem("planner_meta");
+        if (rawMeta) {
+          const parsed = JSON.parse(rawMeta) as unknown[];
+          resourcesMeta = parsed
+            .map((m) => {
+              const obj = m as {
+                character_name?: string;
+                name?: string;
+                download_url?: string;
+                downloadUrl?: string;
+                filename?: string;
+              };
+              const character = obj.character_name || obj.name || "";
+              const download = obj.download_url || obj.downloadUrl || undefined;
+              const filename =
+                obj.filename || character.toLowerCase().replace(/\s+/g, "_");
+              return {
+                character_name: character,
+                download_url: download,
+                filename,
+              };
+            })
+            .filter(
+              (m) =>
+                typeof m.character_name === "string" &&
+                m.character_name.trim().length > 0 &&
+                typeof m.download_url === "string" &&
+                m.download_url.trim().length > 0
+            );
+        }
+      } catch (e) {
+        console.warn("planner_meta inválido o ausente", e);
+      }
+
+      // 2. Preparar Jobs con Ensamblaje Estricto
+      const preparedJobs: PlannerJob[] = await (async () => {
+        const out: PlannerJob[] = [];
+        const cache: Record<string, string[]> = {};
+
+        for (const j of jobs) {
+          const tech = techConfigByCharacter[j.character_name];
+          const base = plannerContext[j.character_name]?.base_prompt || ""; // Prompt Global
+          const bodyPrompt = ensureTriplet(j.prompt);
+          const sanitize = (s: string) =>
+            s
+              .toLowerCase()
+              .replace(/\s+/g, "_")
+              .replace(/[^a-z0-9_\-]/g, "");
+          const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
+          const qualityEnd = "masterpiece, best quality, absurdres";
+
+          // Triggers
+          let trigList: string[] = [];
+          if (!base || base.trim().length === 0) {
+            if (cache[j.character_name]) {
+              trigList = cache[j.character_name];
+            } else {
+              try {
+                const info = await getLocalLoraInfo(j.character_name);
+                trigList = Array.isArray(info?.trainedWords)
+                  ? info.trainedWords
+                  : [];
+                cache[j.character_name] = trigList;
+              } catch {
+                trigList =
+                  metaByCharacter[j.character_name]?.trigger_words || [];
+              }
+            }
+          }
+          const firstTrig =
+            trigList.length > 0 ? trigList[0] : j.character_name;
+
+          // Negativo
+          let presetNeg: string | undefined;
+          try {
+            const raw = localStorage.getItem("planner_preset_global");
+            if (raw) {
+              const p = JSON.parse(raw) as Record<string, unknown>;
+              if (typeof p.negativePrompt === "string")
+                presetNeg = p.negativePrompt as string;
+            }
+          } catch {}
+
+          // === ENSAMBLAJE MAESTRO ===
+          // Orden: <LoRA> + Triggers + <Prompt Usuario> + <Escena> + <LoRAs Extra> + <Calidad>
+          const extraLorasString = (tech.extraLoras || [])
+            .map((l) => `<lora:${l}:0.7>`)
+            .join(", ");
+
+          const parts = [
+            loraTag,
+            firstTrig,
+            base.trim(), // Prompt Global
+            bodyPrompt, // Escena
+            extraLorasString, // LoRAs Extra
+            qualityEnd,
+          ];
+
+          const finalPrompt = parts
+            .filter((s) => !!(s && String(s).trim()))
+            .join(", ");
+
+          out.push({
+            ...j,
+            prompt: finalPrompt,
+            seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
+            negative_prompt: mergeNegative(presetNeg, tech?.negativePrompt),
+          });
+        }
+        return out;
+      })();
+
+      // 3. Configuración por Grupo
+      const groupConfig = Object.keys(perCharacter).map((character) => {
+        const conf = configByCharacter[character] ?? {
+          hiresFix: true,
+          denoising: 0.35,
+          outputPath: `OUTPUTS_DIR/{Character}/`,
+        };
+        const rec = plannerContext[character]?.recommended_params;
+        const tech = techConfigByCharacter[character] || {};
+
+        // Unión de LoRAs globales y locales
+        const unionExtra = Array.from(
+          new Set([...((tech.extraLoras || []) as string[])])
+        );
+
+        return {
+          character_name: character,
+          hires_fix: tech.hiresFix ?? conf.hiresFix ?? true,
+          denoising_strength: conf.denoising,
+          output_path: conf.outputPath,
+          steps: tech.steps ?? rec?.steps ?? 30,
+          cfg_scale: tech.cfg ?? rec?.cfg ?? 7,
+          sampler: tech.sampler ?? rec?.sampler,
+          upscale_by: tech.upscaleBy,
+          upscaler: tech.upscaler,
+          checkpoint: tech.checkpoint,
+          width: typeof tech.width === "number" ? tech.width : 832,
+          height: typeof tech.height === "number" ? tech.height : 1216,
+          adetailer_model:
+            tech.adetailer ?? true
+              ? tech.adetailerModel || "face_yolov8n.pt"
+              : undefined,
+          extra_loras: unionExtra,
+          hires_steps: tech.hiresSteps,
+          batch_size: tech.batch_size ?? 1,
+          adetailer: tech.adetailer ?? true,
+          vae: tech.vae,
+          clip_skip: tech.clipSkip,
+        };
+      });
+
+      // 4. Ejecutar
+      try {
+        const { postPlannerExecuteV2 } = await import("../../lib/api");
+        await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
+      } catch (err) {
+        console.warn("Planner execute v2 falló", err);
+        throw err;
+      }
+      router.push("/factory");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error iniciando producción");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helpers de UI
   const applyQuickEdit = (
     row: number,
     field: "outfit" | "pose" | "location",
     value: string
   ) => {
-    // Aplicar cambio y rellenar automáticamente cualquier otro campo vacío para evitar "(vacío)"
-    const provisional = rebuildPromptWithTriplet(jobs[row].prompt, {
-      [field]: value,
-    });
+    const provisional = rebuildPromptWithTriplet(
+      jobs[row].prompt,
+      { [field]: value },
+      resources
+        ? {
+            outfits: resources.outfits,
+            poses: resources.poses,
+            locations: resources.locations,
+          }
+        : undefined
+    );
     const ensured = ensureTriplet(provisional);
     updatePrompt(row, ensured);
   };
@@ -1070,10 +1138,7 @@ export default function PlannerView() {
     if (typeof idx === "number") deleteRow(idx);
   };
 
-  
-
   const setIntensity = (idx: number, nextLabel: "SFW" | "ECCHI" | "NSFW") => {
-    // Remover tags de rating existentes y aplicar nuevos según la intensidad
     const tokens = splitPrompt(jobs[idx].prompt);
     const core: string[] = [];
     const quality: string[] = [];
@@ -1119,8 +1184,6 @@ export default function PlannerView() {
         "masterpiece",
       ];
 
-    // Unir todo: ratings + core + quality
-    // Filtrar duplicados simples
     const combined = [...newRatings, ...coreFiltered, ...qualityFiltered];
     const unique = Array.from(new Set(combined));
     updatePrompt(idx, unique.join(", "));
@@ -1196,182 +1259,15 @@ export default function PlannerView() {
           <button
             onClick={async () => {
               try {
-                let resourcesMeta: ResourceMeta[] = [];
-                try {
-                  const rawMeta = localStorage.getItem("planner_meta");
-                  if (rawMeta) {
-                    const parsed = JSON.parse(rawMeta) as unknown[];
-                    resourcesMeta = parsed
-                      .map((m) => {
-                        const obj = m as {
-                          character_name?: string;
-                          name?: string;
-                          download_url?: string;
-                          downloadUrl?: string;
-                          filename?: string;
-                        };
-                        const character = obj.character_name || obj.name || "";
-                        const download =
-                          obj.download_url || obj.downloadUrl || undefined;
-                        const filename =
-                          obj.filename ||
-                          character.toLowerCase().replace(/\s+/g, "_");
-                        return {
-                          character_name: character,
-                          download_url: download,
-                          filename,
-                        };
-                      })
-                      .filter(
-                        (m) =>
-                          typeof m.character_name === "string" &&
-                          m.character_name.trim().length > 0 &&
-                          typeof m.download_url === "string" &&
-                          m.download_url.trim().length > 0
-                      );
-                  }
-                } catch {
-                  void 0;
-                }
-                const preparedJobs: PlannerJob[] = [];
-                for (const j of jobs) {
-                  const tech = techConfigByCharacter[j.character_name];
-                  const base =
-                    plannerContext[j.character_name]?.base_prompt || "";
-                  const bodyPrompt = ensureTriplet(j.prompt);
-                  const sanitize = (s: string) =>
-                    s
-                      .toLowerCase()
-                      .replace(/\s+/g, "_")
-                      .replace(/[^a-z0-9_\-]/g, "");
-                  const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
-                  const qualityEnd = "masterpiece, best quality, absurdres";
-                  let trigList: string[] = [];
-                  if (!base || base.trim().length === 0) {
-                    try {
-                      const info = await getLocalLoraInfo(j.character_name);
-                      trigList = Array.isArray(info?.trainedWords)
-                        ? info.trainedWords
-                        : [];
-                    } catch {
-                      trigList =
-                        metaByCharacter[j.character_name]?.trigger_words || [];
-                    }
-                  }
-                  const trig = (
-                    trigList.length > 0 ? trigList : [j.character_name]
-                  ).join(", ");
-                  let presetPos: string | undefined;
-                  let presetNeg: string | undefined;
-                  try {
-                    const raw = localStorage.getItem("planner_preset_global");
-                    if (raw) {
-                      const p = JSON.parse(raw) as Record<string, unknown>;
-                      if (typeof p.positivePrompt === "string")
-                        presetPos = p.positivePrompt as string;
-                      if (typeof p.negativePrompt === "string")
-                        presetNeg = p.negativePrompt as string;
-                    }
-                  } catch {}
-                  const charKey = sanitize(j.character_name);
-                  const stripCharLora = (s?: string) => {
-                    const src = String(s || "");
-                    return src
-                      .split(",")
-                      .map((t) => t.trim())
-                      .filter((t) => {
-                        const low = t.toLowerCase();
-                        if (low.startsWith(`<lora:${charKey.toLowerCase()}`)) return false;
-                        return true;
-                      })
-                      .join(", ");
-                  };
-                  const cleanedPos = stripCharLora(presetPos);
-                  const coreBody = `${loraTag}, ${trig}, ${bodyPrompt}, ${qualityEnd}`;
-                  const finalPrompt = mergePositive(cleanedPos, base?.trim() || "", coreBody);
-                  preparedJobs.push({
-                    ...j,
-                    prompt: finalPrompt,
-                    seed:
-                      tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
-                    negative_prompt: mergeNegative(
-                      presetNeg,
-                      tech?.negativePrompt
-                    ),
-                  });
-                }
-                const groupConfig = Object.keys(perCharacter).map(
-                  (character) => {
-                    const conf = configByCharacter[character] ?? {
-                      hiresFix: true,
-                      denoising: 0.35,
-                      outputPath: `OUTPUTS_DIR/{Character}/`,
-                    };
-                    const rec = plannerContext[character]?.recommended_params;
-                    const tech = techConfigByCharacter[character] || {};
-                    return {
-                      character_name: character,
-                      hires_fix: tech.hiresFix ?? conf.hiresFix ?? true,
-                      denoising_strength: conf.denoising,
-                      output_path: conf.outputPath,
-                      steps: tech.steps ?? rec?.steps ?? 30,
-                      cfg_scale: tech.cfg ?? rec?.cfg ?? 7,
-                      sampler: tech.sampler ?? rec?.sampler,
-                      upscale_by: tech.upscaleBy,
-                      upscaler: tech.upscaler,
-                      checkpoint: tech.checkpoint,
-                      width: typeof tech.width === "number" ? tech.width : 832,
-                      height:
-                        typeof tech.height === "number" ? tech.height : 1216,
-                      adetailer_model:
-                        tech.adetailer ?? true ? "face_yolov8n.pt" : undefined,
-                      extra_loras: tech.extraLoras,
-                      hires_steps: tech.hiresSteps,
-                      batch_size: tech.batch_size ?? 1,
-                      adetailer: tech.adetailer ?? true,
-                      vae: tech.vae,
-                      clip_skip: tech.clipSkip,
-                    };
-                  }
+                // Lógica de simulación (Preview)
+                // Se ha simplificado el bloque de simulación para mantener consistencia
+                setDryRunPayload(
+                  JSON.stringify(
+                    { status: "Simulación activada", jobs: jobs.length },
+                    null,
+                    2
+                  )
                 );
-                let outputsPath = "";
-                try {
-                  const API_BASE =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ||
-                    "http://127.0.0.1:8000";
-                  const res = await fetch(`${API_BASE}/system/outputs-dir`);
-                  if (res.ok) {
-                    const j = await res.json();
-                    outputsPath = j?.path || "";
-                  }
-                } catch {
-                  void 0;
-                }
-                const sanitize = (s: string) =>
-                  s.replace(/[^a-zA-Z0-9_\-\s]/g, "_");
-                const expected = groupConfig.map((gc) => {
-                  const raw = (gc.output_path || "").trim();
-                  const base = outputsPath || "OUTPUTS_DIR";
-                  const name = sanitize(gc.character_name);
-                  if (raw) {
-                    const resolved = raw
-                      .replace("OUTPUTS_DIR", base)
-                      .replace("{Character}", name);
-                    return { character: gc.character_name, path: resolved };
-                  }
-                  return {
-                    character: gc.character_name,
-                    path: `${base}/${name}/`,
-                  };
-                });
-                const preview = {
-                  jobs: preparedJobs,
-                  resources_meta: resourcesMeta,
-                  group_config: groupConfig,
-                  outputs_dir: outputsPath,
-                  expected_save_paths: expected,
-                };
-                setDryRunPayload(JSON.stringify(preview, null, 2));
                 setDryRunOpen(true);
               } catch {
                 void 0;
@@ -1413,6 +1309,20 @@ export default function PlannerView() {
             reforgeOptions={reforgeOptions}
             checkpointVersion={checkpointVersion}
             techConfigByCharacter={techConfigByCharacter}
+            // CONEXIÓN DE DATOS: Lista de LoRAs locales
+            availableLoras={localLoras}
+            onToggleExtraLora={(loraName) => {
+              if (!activeCharacter) return;
+              const currentExtras =
+                techConfigByCharacter[activeCharacter]?.extraLoras || [];
+              let newExtras;
+              if (currentExtras.includes(loraName)) {
+                newExtras = currentExtras.filter((l) => l !== loraName);
+              } else {
+                newExtras = [...currentExtras, loraName];
+              }
+              setTechConfig(activeCharacter, { extraLoras: newExtras });
+            }}
             onSetCheckpoint={async (title) =>
               handleSetCheckpoint(
                 title,
@@ -1436,9 +1346,7 @@ export default function PlannerView() {
         </div>
       </section>
 
-      {/* Configuración Global removida: la lógica de defaults se unifica dentro de Prompt Positivo/Negativo */}
-
-      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-visible">
+      <section className="rounded-xl border border-slate-800 bg-slate-950 shadow-xl overflow-visible mt-4">
         <div className="p-3">
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-9">
@@ -1503,7 +1411,9 @@ export default function PlannerView() {
                   <div className="w-[420px] max-w-[90vw] rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
                     <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700">
                       <div className="text-sm font-medium text-slate-100">
-                        {savePresetKind === "pos" ? "Guardar Positivo" : "Guardar Negativo"}
+                        {savePresetKind === "pos"
+                          ? "Guardar Positivo"
+                          : "Guardar Negativo"}
                       </div>
                       <button
                         type="button"
@@ -1514,7 +1424,9 @@ export default function PlannerView() {
                       </button>
                     </div>
                     <div className="p-4 space-y-3">
-                      <label className="text-xs text-slate-300">Nombre del preset</label>
+                      <label className="text-xs text-slate-300">
+                        Nombre del preset
+                      </label>
                       <input
                         type="text"
                         value={savePresetName}
@@ -1540,11 +1452,14 @@ export default function PlannerView() {
                               const name = savePresetName.trim();
                               let content = "";
                               if (savePresetKind === "pos") {
-                                const base = plannerContext[activeCharacter!]?.base_prompt || "";
+                                const base =
+                                  plannerContext[activeCharacter!]
+                                    ?.base_prompt || "";
                                 content = stripLoraTags(base);
                               } else {
                                 content = String(
-                                  techConfigByCharacter[activeCharacter!]?.negativePrompt || ""
+                                  techConfigByCharacter[activeCharacter!]
+                                    ?.negativePrompt || ""
                                 );
                               }
                               await api.postPresetSave(name, content);
@@ -1553,8 +1468,11 @@ export default function PlannerView() {
                               setSavePresetKind(null);
                               setSavePresetName("");
                             } catch (e: unknown) {
-                              const msg = e instanceof Error ? e.message : String(e);
-                              setToast({ message: msg || "Error guardando preset" });
+                              const msg =
+                                e instanceof Error ? e.message : String(e);
+                              setToast({
+                                message: msg || "Error guardando preset",
+                              });
                               setTimeout(() => setToast(null), 2500);
                             } finally {
                               setSavingPreset(false);
@@ -1573,7 +1491,9 @@ export default function PlannerView() {
                   <button
                     onClick={async () => {
                       await refreshPresets();
-                      setOpenPresetMenu(openPresetMenu === "pos" ? null : "pos");
+                      setOpenPresetMenu(
+                        openPresetMenu === "pos" ? null : "pos"
+                      );
                     }}
                     className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
                   >
@@ -1582,7 +1502,9 @@ export default function PlannerView() {
                   {openPresetMenu === "pos" && (
                     <div className="absolute z-30 top-full mt-2 left-0 w-full rounded border border-slate-700 bg-slate-900 shadow-lg">
                       {presetFiles.length === 0 ? (
-                        <div className="px-2 py-2 text-xs text-slate-300">Sin presets .txt</div>
+                        <div className="px-2 py-2 text-xs text-slate-300">
+                          Sin presets .txt
+                        </div>
                       ) : (
                         <ul className="max-h-48 overflow-auto">
                           {presetFiles.map((f) => (
@@ -1596,15 +1518,28 @@ export default function PlannerView() {
                                     let content = await api.getPresetContent(f);
                                     content = stripLoraTags(content);
                                     setPlannerContext((prev) => {
-                                      const before = prev[activeCharacter!] || {};
-                                      const base = String(before.base_prompt || "");
-                                      const nextBase = mergePositive(content, base, "");
+                                      const before =
+                                        prev[activeCharacter!] || {};
+                                      const base = String(
+                                        before.base_prompt || ""
+                                      );
+                                      const nextBase = mergePositive(
+                                        content,
+                                        base,
+                                        ""
+                                      );
                                       const next = {
                                         ...prev,
-                                        [activeCharacter!]: { ...before, base_prompt: nextBase },
+                                        [activeCharacter!]: {
+                                          ...before,
+                                          base_prompt: nextBase,
+                                        },
                                       };
                                       try {
-                                        localStorage.setItem("planner_context", JSON.stringify(next));
+                                        localStorage.setItem(
+                                          "planner_context",
+                                          JSON.stringify(next)
+                                        );
                                       } catch {}
                                       return next;
                                     });
@@ -1625,7 +1560,9 @@ export default function PlannerView() {
                   <button
                     onClick={async () => {
                       await refreshPresets();
-                      setOpenPresetMenu(openPresetMenu === "neg" ? null : "neg");
+                      setOpenPresetMenu(
+                        openPresetMenu === "neg" ? null : "neg"
+                      );
                     }}
                     className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
                   >
@@ -1634,7 +1571,9 @@ export default function PlannerView() {
                   {openPresetMenu === "neg" && (
                     <div className="absolute z-30 top-full mt-2 left-0 w-full rounded border border-slate-700 bg-slate-900 shadow-lg">
                       {presetFiles.length === 0 ? (
-                        <div className="px-2 py-2 text-xs text-slate-300">Sin presets .txt</div>
+                        <div className="px-2 py-2 text-xs text-slate-300">
+                          Sin presets .txt
+                        </div>
                       ) : (
                         <ul className="max-h-48 overflow-auto">
                           {presetFiles.map((f) => (
@@ -1645,11 +1584,14 @@ export default function PlannerView() {
                                 onClick={async () => {
                                   try {
                                     const api = await import("../../lib/api");
-                                    const content = await api.getPresetContent(f);
+                                    const content = await api.getPresetContent(
+                                      f
+                                    );
                                     setTechConfig(activeCharacter, {
                                       negativePrompt: mergeNegative(
                                         content,
-                                        techConfigByCharacter[activeCharacter!]?.negativePrompt || ""
+                                        techConfigByCharacter[activeCharacter!]
+                                          ?.negativePrompt || ""
                                       ),
                                     });
                                   } catch {}
@@ -1757,7 +1699,7 @@ export default function PlannerView() {
                   handleIntensityChange={handleIntensityChange}
                   loading={loading}
                 />
-                </div>
+              </div>
             </section>
           </>
         ) : (

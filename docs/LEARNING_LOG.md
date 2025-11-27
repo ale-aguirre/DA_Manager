@@ -112,3 +112,21 @@
 - Cause: Roadmap describía "N caracteres" y no explicitaba separación global vs por-job.
 - Fix: Actualización de `docs/ROADMAP.md` fijando truncado a 16 y secciones separadas para LoRA global/por-job.
 - Prevention: Documentar requisitos concretos (longitudes, alcances) antes de implementar UI; validar con ESLint y `tsc --noEmit` tras cambios.
+ 
+## 2025-11-26 18:10
+- Issue: Backend spameaba `GET /local/lora-info` y `GET /civitai/model-info` repetidamente al navegar en Planner/Radar.
+- Cause: Efectos de precarga y fallback de previews hacían múltiples llamadas por los mismos nombres sin memoización.
+- Fix: Cache en `frontend/src/lib/api.ts` con TTL (2m para `local/lora-info`, 5m para `civitai/model-info`) y dedupe de promesas pendientes por clave; además se eliminaron los preloads masivos y el fallback remoto de previews en `LorasSection`.
+- Prevention: Centralizar memoización en la capa API y evitar precargas extensas; usar dependencias de efectos estables y revisar logs del Backend tras cambios.
+
+## 2025-11-26 20:00
+- Issue: Error de hidratación (`<button>` descendiente de `<button>`) en la tarjeta LoRA.
+- Cause: La tarjeta era un `<button>` y el tooltip incluía otro `<button>` para "Info".
+- Fix: Convertir ambos a `div` con `onClick` (manteniendo accesos y estilos), y priorizar previews locales desde `.civitai.info`.
+- Prevention: Evitar elementos interactivos anidados del mismo tipo; revisión con ESLint y prueba manual de hover/click en Planner.
+
+## 2025-11-26 19:13
+- Issue: `docs/ROADMAP.md` desactualizado y con secciones obsoletas.
+- Cause: Cambios recientes (Planner/LoRA previews, caches, progreso en vivo) no documentados; fases históricas sin vigencia.
+- Fix: Reescritura compacta del Roadmap, centrada en estado actual, endpoints activos y entregables próximos; eliminación de contenido viejo.
+- Prevention: Actualizar el Roadmap al cerrar fixes/refactors relevantes y registrar fecha; mantener una sección de "Cambios recientes" con qué y cómo.

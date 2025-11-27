@@ -1,9 +1,9 @@
 "use client";
 import React from "react";
-import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search } from "lucide-react";
+import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft } from "../../lib/api";
+import { postPlannerDraft, postCivitaiDownloadInfo } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import COPY from "../../lib/copy";
 
@@ -43,6 +43,53 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [query, setQuery] = React.useState("");
   const lastFiredRef = React.useRef<string>("");
   const [page, setPage] = React.useState<number>(1);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [isDownloading, setIsDownloading] = React.useState(false);
+  const [downloadStates, setDownloadStates] = React.useState<Record<number, "pending" | "ok" | "error" | "skipped">>({});
+  const [loaderOpen, setLoaderOpen] = React.useState(false);
+  const [infoStates, setInfoStates] = React.useState<Record<number, "ok" | "missing" | "unknown">>({});
+
+  React.useEffect(() => {
+    const precheck = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/local/loras", { cache: "no-store" });
+        const data = res.ok ? await res.json() : { files: [] };
+        const files: string[] = Array.isArray(data?.files) ? data.files : [];
+        const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+        setDownloadStates((prev) => {
+          const next = { ...prev };
+          for (const s of selectedItems) {
+            const model = items.find((m) => m.id === s.modelId);
+            if (!model) continue;
+            const exists = files.some((f) => canonical(f).includes(canonical(model.name)));
+            next[s.modelId] = exists ? "ok" : "pending";
+          }
+          return next;
+        });
+        // Precheck de civitai.info
+        setInfoStates((prev) => {
+          const next = { ...prev };
+          for (const s of selectedItems) next[s.modelId] = "unknown";
+          return next;
+        });
+        for (const s of selectedItems) {
+          const model = items.find((m) => m.id === s.modelId);
+          if (!model) continue;
+          const safe = model.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
+          try {
+            const r = await fetch(`http://127.0.0.1:8000/local/lora-info?name=${encodeURIComponent(safe)}`, { cache: "no-store" });
+            if (r.ok) {
+              const j = await r.json();
+              const ok = (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) || j?.id || j?.modelId || (Array.isArray(j?.imageUrls) && j.imageUrls.length > 0);
+              setInfoStates((prev) => ({ ...prev, [s.modelId]: ok ? "ok" : "missing" }));
+            }
+          } catch {}
+        }
+      } catch {}
+    };
+    if (confirmOpen) precheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmOpen]);
 
   React.useEffect(() => {
     try {
@@ -116,6 +163,102 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     });
   };
 
+  const truncate = (s: string, n = 16) => {
+    const raw = (s || "").trim();
+    return raw.length <= n ? raw : raw.slice(0, n) + "…";
+  };
+
+  const findImageUrl = (m: CivitaiModel): string | undefined => {
+    const img = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url;
+    return img || undefined;
+  };
+
+  const selectedModels = React.useMemo(() => items.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [items, selectedItems]);
+
+  const startDownloads = async () => {
+    setIsDownloading(true);
+    // inicializar estado
+    setDownloadStates((prev) => {
+      const next = { ...prev };
+      for (const s of selectedItems) next[s.modelId] = "pending";
+      return next;
+    });
+    try {
+      // Pre-check: loras locales para evitar descargas duplicadas
+      const local: { files: string[] } = { files: [] };
+      try {
+        const res = await fetch("http://127.0.0.1:8000/local/loras", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          local.files = Array.isArray(data?.files) ? data.files : [];
+        }
+      } catch {}
+      const sanitize = (name: string) => name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
+      const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const s of selectedItems) {
+        const model = items.find((m) => m.id === s.modelId);
+        if (!model) {
+          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "skipped" }));
+          continue;
+        }
+        const stem = sanitize(model.name);
+        const existsLocal = local.files.some((f) => canonical(f).includes(canonical(model.name)));
+        if (existsLocal) {
+          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
+          continue;
+        }
+        const url = s.downloadUrl;
+        if (!url) {
+          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "skipped" }));
+          continue;
+        }
+        try {
+          const res = await fetch("http://127.0.0.1:8000/download-lora", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url, filename: `${stem}.safetensors` }),
+          });
+          if (!res.ok) throw new Error(String(res.status));
+          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
+        } catch {
+          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "error" }));
+        }
+      }
+
+      // Descargar metadata civitai.info si falta
+      for (const s of selectedItems) {
+        const model = items.find((m) => m.id === s.modelId);
+        if (!model) continue;
+        const safe = sanitize(model.name);
+        try {
+          const r = await fetch(`http://127.0.0.1:8000/local/lora-info?name=${encodeURIComponent(safe)}`, { cache: "no-store" });
+          let need = true;
+          if (r.ok) {
+            const j = await r.json();
+            const ok = (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) || j?.id || j?.modelId || (Array.isArray(j?.imageUrls) && j.imageUrls.length > 0);
+            need = !ok;
+          }
+          if (need) {
+            try {
+              const resp = await postCivitaiDownloadInfo(safe, Number(model.id), undefined);
+              if (resp?.status === "downloaded" || resp?.status === "exists") {
+                setInfoStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
+              }
+            } catch {
+              setInfoStates((prev) => ({ ...prev, [s.modelId]: "missing" }));
+            }
+          } else {
+            setInfoStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
+          }
+        } catch {
+          // mantener estado anterior
+        }
+      }
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const filtered = React.useMemo(() => {
     const byTab = (() => {
       if (tab === "Todo") return items;
@@ -181,15 +324,17 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
           }
         }
       } catch {}
+      if (!jobCount) jobCount = 1; // default estricto: 1 job por personaje
       const res = await postPlannerDraft(payload, jobCount);
       localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
       // Nuevo: guardar contexto enriquecido por personaje
       try {
+        const stripLora = (s: string): string => (s || "").split(",").map((t) => t.trim()).filter((t) => t.length > 0 && !/^<lora:[^>]+>$/i.test(t)).join(", ");
         const contextByCharacter: Record<string, unknown> = {};
         for (const d of res.drafts || []) {
           const pos = typeof preset?.positivePrompt === "string" && (preset!.positivePrompt as string).trim().length > 0
             ? (preset!.positivePrompt as string)
-            : d.base_prompt;
+            : stripLora(d.base_prompt || "");
           contextByCharacter[d.character] = {
             base_prompt: pos,
             recommended_params: d.recommended_params,
@@ -394,27 +539,108 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
       <div className={`fixed inset-x-0 bottom-0 z-50 transition-transform duration-300 ${selectedCount > 0 ? "translate-y-0 opacity-100" : "translate-y-full opacity-0 pointer-events-none"}`}>
         <div className="w-full px-4 md:px-6 lg:px-8">
           <div className="rounded-t-2xl border border-slate-800 bg-slate-950/90 backdrop-blur supports-[backdrop-filter]:backdrop-blur p-4 flex items-center justify-between gap-3">
-            <span className="text-sm font-medium text-zinc-200">{selectedCount} Items seleccionados</span>
+            <div className="flex items-center gap-3 overflow-x-auto max-w-[70vw]">
+              <span className="text-sm font-medium text-zinc-200">{COPY.radar.cartLabel}: {selectedCount}</span>
+              {selectedModels.map((m) => (
+                <div key={m.id} className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-2 py-1">
+                  {findImageUrl(m) ? (
+                    <img src={findImageUrl(m)!} alt={m.name} className="h-6 w-6 rounded object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="inline-block h-6 w-6 rounded bg-slate-700" />
+                  )}
+                  <span title={m.name} className="text-xs text-zinc-200">{truncate(m.name)}</span>
+                </div>
+              ))}
+            </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={handleSendToPlanning}
+                onClick={() => setConfirmOpen(true)}
                 disabled={selectedCount === 0}
                 className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-4 py-2 text-sm text-violet-100 hover:bg-violet-600/30 disabled:opacity-60 cursor-pointer transition-all active:scale-95"
               >
                 <Send className="h-4 w-4" aria-hidden />
-                Enviar a Planificación
+                {COPY.radar.sendToPlanning}
               </button>
               <button
                 onClick={() => setSelectedItems([])}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-4 py-2 text-sm text-zinc-200 hover:bg-slate-800 cursor-pointer transition-all active:scale-95"
               >
                 <Trash2 className="h-4 w-4" aria-hidden />
-                Limpiar selección
+                {COPY.radar.clearSelection}
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Modal de confirmación y descargas */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70">
+          <div className="w-[92vw] max-w-2xl rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-zinc-200">{COPY.radar.confirmTitle}</h2>
+              <button onClick={() => setConfirmOpen(false)} className="rounded p-1 hover:bg-slate-800"><X className="h-4 w-4 text-zinc-300" /></button>
+            </div>
+            <p className="mb-3 text-xs text-zinc-400">{COPY.radar.confirmDesc}</p>
+            <div className="max-h-[40vh] overflow-y-auto rounded border border-slate-800">
+              <ul className="divide-y divide-slate-800">
+                {selectedModels.map((m) => {
+                  const state = downloadStates[m.id] || "pending";
+                  const url = selectedItems.find((s) => s.modelId === m.id)?.downloadUrl;
+                  return (
+                    <li key={m.id} className="flex items-center gap-3 p-2">
+                      {findImageUrl(m) ? (
+                        <img src={findImageUrl(m)!} alt={m.name} className="h-8 w-8 rounded object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+                      ) : (
+                        <span className="inline-block h-8 w-8 rounded bg-slate-700" />
+                      )}
+                      <div className="flex-1">
+                        <div className="text-xs text-zinc-200" title={m.name}>{truncate(m.name)}</div>
+                        <div className="text-[11px] text-zinc-400 truncate">{url || "Sin URL de descarga"}</div>
+                      </div>
+                      <div className="text-[11px]">
+                        <div>
+                          {state === "pending" && (isDownloading ? <span className="text-zinc-300">Descargando...</span> : <span className="text-zinc-500">En cola</span>)}
+                          {state === "ok" && <span className="inline-flex items-center gap-1 text-green-400"><CheckCircle className="h-3 w-3" /> LoRA OK</span>}
+                          {state === "error" && <span className="text-red-400">{COPY.radar.downloadFailed}</span>}
+                          {state === "skipped" && <span className="inline-flex items-center gap-1 text-zinc-400"><CheckCircle className="h-3 w-3" /> LoRA OK</span>}
+                        </div>
+                        <div className="mt-0.5">
+                          {infoStates[m.id] === "ok" && <span className="inline-flex items-center gap-1 text-green-400"><CheckCircle className="h-3 w-3" /> Info OK</span>}
+                          {infoStates[m.id] === "missing" && <span className="text-yellow-300">Info faltante</span>}
+                          {(!infoStates[m.id] || infoStates[m.id] === "unknown") && <span className="text-zinc-500">Info desconocida</span>}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button onClick={() => setConfirmOpen(false)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-slate-800">{COPY.radar.confirmCancel}</button>
+              {!isDownloading ? (
+                <button onClick={async () => { await startDownloads(); setLoaderOpen(true); setConfirmOpen(false); await handleSendToPlanning(); setLoaderOpen(false); }} className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-3 py-1.5 text-xs text-violet-100 hover:bg-violet-600/30">
+                  {COPY.radar.confirmAccept}
+                </button>
+              ) : (
+                <button disabled className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
+                  <Loader2 className="h-3 w-3 animate-spin" /> {COPY.radar.downloadProgress}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loader de pantalla completa */}
+      {loaderOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70">
+          <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center">
+            <Loader2 className="h-7 w-7 animate-spin text-violet-400 mx-auto" />
+            <p className="mt-3 text-sm text-zinc-300">{COPY.radar.loaderWorking}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

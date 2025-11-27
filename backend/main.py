@@ -276,15 +276,74 @@ async def local_lora_info(name: str):
         return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None}
     try:
         j = json.loads(p.read_text(encoding="utf-8"))
+        imgs = j.get("images") or []
+        image_urls = []
+        try:
+            for it in imgs:
+                if isinstance(it, dict):
+                    u = (it.get("url") or it.get("imageUrl") or "").strip()
+                    if u:
+                        image_urls.append(u)
+        except Exception:
+            image_urls = []
         return {
             "trainedWords": j.get("trainedWords") or j.get("triggers") or [],
             "baseModel": j.get("baseModel") or "",
             "name": j.get("name"),
             "id": j.get("id"),
             "modelId": j.get("modelId"),
+            "imageUrls": image_urls,
         }
     except Exception:
-        return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None}
+        return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None, "imageUrls": []}
+
+@app.get("/civitai/model-info")
+async def civitai_model_info(modelId: int, versionId: Optional[int] = None):
+    """Obtiene información de un modelo específico de Civitai usando cloudscraper.
+    Devuelve `imageUrls` (lista) y metadatos mínimos. Usa token si está configurado.
+    """
+    try:
+        scraper = cloudscraper.create_scraper()
+        token = os.getenv("CIVITAI_API_KEY")
+        base_url = f"https://civitai.com/api/v1/models/{int(modelId)}"
+        params = {}
+        if token:
+            params["token"] = token
+        resp = scraper.get(base_url, params=params)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"Civitai fallo: {resp.text}")
+        data = resp.json()
+        # Intentar obtener imágenes desde la versión solicitada
+        versions = data.get("modelVersions") or data.get("versions") or []
+        imgs: list = []
+        if versionId and isinstance(versions, list):
+            for v in versions:
+                if isinstance(v, dict) and int(v.get("id") or 0) == int(versionId):
+                    imgs = v.get("images") or []
+                    break
+        # Fallback: primera versión o toplevel
+        if not imgs and isinstance(versions, list) and versions:
+            first_v = versions[0]
+            if isinstance(first_v, dict):
+                imgs = first_v.get("images") or []
+        if not imgs:
+            imgs = data.get("images") or []
+        image_urls: list[str] = []
+        for it in imgs:
+            if isinstance(it, dict):
+                u = (it.get("url") or it.get("imageUrl") or "").strip()
+                if u:
+                    image_urls.append(u)
+        return {
+            "modelId": int(modelId),
+            "versionId": int(versionId) if versionId is not None else None,
+            "imageUrls": image_urls,
+            "name": data.get("name") or None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando Civitai: {str(e)}")
 
 # Endpoint para borrar archivos bajo OUTPUTS_DIR
 @app.delete("/files")
@@ -2640,3 +2699,43 @@ async def marketing_generate(req: MarketingGenerateRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
+@app.post("/civitai/download-info")
+async def civitai_download_info(payload: dict):
+    name = (payload or {}).get("name")
+    model_id = (payload or {}).get("modelId")
+    version_id = (payload or {}).get("versionId")
+    if not name:
+        raise HTTPException(status_code=400, detail="name requerido")
+    lora_dir = os.getenv("LORA_PATH")
+    if not lora_dir:
+        raise HTTPException(status_code=500, detail="LORA_PATH no definido")
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-.]", "_", str(name))
+    target = Path(lora_dir) / f"{safe_name}.civitai.info"
+    if target.exists():
+        return {"status": "exists", "path": str(target)}
+    if not model_id and not version_id:
+        raise HTTPException(status_code=400, detail="modelId o versionId requerido")
+    try:
+        scraper = cloudscraper.create_scraper()
+        token = os.getenv("CIVITAI_API_KEY")
+        data = None
+        if version_id:
+            url = f"https://civitai.com/api/v1/model-versions/{int(version_id)}"
+            params = {"token": token} if token else None
+            resp = scraper.get(url, params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+        if data is None and model_id:
+            url = f"https://civitai.com/api/v1/models/{int(model_id)}"
+            params = {"token": token} if token else None
+            resp = scraper.get(url, params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+        if not data:
+            raise HTTPException(status_code=502, detail="Civitai no devolvió datos")
+        target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"status": "downloaded", "path": str(target)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error guardando civitai.info: {str(e)}")

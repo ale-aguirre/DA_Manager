@@ -23,6 +23,8 @@ export default function ControlPanel(props: {
     upscaler?: string;
     hiresSteps?: number;
     adetailer?: boolean;
+    adetailerModel?: string;
+    extraLoras?: string[];
   }>;
   configByCharacter: Record<string, { denoising?: number; hiresFix?: boolean; outputPath?: string }>;
   plannerContext: Record<string, { recommended_params?: { sampler?: string; steps?: number; cfg?: number } } & { base_prompt?: string; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> } >;
@@ -39,8 +41,10 @@ export default function ControlPanel(props: {
     batch_size: number;
     batch_count: number;
     adetailer: boolean;
+    adetailerModel: string;
     width: number;
     height: number;
+    extraLoras: string[];
   }>) => void;
   setConfigByCharacter: React.Dispatch<React.SetStateAction<Record<string, { denoising?: number; hiresFix?: boolean; outputPath?: string }>>>;
   reforgeUpscalers: string[];
@@ -185,9 +189,13 @@ export default function ControlPanel(props: {
                       plannerContext[activeCharacter]?.recommended_params?.steps ??
                       30
                     }
-                    onChange={(e) =>
-                      setTechConfig(activeCharacter, { steps: Number(e.target.value) })
-                    }
+                    onChange={(e) => {
+                      let v = Number(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      if (v < 1) v = 1;
+                      if (v > 60) v = 60;
+                      setTechConfig(activeCharacter, { steps: v });
+                    }}
                     className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                   />
                 </div>
@@ -215,9 +223,13 @@ export default function ControlPanel(props: {
                       plannerContext[activeCharacter]?.recommended_params?.cfg ??
                       7
                     }
-                    onChange={(e) =>
-                      setTechConfig(activeCharacter, { cfg: Number(e.target.value) })
-                    }
+                    onChange={(e) => {
+                      let v = Number(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      if (v < 1) v = 1;
+                      if (v > 20) v = 20;
+                      setTechConfig(activeCharacter, { cfg: v });
+                    }}
                     className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                   />
                 </div>
@@ -243,9 +255,13 @@ export default function ControlPanel(props: {
                       max={2048}
                       step={8}
                       value={techConfigByCharacter[activeCharacter]?.width ?? 832}
-                      onChange={(e) =>
-                        setTechConfig(activeCharacter, { width: Number(e.target.value) })
-                      }
+                      onChange={(e) => {
+                        let v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        if (v < 512) v = 512;
+                        if (v > 2048) v = 2048;
+                        setTechConfig(activeCharacter, { width: v });
+                      }}
                       className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                     />
                   </div>
@@ -268,9 +284,13 @@ export default function ControlPanel(props: {
                       max={2048}
                       step={8}
                       value={techConfigByCharacter[activeCharacter]?.height ?? 1216}
-                      onChange={(e) =>
-                        setTechConfig(activeCharacter, { height: Number(e.target.value) })
-                      }
+                      onChange={(e) => {
+                        let v = Number(e.target.value);
+                        if (!Number.isFinite(v)) return;
+                        if (v < 512) v = 512;
+                        if (v > 2048) v = 2048;
+                        setTechConfig(activeCharacter, { height: v });
+                      }}
                       className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
                     />
                   </div>
@@ -284,7 +304,7 @@ export default function ControlPanel(props: {
                       type="range"
                       min={1}
                       max={20}
-                      value={techConfigByCharacter[activeCharacter]?.batch_count ?? 10}
+                      value={techConfigByCharacter[activeCharacter]?.batch_count ?? 1}
                       onChange={(e) =>
                         setTechConfig(activeCharacter, { batch_count: Number(e.target.value) })
                       }
@@ -294,10 +314,10 @@ export default function ControlPanel(props: {
                       type="number"
                       min={1}
                       max={20}
-                      value={techConfigByCharacter[activeCharacter]?.batch_count ?? 10}
+                      value={techConfigByCharacter[activeCharacter]?.batch_count ?? 1}
                       onChange={(e) => {
                         let v = Number(e.target.value);
-                        if (!Number.isFinite(v)) v = 10;
+                        if (!Number.isFinite(v)) v = 1;
                         if (v < 1) v = 1;
                         if (v > 20) v = 20;
                         setTechConfig(activeCharacter, { batch_count: v });
@@ -306,7 +326,7 @@ export default function ControlPanel(props: {
                     />
                   </div>
                   <div className="mt-1 text-[11px] text-slate-400">
-                    {(techConfigByCharacter[activeCharacter]?.batch_count ?? 10)} jobs planificados
+                    {(techConfigByCharacter[activeCharacter]?.batch_count ?? 1)} jobs planificados
                   </div>
                 </div>
                 <div>
@@ -347,7 +367,11 @@ export default function ControlPanel(props: {
                   type="number"
                   placeholder="Random (-1)"
                   value={techConfigByCharacter[activeCharacter]?.seed ?? -1}
-                  onChange={(e) => setTechConfig(activeCharacter, { seed: Number(e.target.value) })}
+                  onChange={(e) => {
+                    let v = Number(e.target.value);
+                    if (!Number.isFinite(v)) v = -1;
+                    setTechConfig(activeCharacter, { seed: v });
+                  }}
                   className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
                 />
                 <button
@@ -408,8 +432,22 @@ export default function ControlPanel(props: {
               />
               ADetailer
             </label>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-300">Modelo</label>
+              <select
+                value={techConfigByCharacter[activeCharacter]?.adetailerModel ?? "face_yolov8n.pt"}
+                onChange={(e) => setTechConfig(activeCharacter, { adetailerModel: e.target.value })}
+                disabled={!(techConfigByCharacter[activeCharacter]?.adetailer ?? true)}
+                className="rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+              >
+                <option>face_yolov8n.pt</option>
+                <option>hand_yolov8n.pt</option>
+                <option>mediapipe_face.pt</option>
+              </select>
+            </div>
           </div>
         )}
+        {paramTab === "generation" && null}
       </div>
     </div>
   );

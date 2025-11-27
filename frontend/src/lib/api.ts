@@ -37,7 +37,9 @@ export interface FactoryStatus {
   } | null;
 }
 
-const BASE_URL = "http://127.0.0.1:8000";
+const BASE_URL = (typeof process !== "undefined" && process.env && typeof process.env.NEXT_PUBLIC_API_BASE_URL === "string" && process.env.NEXT_PUBLIC_API_BASE_URL.trim())
+  ? String(process.env.NEXT_PUBLIC_API_BASE_URL).trim()
+  : "http://127.0.0.1:8000";
 
 export interface RecommendedParams {
   cfg: number;
@@ -80,12 +82,66 @@ export async function postPlannerDraft(items: PlannerDraftItem[], jobCount?: num
   return res.json();
 }
 
-export async function getLocalLoraInfo(name: string): Promise<{ trainedWords: string[]; baseModel?: string | null; name?: string | null; id?: number | null; modelId?: number | null }> {
+type LoraInfo = { trainedWords: string[]; baseModel?: string | null; name?: string | null; id?: number | null; modelId?: number | null; imageUrls?: string[] };
+type CivitaiInfo = { imageUrls: string[]; name?: string | null; modelId: number; versionId?: number | null };
+const _loraInfoCache: Record<string, { data: LoraInfo; ts: number }> = {};
+const _loraInfoPending: Partial<Record<string, Promise<LoraInfo>>> = {};
+const _civitaiInfoCache: Record<string, { data: CivitaiInfo; ts: number }> = {};
+const _civitaiInfoPending: Partial<Record<string, Promise<CivitaiInfo>>> = {};
+
+export async function getLocalLoraInfo(name: string): Promise<LoraInfo> {
+  const key = String(name || "").toLowerCase();
+  const now = Date.now();
+  const ttl = 120000;
+  const hit = _loraInfoCache[key];
+  if (hit && now - hit.ts < ttl) return hit.data;
+  if (_loraInfoPending[key]) return _loraInfoPending[key]!;
   const url = `${BASE_URL}/local/lora-info?name=${encodeURIComponent(name)}`;
-  const res = await fetch(url, { cache: "no-store" });
+  const p = (async () => {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Local lora-info failed (${res.status}): ${text}`);
+    }
+    const data = (await res.json()) as LoraInfo;
+    _loraInfoCache[key] = { data, ts: Date.now() };
+    return data;
+  })();
+  _loraInfoPending[key] = p;
+  try { return await p; } finally { delete _loraInfoPending[key]; }
+}
+
+export async function getCivitaiModelInfo(modelId: number, versionId?: number): Promise<CivitaiInfo> {
+  const key = `${String(modelId)}:${versionId ? String(versionId) : ""}`;
+  const now = Date.now();
+  const ttl = 300000;
+  const hit = _civitaiInfoCache[key];
+  if (hit && now - hit.ts < ttl) return hit.data;
+  if (_civitaiInfoPending[key]) return _civitaiInfoPending[key]!;
+  const url = `${BASE_URL}/civitai/model-info?modelId=${encodeURIComponent(String(modelId))}${versionId ? `&versionId=${encodeURIComponent(String(versionId))}` : ""}`;
+  const p = (async () => {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Civitai model-info failed (${res.status}): ${text}`);
+    }
+    const data = (await res.json()) as CivitaiInfo;
+    _civitaiInfoCache[key] = { data, ts: Date.now() };
+    return data;
+  })();
+  _civitaiInfoPending[key] = p;
+  try { return await p; } finally { delete _civitaiInfoPending[key]; }
+}
+
+export async function postCivitaiDownloadInfo(name: string, modelId?: number, versionId?: number): Promise<{ status: string; path?: string }> {
+  const res = await fetch(`${BASE_URL}/civitai/download-info`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, modelId, versionId }),
+  });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Local lora-info failed (${res.status}): ${text}`);
+    throw new Error(`Download civitai.info failed (${res.status}): ${text}`);
   }
   return res.json();
 }
