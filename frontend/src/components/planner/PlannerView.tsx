@@ -219,6 +219,7 @@ export default function PlannerView() {
             const item = d as {
               character?: string;
               base_prompt?: string;
+              trigger_words?: string[];
               recommended_params?: {
                 cfg: number;
                 steps: number;
@@ -231,8 +232,20 @@ export default function PlannerView() {
             };
             const key = item.character;
             if (key) {
+              // Limpieza de seguridad para el Prompt Global
+              let cleanBase = item.base_prompt || "";
+              // 1. Eliminar LoRAs (<lora:...>)
+              cleanBase = cleanBase.replace(/<lora:[^>]+>,?/gi, "");
+              // 2. Eliminar Triggers conocidos (si existen en el item)
+              const triggers = item.trigger_words || metaByCharacter[key]?.trigger_words || [];
+              triggers.forEach((t: string) => {
+                if (t) cleanBase = cleanBase.replace(new RegExp(`\\b${t}\\b,?`, "gi"), "");
+              });
+              // 3. Normalizar comas
+              cleanBase = cleanBase.split(",").map(s => s.trim()).filter(Boolean).join(", ");
+
               next[key] = {
-                base_prompt: stripLoraTags(item.base_prompt || ""),
+                base_prompt: cleanBase,
                 recommended_params: item.recommended_params,
                 reference_images: item.reference_images,
               } as {

@@ -1025,7 +1025,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
         triggers = ", ".join(_clean_tags(trigger_words or [])) or sanitize_filename(character_name)
         # Fallback base prompt cuando Civitai no está disponible
         fallback_quality = "masterpiece, best quality, absurdres"
-        base_prompt = f"{lora_tag}, {triggers}, {fallback_quality}"
+        base_prompt = fallback_quality
 
         token = os.getenv("CIVITAI_API_KEY")
         scraper = cloudscraper.create_scraper()

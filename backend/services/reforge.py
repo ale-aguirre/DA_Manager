@@ -159,48 +159,56 @@ async def call_txt2img(prompt: Optional[str] = None,
 async def list_checkpoints() -> List[str]:
     """Obtiene la lista de modelos (checkpoints) y devuelve solo los 'title'."""
     url = f"{BASE_URL}{MODELS_ENDPOINT}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
-        # La API devuelve una lista de objetos; extraemos 'title'
-        titles: List[str] = []
-        if isinstance(data, list):
-            for item in data:
-                title = item.get("title") if isinstance(item, dict) else None
-                if title:
-                    titles.append(title)
-        return titles
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            titles: List[str] = []
+            if isinstance(data, list):
+                for item in data:
+                    title = item.get("title") if isinstance(item, dict) else None
+                    if title:
+                        titles.append(title)
+            return titles
+    except Exception:
+        return []
 
 async def list_vaes() -> List[str]:
     """Obtiene la lista de VAEs y devuelve solo los 'model_name'."""
     url = f"{BASE_URL}{VAES_ENDPOINT}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
-        names: List[str] = []
-        if isinstance(data, list):
-            for item in data:
-                name = item.get("model_name") if isinstance(item, dict) else None
-                if name:
-                    names.append(name)
-        return names
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            names: List[str] = []
+            if isinstance(data, list):
+                for item in data:
+                    name = item.get("model_name") if isinstance(item, dict) else None
+                    if name:
+                        names.append(name)
+            return names
+    except Exception:
+        return []
 
 async def list_upscalers() -> List[str]:
     """Obtiene la lista de Upscalers disponibles desde la API y devuelve solo los 'name'."""
     url = f"{BASE_URL}/sdapi/v1/upscalers"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
-        names: List[str] = []
-        if isinstance(data, list):
-            for item in data:
-                name = item.get("name") if isinstance(item, dict) else None
-                if name:
-                    names.append(name)
-        return names
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            names: List[str] = []
+            if isinstance(data, list):
+                for item in data:
+                    name = item.get("name") if isinstance(item, dict) else None
+                    if name:
+                        names.append(name)
+            return names
+    except Exception:
+        return []
 
 
 async def set_active_checkpoint(title: str) -> Dict[str, Any]:
@@ -226,10 +234,13 @@ async def refresh_checkpoints() -> Dict[str, Any]:
 async def get_options() -> Dict[str, Any]:
     """Obtiene las opciones actuales de ReForge (incluye sd_model_checkpoint, enable_hr, hr_scale, etc.)."""
     url = f"{BASE_URL}{OPTIONS_ENDPOINT}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return {}
 
 
 async def interrupt_generation() -> Dict[str, Any]:
