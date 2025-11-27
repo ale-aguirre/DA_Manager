@@ -2771,25 +2771,30 @@ Do NOT return markdown blocks. Just the JSON."""
         
         # Use the helper if available, otherwise direct call
         if 'groq_chat_with_fallbacks' in globals():
-            completion = await groq_chat_with_fallbacks(client, messages, temperature=0.8)
+            completion = await groq_chat_with_fallbacks(client, messages, temperature=0.9)
         else:
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=messages,
-                temperature=0.8,
+                temperature=0.9,
                 max_tokens=500,
                 response_format={"type": "json_object"}
             )
             
         content = completion.choices[0].message.content
-        try:
-            data = json.loads(content)
-        except:
-            # Fallback if json parsing fails
-            data = {"outfit": "casual", "pose": "standing", "location": "studio", "ai_reasoning": "I had trouble parsing the vision, so we went back to basics."}
-            
+        data = json.loads(content)
         return data
-        
     except Exception as e:
-        print(f"Error in magicfix: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in magicfix (using fallback): {e}")
+        # Fallback randomizado GLOBAL (cubre API errors, JSON errors, etc)
+        import random
+        fallbacks = [
+            {"outfit": "casual streetwear", "pose": "walking confidently", "location": "neon city street", "ai_reasoning": "Fallback: Urban vibes."},
+            {"outfit": "elegant evening gown", "pose": "sitting on a velvet chair", "location": "luxury hotel lobby", "ai_reasoning": "Fallback: Classy evening."},
+            {"outfit": "summer dress", "pose": "standing by the shore", "location": "sunny beach", "ai_reasoning": "Fallback: Summer breeze."},
+            {"outfit": "cyberpunk armor", "pose": "holding a glowing weapon", "location": "futuristic alleyway", "ai_reasoning": "Fallback: Sci-fi action."},
+            {"outfit": "cozy sweater", "pose": "reading a book", "location": "warm library", "ai_reasoning": "Fallback: Quiet time."}
+        ]
+        data = random.choice(fallbacks)
+        print(f"DEBUG: MagicFix fallback used: {data}")
+        return data

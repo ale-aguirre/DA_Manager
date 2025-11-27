@@ -328,9 +328,7 @@ export default function PlannerView() {
 
         const scenePart = [triplet.outfit, triplet.pose, triplet.location].filter(Boolean).join(", ");
         const extrasPart = [extras.lighting, extras.camera, extras.expression].filter(Boolean).join(", ");
-        const quality = "masterpiece, best quality, absurdres";
-
-        const newPrompt = [loraTag, trigger, globalPrompt, scenePart, extrasPart, quality]
+        const newPrompt = [loraTag, trigger, globalPrompt, scenePart, extrasPart]
           .map(s => s.trim())
           .filter(Boolean)
           .join(", ");
@@ -782,13 +780,28 @@ export default function PlannerView() {
     const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
     const loraTag = `<lora:${sanitize(characterName)}:0.8>`;
 
-    // Trigger logic (con caché local o fallback)
-    let firstTrig = characterName.split(" - ")[0];
+    // Trigger logic mejorada
+    let firstTrig = "";
     try {
       const info = await getLocalLoraInfo(characterName);
-      if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) firstTrig = info.trainedWords[0];
-      else if (metaByCharacter[characterName]?.trigger_words?.length) firstTrig = metaByCharacter[characterName]!.trigger_words![0];
+      if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) {
+        firstTrig = info.trainedWords[0];
+      } else if (metaByCharacter[characterName]?.trigger_words?.length) {
+        firstTrig = metaByCharacter[characterName]!.trigger_words![0];
+      }
     } catch { }
+
+    // Fallback: Si no hay trigger oficial, limpiar el nombre del archivo
+    if (!firstTrig) {
+      // 1. Quitar parte después del guion (ej "Personaje - Serie")
+      let clean = characterName.split(" - ")[0];
+      // 2. Reemplazar guiones bajos por espacios
+      clean = clean.replace(/_/g, " ");
+      // 3. Quitar parientes y versiones (v1, v2...)
+      clean = clean.replace(/\(.*\)/g, "").replace(/v\d+/i, "");
+      // 4. Trim
+      firstTrig = clean.trim();
+    }
 
     // 2. PROMPT GLOBAL (Estilo/Calidad) - SIEMPRE INYECTADO
     const globalPrompt = plannerContext[characterName]?.base_prompt || "";
@@ -816,12 +829,9 @@ export default function PlannerView() {
     const scenePart = [outfit, pose, location].filter(Boolean).join(", ");
     const extrasPart = [lighting, camera, expression, hairstyle].filter(Boolean).join(", ");
 
-    // 4. CALIDAD FINAL
-    const quality = "masterpiece, best quality, absurdres";
-
     // 5. ENSAMBLAJE FINAL
-    // Orden: <LoRA> + Trigger + [GLOBAL] + [ESCENA] + [EXTRAS] + [CALIDAD]
-    return [loraTag, firstTrig, globalPrompt, scenePart, extrasPart, quality]
+    // Orden: <LoRA> + Trigger + [GLOBAL] + [ESCENA] + [EXTRAS]
+    return [loraTag, firstTrig, globalPrompt, scenePart, extrasPart]
       .map(s => s.trim())
       .filter(Boolean)
       .join(", ");
