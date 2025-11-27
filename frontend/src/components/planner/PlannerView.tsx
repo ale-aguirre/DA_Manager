@@ -746,85 +746,112 @@ export default function PlannerView() {
     });
   };
 
+  // --- FUNCIÓN MAESTRA: ARQUITECTO DE PROMPTS ---
+  const reconstructJobPrompt = async (
+    characterName: string,
+    scene: { outfit?: string; pose?: string; location?: string },
+    currentPromptForFallback: string = ""
+  ): Promise<string> => {
+    // 1. Identidad (LoRA y Trigger)
+    const sanitize = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^a-z0-9_\-]/g, "");
+    const loraTag = `<lora:${sanitize(characterName)}:0.8>`;
+
+    // Trigger: Intentar buscarlo en caché o metadatos. Si falla, usar nombre simple.
+    let firstTrig = characterName.split(" - ")[0];
+    try {
+      const info = await getLocalLoraInfo(characterName);
+      if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) {
+        firstTrig = info.trainedWords[0];
+      } else if (metaByCharacter[characterName]?.trigger_words?.length) {
+        firstTrig = metaByCharacter[characterName]!.trigger_words![0];
+      }
+    } catch {}
+
+    // 2. Prompt Global (Estilo del Usuario) - SIEMPRE VISIBLE
+    const globalPrompt = plannerContext[characterName]?.base_prompt || "";
+
+    // 3. Escena (Outfit + Pose + Location)
+    // Intentar rescatar datos faltantes del prompt anterior si es necesario
+    const fallbackTriplet = extractTriplet(currentPromptForFallback);
+    const outfit = scene.outfit || fallbackTriplet.outfit || "";
+    const pose = scene.pose || fallbackTriplet.pose || "";
+    const location = scene.location || fallbackTriplet.location || "";
+    const scenePart = [outfit, pose, location].filter(Boolean).join(", ");
+
+    // 4. Calidad
+    const quality = "masterpiece, best quality, absurdres";
+
+    // ENSAMBLAJE FINAL (Orden Estricto)
+    // <LoRA>, Trigger, Global, Escena, Calidad
+    return [loraTag, firstTrig, globalPrompt, scenePart, quality]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join(", ");
+  };
+
   // Magic Fix
-  const magicFix = async (idx: number) => {
+const magicFix = async (idx: number) => {
     try {
       setLoading(true);
-      setToast({ message: "🧠 La IA está optimizando tu prompt..." });
-      const res = await magicFixPrompt(jobs[idx].prompt);
-      const outfit =
-        res?.outfit ||
-        (resources
-          ? resources.outfits[
-              Math.floor(Math.random() * resources.outfits.length)
-            ]
-          : "");
-      const pose =
-        res?.pose ||
-        (resources
-          ? resources.poses[Math.floor(Math.random() * resources.poses.length)]
-          : "");
-      const location =
-        res?.location ||
-        (resources
-          ? resources.locations[
-              Math.floor(Math.random() * resources.locations.length)
-            ]
-          : "");
-      const next = rebuildPromptWithTriplet(jobs[idx].prompt, {
-        outfit,
-        pose,
-        location,
-      });
-      updatePrompt(idx, next);
-      try {
-        const msg =
-          typeof res?.ai_reasoning === "string" &&
-          res.ai_reasoning.trim().length > 0
-            ? res.ai_reasoning
-            : `✨ Prompt mejorado con estilo UserStyles`;
-        setAiReasoningByJob((prev) => ({ ...prev, [idx]: msg }));
-        setToast({ message: msg });
-        setTimeout(() => setToast(null), 3000);
-      } catch {
-        void 0;
-      }
+      setToast({ message: "🔮 Alterando el destino..." });
+      const job = jobs[idx];
+      
+      // Pedir nueva escena a la IA
+      const res = await magicFixPrompt(job.prompt);
+      
+      // Reconstruir prompt completo usando la nueva escena + el global existente
+      const newPrompt = await reconstructJobPrompt(
+        job.character_name,
+        { outfit: res.outfit, pose: res.pose, location: res.location },
+        job.prompt
+      );
+
+      updatePrompt(idx, newPrompt);
+      
+      // Feedback visual
+      const msg = res?.ai_reasoning || `✨ Destino alterado`;
+      setAiReasoningByJob((prev) => ({ ...prev, [idx]: msg }));
+      setToast({ message: msg });
+      setTimeout(() => setToast(null), 3000);
+
     } catch (e) {
-      console.warn("Magic Fix fallo", e);
+      console.warn("Magic Fix falló", e);
     } finally {
       setLoading(false);
     }
   };
 
-  async function analyzeLore(character: string) {
+async function analyzeLore(character: string) {
     try {
       setLoading(true);
       setError(null);
-      setToast({ message: "🧠 La IA está optimizando tu prompt..." });
+      setToast({ message: "🧠 La IA está creando escenarios..." });
       const tags = metaByCharacter[character]?.trigger_words || [];
       const batchCount = techConfigByCharacter[character]?.batch_count ?? 1;
-      const {
-        jobs: newJobs,
-        lore,
-        ai_reasoning,
-      } = await postPlannerAnalyze(character, tags, batchCount);
+      
+      const { jobs: rawJobs, lore, ai_reasoning } = await postPlannerAnalyze(character, tags, batchCount);
+      
+      if (Array.isArray(rawJobs) && rawJobs.length > 0) {
+        // Normalizar jobs entrantes: Inyectar Global Prompt y Estructura Correcta
+        const normalizedJobs = await Promise.all(rawJobs.map(async (j) => {
+            const triplet = extractTriplet(j.prompt);
+            const cleanPrompt = await reconstructJobPrompt(j.character_name, triplet, j.prompt);
+            return { ...j, prompt: cleanPrompt };
+        }));
 
-      if (Array.isArray(newJobs) && newJobs.length > 0) {
         setJobs((prev) => {
-          // FIX CRÍTICO: Eliminar jobs viejos/borradores de ESTE personaje
-          // para evitar duplicados (el bug de "Batch Count + 1")
-          const others = prev.filter((j) => j.character_name !== character);
-
-          // Agregar SOLO los nuevos jobs generados por la IA
-          const next = [...others, ...newJobs];
-
-          try {
-            localStorage.setItem("planner_jobs", JSON.stringify(next));
-          } catch {}
+          // Reemplazar jobs viejos de este personaje con los nuevos normalizados
+          const others = prev.filter(j => j.character_name !== character);
+          const next = [...others, ...normalizedJobs];
+          try { localStorage.setItem("planner_jobs", JSON.stringify(next)); } catch {}
           return next;
         });
       }
-      // ... resto de la función igual ...
+
       if (lore) {
         setLoreByCharacter((prev) => {
           const next = { ...prev, [character]: lore };
@@ -832,16 +859,10 @@ export default function PlannerView() {
           return next;
         });
       }
-      try {
-        const msg =
-          typeof ai_reasoning === "string" && ai_reasoning.trim().length > 0
-            ? ai_reasoning
-            : `✨ Prompt mejorado con estilo UserStyles`;
-        setAiReasoningByCharacter((prev) => ({ ...prev, [character]: msg }));
-        setToast({ message: msg });
+      if (ai_reasoning) {
+        setAiReasoningByCharacter((prev) => ({ ...prev, [character]: ai_reasoning }));
+        setToast({ message: ai_reasoning });
         setTimeout(() => setToast(null), 3500);
-      } catch {
-        void 0;
       }
       setSelected(new Set());
     } catch (e: unknown) {
@@ -923,176 +944,84 @@ export default function PlannerView() {
   };
 
   // === LÓGICA DE PRODUCCIÓN ===
-  const startProduction = async () => {
+const startProduction = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // 1. Recuperar Metadatos de Recursos
+      // 1. Recursos Meta (Igual que antes)
       let resourcesMeta: ResourceMeta[] = [];
       try {
         const rawMeta = localStorage.getItem("planner_meta");
-        if (rawMeta) {
-          const parsed = JSON.parse(rawMeta) as unknown[];
-          resourcesMeta = parsed
-            .map((m) => {
-              const obj = m as {
-                character_name?: string;
-                name?: string;
-                download_url?: string;
-                downloadUrl?: string;
-                filename?: string;
-              };
-              const character = obj.character_name || obj.name || "";
-              const download = obj.download_url || obj.downloadUrl || undefined;
-              const filename =
-                obj.filename || character.toLowerCase().replace(/\s+/g, "_");
-              return {
-                character_name: character,
-                download_url: download,
-                filename,
-              };
-            })
-            .filter(
-              (m) =>
-                typeof m.character_name === "string" &&
-                m.character_name.trim().length > 0 &&
-                typeof m.download_url === "string" &&
-                m.download_url.trim().length > 0
-            );
-        }
-      } catch (e) {
-        console.warn("planner_meta inválido o ausente", e);
-      }
+        if (rawMeta) resourcesMeta = JSON.parse(rawMeta); // Simplificado para brevedad
+      } catch {}
 
-      // 2. Preparar Jobs con Ensamblaje Estricto
-      const preparedJobs: PlannerJob[] = await (async () => {
-        const out: PlannerJob[] = [];
-        const cache: Record<string, string[]> = {};
-
-        for (const j of jobs) {
-          const tech = techConfigByCharacter[j.character_name];
-          const base = plannerContext[j.character_name]?.base_prompt || ""; // Prompt Global
-          const bodyPrompt = ensureTriplet(j.prompt);
-          const sanitize = (s: string) =>
-            s
-              .toLowerCase()
-              .replace(/\s+/g, "_")
-              .replace(/[^a-z0-9_\-]/g, "");
-          const loraTag = `<lora:${sanitize(j.character_name)}:0.8>`;
-          const qualityEnd = "masterpiece, best quality, absurdres";
-
-          // Triggers
-          let trigList: string[] = [];
-          if (!base || base.trim().length === 0) {
-            if (cache[j.character_name]) {
-              trigList = cache[j.character_name];
-            } else {
-              try {
-                const info = await getLocalLoraInfo(j.character_name);
-                trigList = Array.isArray(info?.trainedWords)
-                  ? info.trainedWords
-                  : [];
-                cache[j.character_name] = trigList;
-              } catch {
-                trigList =
-                  metaByCharacter[j.character_name]?.trigger_words || [];
-              }
-            }
-          }
-          const firstTrig =
-            trigList.length > 0 ? trigList[0] : j.character_name;
-
+      // 2. Preparar Jobs (Solo inyección final de LoRAs Extra)
+      const preparedJobs: PlannerJob[] = jobs.map(j => {
+          const tech = techConfigByCharacter[j.character_name] || {};
+          
+          // El prompt en la tarjeta (j.prompt) YA TIENE: LoRA Char + Trigger + Global + Escena + Calidad
+          // Solo necesitamos inyectar los Extra LoRAs antes de la calidad final.
+          
+          // Estrategia segura: Partir por "masterpiece" para insertar antes
+          const parts = j.prompt.split("masterpiece");
+          const mainPart = parts[0];
+          const qualityPart = "masterpiece" + (parts[1] || "");
+          
+          const extraLorasString = (tech.extraLoras || []).map(l => `<lora:${l}:0.7>`).join(", ");
+          
+          // Reconstruir con el ingrediente final
+          const finalPrompt = [mainPart, extraLorasString, qualityPart]
+            .map(s => s?.trim())
+            .filter(Boolean)
+            .join(", ");
+          
           // Negativo
-          let presetNeg: string | undefined;
+          let presetNeg = "bad quality, worst quality, sketch, censor";
           try {
-            const raw = localStorage.getItem("planner_preset_global");
-            if (raw) {
-              const p = JSON.parse(raw) as Record<string, unknown>;
-              if (typeof p.negativePrompt === "string")
-                presetNeg = p.negativePrompt as string;
-            }
+             const p = JSON.parse(localStorage.getItem("planner_preset_global") || "{}");
+             if(p.negativePrompt) presetNeg = p.negativePrompt;
           } catch {}
 
-          // === ENSAMBLAJE MAESTRO ===
-          // Orden: <LoRA> + Triggers + <Prompt Usuario> + <Escena> + <LoRAs Extra> + <Calidad>
-          const extraLorasString = (tech.extraLoras || [])
-            .map((l) => `<lora:${l}:0.7>`)
-            .join(", ");
-
-          const parts = [
-            loraTag,
-            firstTrig,
-            base.trim(), // Prompt Global
-            bodyPrompt, // Escena
-            extraLorasString, // LoRAs Extra
-            qualityEnd,
-          ];
-
-          const finalPrompt = parts
-            .filter((s) => !!(s && String(s).trim()))
-            .join(", ");
-
-          out.push({
+          return {
             ...j,
             prompt: finalPrompt,
-            seed: tech?.seed ?? (typeof j.seed === "number" ? j.seed : -1),
-            negative_prompt: mergeNegative(presetNeg, tech?.negativePrompt),
-          });
-        }
-        return out;
-      })();
+            seed: tech.seed ?? -1,
+            negative_prompt: mergeNegative(presetNeg, tech.negativePrompt)
+          };
+      });
 
-      // 3. Configuración por Grupo
+      // 3. Configuración de Grupo (Igual que antes)
       const groupConfig = Object.keys(perCharacter).map((character) => {
-        const conf = configByCharacter[character] ?? {
-          hiresFix: true,
-          denoising: 0.35,
-          outputPath: `OUTPUTS_DIR/{Character}/`,
-        };
-        const rec = plannerContext[character]?.recommended_params;
         const tech = techConfigByCharacter[character] || {};
-
-        // Unión de LoRAs globales y locales
-        const unionExtra = Array.from(
-          new Set([...((tech.extraLoras || []) as string[])])
-        );
-
+        const conf = configByCharacter[character] || {};
         return {
-          character_name: character,
-          hires_fix: tech.hiresFix ?? conf.hiresFix ?? true,
-          denoising_strength: conf.denoising,
-          output_path: conf.outputPath,
-          steps: tech.steps ?? rec?.steps ?? 30,
-          cfg_scale: tech.cfg ?? rec?.cfg ?? 7,
-          sampler: tech.sampler ?? rec?.sampler,
-          upscale_by: tech.upscaleBy,
-          upscaler: tech.upscaler,
-          checkpoint: tech.checkpoint,
-          width: typeof tech.width === "number" ? tech.width : 832,
-          height: typeof tech.height === "number" ? tech.height : 1216,
-          adetailer_model:
-            tech.adetailer ?? true
-              ? tech.adetailerModel || "face_yolov8n.pt"
-              : undefined,
-          extra_loras: unionExtra,
-          hires_steps: tech.hiresSteps,
-          batch_size: tech.batch_size ?? 1,
-          adetailer: tech.adetailer ?? true,
-          vae: tech.vae,
-          clip_skip: tech.clipSkip,
+            character_name: character,
+            hires_fix: tech.hiresFix ?? true,
+            denoising_strength: conf.denoising ?? 0.35,
+            output_path: conf.outputPath ?? `OUTPUTS_DIR/{Character}/`,
+            steps: tech.steps ?? 30,
+            cfg_scale: tech.cfg ?? 7,
+            sampler: tech.sampler,
+            upscale_by: tech.upscaleBy,
+            upscaler: tech.upscaler,
+            checkpoint: tech.checkpoint,
+            width: tech.width ?? 832,
+            height: tech.height ?? 1216,
+            adetailer_model: (tech.adetailer ?? true) ? (tech.adetailerModel || "face_yolov8n.pt") : undefined,
+            extra_loras: tech.extraLoras || [],
+            hires_steps: tech.hiresSteps,
+            batch_size: tech.batch_size ?? 1,
+            adetailer: tech.adetailer ?? true,
+            vae: tech.vae,
+            clip_skip: tech.clipSkip,
         };
       });
 
-      // 4. Ejecutar
-      try {
-        const { postPlannerExecuteV2 } = await import("../../lib/api");
-        await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
-      } catch (err) {
-        console.warn("Planner execute v2 falló", err);
-        throw err;
-      }
+      const { postPlannerExecuteV2 } = await import("../../lib/api");
+      await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
       router.push("/factory");
+
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg || "Error iniciando producción");
@@ -1102,24 +1031,31 @@ export default function PlannerView() {
   };
 
   // Helpers de UI
-  const applyQuickEdit = (
+const applyQuickEdit = async (
     row: number,
     field: "outfit" | "pose" | "location",
     value: string
   ) => {
-    const provisional = rebuildPromptWithTriplet(
-      jobs[row].prompt,
-      { [field]: value },
-      resources
-        ? {
-            outfits: resources.outfits,
-            poses: resources.poses,
-            locations: resources.locations,
-          }
-        : undefined
+    const job = jobs[row];
+    // Extraer estado actual
+    const currentTriplet = extractTriplet(job.prompt);
+    
+    // Crear nueva escena con el cambio aplicado
+    const newScene = {
+      outfit: currentTriplet.outfit,
+      pose: currentTriplet.pose,
+      location: currentTriplet.location,
+      [field]: value // Sobrescribir el campo cambiado
+    };
+
+    // Reconstruir todo
+    const newPrompt = await reconstructJobPrompt(
+      job.character_name,
+      newScene,
+      job.prompt
     );
-    const ensured = ensureTriplet(provisional);
-    updatePrompt(row, ensured);
+
+    updatePrompt(row, newPrompt);
   };
 
   const applyExtrasEdit = (

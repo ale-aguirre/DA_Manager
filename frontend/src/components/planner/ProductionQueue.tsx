@@ -10,13 +10,11 @@ import {
   User,
   Zap,
   Bot,
-  Camera,
-  Wand2,
-  Shuffle,
+  Sparkles, // Nuevo icono para Alter Fate
   RefreshCw,
   Download,
   ExternalLink,
-  // FileText,
+  Camera
 } from "lucide-react";
 import {
   extractTriplet,
@@ -41,6 +39,7 @@ export default function ProductionQueue(props: {
     camera?: string[];
     expressions?: string[];
     hairstyles?: string[];
+    upscalers?: string[];
   } | null;
   metaByCharacter: Record<
     string,
@@ -103,6 +102,10 @@ export default function ProductionQueue(props: {
   const [civitaiBusy, setCivitaiBusy] = React.useState<Record<string, boolean>>(
     {}
   );
+  const [hairstyleSelection, setHairstyleSelection] = React.useState<
+    Record<number, string>
+  >({});
+
   const downloadLora = async (character: string) => {
     try {
       setLoraBusy((prev) => ({ ...prev, [character]: true }));
@@ -202,6 +205,7 @@ export default function ProductionQueue(props: {
       setCivitaiBusy((prev) => ({ ...prev, [character]: false }));
     }
   };
+
   const updatePrompts = async (character: string) => {
     try {
       const api = await import("../../lib/api");
@@ -273,29 +277,6 @@ export default function ProductionQueue(props: {
       }));
     }
   };
-
-  const randomizeJob = (idx: number) => {
-    const pick = (arr?: string[]) =>
-      Array.isArray(arr) && arr.length > 0
-        ? arr[Math.floor(Math.random() * arr.length)]
-        : "";
-    applyQuickEdit(idx, "outfit", pick(resources?.outfits));
-    applyQuickEdit(idx, "pose", pick(resources?.poses));
-    applyQuickEdit(idx, "location", pick(resources?.locations));
-    const li = pick(resources?.lighting);
-    const ca = pick(resources?.camera);
-    const ex = pick(resources?.expressions);
-    const hs = pick(resources?.hairstyles);
-    if (li) applyExtrasEdit(idx, "lighting", li);
-    if (ca) applyExtrasEdit(idx, "camera", ca);
-    if (ex) applyExtrasEdit(idx, "expression", ex);
-    setHairstyleSelection((prev) => ({ ...prev, [idx]: hs || "" }));
-    if (hs) applyExtrasEdit(idx, "hairstyle", hs);
-  };
-
-  const [hairstyleSelection, setHairstyleSelection] = React.useState<
-    Record<number, string>
-  >({});
 
   const IntensitySelector: React.FC<{
     value: "SFW" | "ECCHI" | "NSFW";
@@ -778,28 +759,18 @@ export default function ProductionQueue(props: {
                               </div>
                             </div>
                             <div className="mt-3 flex items-center justify-end gap-2">
+                              {/* Botón Alter Fate (Reemplazo de Magic Fix) */}
                               <button
                                 onClick={() => magicFix(idx)}
                                 disabled={Boolean(loading)}
-                                className="inline-flex items-center gap-2 rounded-md border border-indigo-700 px-3 py-1.5 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-60"
+                                className="inline-flex items-center gap-2 rounded-md border border-violet-600/50 bg-violet-900/20 px-3 py-1.5 text-xs text-violet-200 hover:bg-violet-800/40 disabled:opacity-60 transition-colors"
                               >
-                                <Wand2 className="h-4 w-4" />
-                                <span>Magic Fix</span>
+                                <Sparkles className="h-4 w-4 text-violet-400" />
+                                <span>Alter Fate</span>
                               </button>
-                              <button
-                                onClick={() => randomizeJob(idx)}
-                                className="inline-flex items-center gap-2 rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/40"
-                              >
-                                <Shuffle className="h-4 w-4" />
-                                <span>Random</span>
-                              </button>
-                              <button
-                                onClick={() => toggleDetails(idx)}
-                                className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
-                              >
-                                <Camera className="h-4 w-4" />
-                                <span>Ver Prompt</span>
-                              </button>
+                              
+                              {/* Botón Random ELIMINADO */}
+                              {/* Botón Ver Prompt ELIMINADO */}
                             </div>
                             <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">
                               <textarea

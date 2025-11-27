@@ -821,7 +821,7 @@ async def process_ai(req: ProcessRequest):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=0.8,
         )
         content = completion.choices[0].message.content.strip()
         # Extraer JSON si viene con fences
@@ -950,7 +950,7 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=0.8,
         )
         content = completion.choices[0].message.content.strip()
         start = content.find("[")
@@ -1181,7 +1181,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                     {"role": "system", "content": system_prompt.replace("{name}", character_name).replace("{location}", preferred_location or "(none)")},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.2,
+                temperature=0.8,
             )
             content = completion.choices[0].message.content.strip()
             start = content.find("[")
@@ -1464,7 +1464,7 @@ async def planner_magicfix(req: MagicFixRequest):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=0.8,
         )
         content = completion.choices[0].message.content.strip()
         start = content.find("{")
@@ -1543,7 +1543,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.2,
+                temperature=0.8,
             )
             content = completion.choices[0].message.content.strip()
             # Intentar extraer el objeto JSON
@@ -2328,7 +2328,7 @@ async def dream(req: DreamRequest):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
+            temperature=0.8,
         )
         content = completion.choices[0].message.content.strip()
         # Devuelve solo texto plano

@@ -54,43 +54,47 @@ export function mergeNegative(
  * Reconstruye el prompt reemplazando inteligentemente los elementos del triplete.
  * Requiere las listas de recursos para identificar qué borrar.
  */
+// En src/helpers/planner.ts
+
+/**
+ * Reconstruye el prompt reemplazando inteligentemente los elementos del triplete.
+ * Requiere las listas de recursos (knownResources) para identificar qué borrar.
+ */
 export function rebuildPromptWithTriplet(
   currentPrompt: string,
   newValues: { outfit?: string; pose?: string; location?: string },
   knownResources?: { outfits: string[]; poses: string[]; locations: string[] }
 ): string {
   let tokens = splitPrompt(currentPrompt);
-  const lowerTokens = tokens.map((t) => t.toLowerCase());
 
-  // Helper para reemplazar o añadir
-  const replaceOrAdd = (
-    newValue: string | undefined,
-    resourceList: string[]
-  ) => {
+  const replaceOrAdd = (newValue: string | undefined, resourceList: string[]) => {
     if (!newValue) return;
-
     const newValClean = newValue.trim();
     if (!newValClean) return;
 
-    // 1. Buscar si ya existe algo de esta categoría en el prompt y eliminarlo
+    // Lógica de Limpieza Fuzzy (Coincidencia Parcial)
     if (resourceList && resourceList.length > 0) {
-      const resourcesSet = new Set(resourceList.map((r) => r.toLowerCase()));
-      // Filtramos tokens que NO estén en la lista de recursos (borramos los viejos)
-      // PERO no borramos si es exactamente el nuevo (para evitar borrado accidental si re-aplicamos)
       tokens = tokens.filter((t) => {
-        const low = t.toLowerCase();
-        // Si es el nuevo valor, lo dejamos (o lo quitamos para reordenar, mejor quitarlo para evitar dupe)
-        if (low === newValClean.toLowerCase()) return false;
-        // Si está en la lista de recursos conocidos, es un "viejo valor", lo quitamos
-        if (resourcesSet.has(low)) return false;
-        return true;
+        const lowToken = t.toLowerCase();
+        
+        // 1. Si es EXACTAMENTE el nuevo valor, mantenlo (evita borrar y re-agregar innecesariamente)
+        if (lowToken === newValClean.toLowerCase()) return true;
+
+        // 2. Chequear si el token actual es "parte de" o "contiene" un recurso conocido.
+        // Esto elimina variaciones como "standing pose" si la lista tiene "standing".
+        const isResource = resourceList.some(r => {
+          const rLow = r.toLowerCase();
+          // Match si uno contiene al otro.
+          // Filtramos rLow.length > 2 para evitar que recursos cortos como "in" borren todo.
+          return (rLow.length > 2 && lowToken.includes(rLow)) || (lowToken.length > 2 && rLow.includes(lowToken));
+        });
+
+        // Si es un recurso viejo, DEVUELVE FALSE para borrarlo del array.
+        return !isResource; 
       });
     }
 
-    // 2. Añadir el nuevo valor.
-    // Estrategia de inserción: Intentar mantenerlo antes de los tags de calidad.
-    // Simplificación: Añadirlo al final de la sección descriptiva (antes de quality).
-    // Por ahora, push al final es seguro si luego se reordena o simplemente se añade.
+    // Añadir el nuevo valor al final
     tokens.push(newValClean);
   };
 
@@ -99,7 +103,7 @@ export function rebuildPromptWithTriplet(
     replaceOrAdd(newValues.pose, knownResources.poses);
     replaceOrAdd(newValues.location, knownResources.locations);
   } else {
-    // Fallback "tonto" si no hay recursos: solo añade (comportamiento legacy)
+    // Fallback si no hay recursos (solo añade)
     if (newValues.outfit) tokens.push(newValues.outfit);
     if (newValues.pose) tokens.push(newValues.pose);
     if (newValues.location) tokens.push(newValues.location);

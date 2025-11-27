@@ -55,7 +55,7 @@ def generate_list(client: Groq, title: str, count: int = 60) -> list[str]:
                     {"role": "system", "content": sys},
                     {"role": "user", "content": user},
                 ],
-                temperature=0.2,
+                temperature=0.8,
             )
             content = completion.choices[0].message.content or ""
             return parse_lines(content)
