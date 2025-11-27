@@ -2739,3 +2739,57 @@ async def civitai_download_info(payload: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error guardando civitai.info: {str(e)}")
+
+@app.post("/planner/magicfix")
+async def magic_fix_endpoint(req: MagicFixRequest):
+    try:
+        if not Groq:
+            raise HTTPException(status_code=500, detail="Groq client not available")
+        
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY not set")
+            
+        client = Groq(api_key=api_key)
+        
+        system_prompt = """You are a creative scene director.
+Your task is to take a user's prompt (which may be simple or complex) and generate a NEW, creative variation of the scene elements: Outfit, Pose, and Location.
+You must also provide a short, witty reasoning for your choice.
+
+Return ONLY a JSON object with these keys:
+- outfit: string (detailed description)
+- pose: string (detailed description)
+- location: string (detailed description)
+- ai_reasoning: string (short, witty explanation)
+
+Do NOT return markdown blocks. Just the JSON."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Current prompt: {req.prompt}\n\nSurprise me with a new scenario!"}
+        ]
+        
+        # Use the helper if available, otherwise direct call
+        if 'groq_chat_with_fallbacks' in globals():
+            completion = await groq_chat_with_fallbacks(client, messages, temperature=0.8)
+        else:
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                temperature=0.8,
+                max_tokens=500,
+                response_format={"type": "json_object"}
+            )
+            
+        content = completion.choices[0].message.content
+        try:
+            data = json.loads(content)
+        except:
+            # Fallback if json parsing fails
+            data = {"outfit": "casual", "pose": "standing", "location": "studio", "ai_reasoning": "I had trouble parsing the vision, so we went back to basics."}
+            
+        return data
+        
+    except Exception as e:
+        print(f"Error in magicfix: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

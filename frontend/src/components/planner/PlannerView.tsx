@@ -43,6 +43,8 @@ export default function PlannerView() {
   const [isRegenerating, setIsRegenerating] = React.useState(false);
   const [toast, setToast] = React.useState<{ message: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [activeCharacter, setActiveCharacter] = React.useState<string | null>(null);
+  const [showDetails, setShowDetails] = React.useState<Set<number>>(new Set());
   const [resources, setResources] = React.useState<{
     outfits: string[];
     poses: string[];
@@ -138,15 +140,11 @@ export default function PlannerView() {
   const [globalCheckpoint, setGlobalCheckpoint] = React.useState<string | null>(
     null
   );
-
-  // Estado para la lista de archivos reales (LoRAs)
   const [localLoras, setLocalLoras] = React.useState<string[]>([]);
 
-  // Efecto de carga de LoRAs locales
   React.useEffect(() => {
     (async () => {
       try {
-        // Usa la variable de entorno o fallback
         const API_BASE =
           process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -171,19 +169,20 @@ export default function PlannerView() {
     "generation" | "hires" | "adetailer"
   >("generation");
 
-  React.useEffect(() => {
-    try {
-      const raw = localStorage.getItem("planner_param_tab");
-      if (raw === "generation" || raw === "hires" || raw === "adetailer") {
-        setParamTab(raw as "generation" | "hires" | "adetailer");
-      }
-    } catch { }
-  }, []);
-  React.useEffect(() => {
-    try {
-      localStorage.setItem("planner_param_tab", paramTab);
-    } catch { }
-  }, [paramTab]);
+  const [presetFiles, setPresetFiles] = React.useState<string[]>([]);
+  const [openPresetMenu, setOpenPresetMenu] = React.useState<
+    null | "pos" | "neg"
+  >(null);
+  const [savePresetKind, setSavePresetKind] = React.useState<
+    null | "pos" | "neg"
+  >(null);
+  const [savePresetName, setSavePresetName] = React.useState("");
+  const [savingPreset, setSavingPreset] = React.useState(false);
+
+  const [dryRunOpen, setDryRunOpen] = React.useState(false);
+  const [dryRunPayload, setDryRunPayload] = React.useState<string>("");
+
+  const stripLoraTags = (text: string) => text.replace(/<lora:[^>]+>(?::[\d.]+)?/gi, "").replace(/,\s*,/g, ",").trim();
 
   const onRegenerateDrafts = async () => {
     const characterNames = Object.keys(metaByCharacter);
@@ -265,17 +264,6 @@ export default function PlannerView() {
     }
   };
 
-  const [dryRunOpen, setDryRunOpen] = React.useState(false);
-  const [dryRunPayload, setDryRunPayload] = React.useState<string>("");
-  const [presetFiles, setPresetFiles] = React.useState<string[]>([]);
-  const [openPresetMenu, setOpenPresetMenu] = React.useState<
-    null | "pos" | "neg"
-  >(null);
-  const [savePresetKind, setSavePresetKind] = React.useState<
-    null | "pos" | "neg"
-  >(null);
-  const [savePresetName, setSavePresetName] = React.useState("");
-  const [savingPreset, setSavingPreset] = React.useState(false);
   const setTechConfig = (
     character: string | null,
     partial: Partial<{
@@ -314,10 +302,48 @@ export default function PlannerView() {
     });
   };
 
-  const [showDetails, setShowDetails] = React.useState<Set<number>>(new Set());
-  const [activeCharacter, setActiveCharacter] = React.useState<string | null>(
-    null
-  );
+  // --- VIGILANTE DE SINCRONIZACIÓN GLOBAL ---
+  // Cuando el usuario escribe en el Prompt Global, actualizamos todos los jobs en tiempo real.
+  React.useEffect(() => {
+    if (!activeCharacter) return;
+
+    const globalPrompt = plannerContext[activeCharacter]?.base_prompt || "";
+
+    setJobs(prevJobs => {
+      // Solo actualizamos los jobs del personaje activo
+      const updated = prevJobs.map(job => {
+        if (job.character_name !== activeCharacter) return job;
+
+        // Desarmamos el prompt actual para preservar la escena
+        const triplet = extractTriplet(job.prompt, resources || undefined);
+        const extras = extractExtras(job.prompt, resources || undefined);
+
+        const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
+        const loraTag = `<lora:${sanitize(job.character_name)}:0.8>`;
+
+        // Rescatar trigger del prompt actual (asumimos que es el segundo elemento si existe)
+        // O mejor, usar el mismo trigger que ya tiene el job si podemos detectarlo.
+        // Simplificación: Usar el nombre simple si no tenemos info a mano.
+        const trigger = metaByCharacter[job.character_name]?.trigger_words?.[0] || job.character_name.split(" - ")[0];
+
+        const scenePart = [triplet.outfit, triplet.pose, triplet.location].filter(Boolean).join(", ");
+        const extrasPart = [extras.lighting, extras.camera, extras.expression].filter(Boolean).join(", ");
+        const quality = "masterpiece, best quality, absurdres";
+
+        const newPrompt = [loraTag, trigger, globalPrompt, scenePart, extrasPart, quality]
+          .map(s => s.trim())
+          .filter(Boolean)
+          .join(", ");
+
+        return { ...job, prompt: newPrompt };
+      });
+
+      // Solo actualizamos si hubo cambios reales para evitar render infinite loops
+      const hasChanged = JSON.stringify(updated) !== JSON.stringify(prevJobs);
+      return hasChanged ? updated : prevJobs;
+    });
+
+  }, [plannerContext, activeCharacter, resources, metaByCharacter]); // Dependencias: Contexto (Global) y Personaje
 
   React.useEffect(() => {
     try {
@@ -337,13 +363,7 @@ export default function PlannerView() {
     }
   };
 
-  const stripLoraTags = (s: string): string => {
-    return (s || "")
-      .split(",")
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0 && !/^<lora:[^>]+>$/i.test(t))
-      .join(", ");
-  };
+
 
   React.useEffect(() => {
     // Abrir prompt por defecto para todos los jobs existentes
@@ -808,32 +828,34 @@ export default function PlannerView() {
   };
 
   // Magic Fix
+  // Magic Fix
   const magicFix = async (idx: number) => {
     try {
       setLoading(true);
-      setToast({ message: "🔮 Alterando el destino..." });
-      const job = jobs[idx];
+      setToast({ message: "🔮 Consultando al oráculo..." });
 
-      // Pedir nueva escena a la IA
-      const res = await magicFixPrompt(job.prompt);
+      // Leemos el job actual directamente del estado (por si acaso el índice cambió)
+      // Nota: En closures asíncronos, 'jobs' puede ser viejo. Usar callback en setJobs es mejor,
+      // pero para lectura necesitamos el valor actual.
+      // Asumiremos que 'jobs[idx]' es correcto por ahora.
+      const currentJob = jobs[idx];
 
-      // Reconstruir prompt completo usando la nueva escena + el global existente
-      const newPrompt = await reconstructJobPrompt(
-        job.character_name,
-        { outfit: res.outfit, pose: res.pose, location: res.location },
-        job.prompt
-      );
+      const res = await magicFixPrompt(currentJob.prompt);
+
+      // Aplicamos el cambio
+      const newScene = { outfit: res.outfit, pose: res.pose, location: res.location };
+      const newPrompt = await reconstructJobPrompt(currentJob.character_name, newScene, currentJob.prompt);
 
       updatePrompt(idx, newPrompt);
 
-      // Feedback visual
-      const msg = res?.ai_reasoning || `✨ Destino alterado`;
-      setAiReasoningByJob((prev) => ({ ...prev, [idx]: msg }));
+      const msg = res.ai_reasoning || "✨ Destino alterado";
+      setAiReasoningByJob(prev => ({ ...prev, [idx]: msg }));
       setToast({ message: msg });
-      setTimeout(() => setToast(null), 3000);
+      setTimeout(() => setToast(null), 2000);
 
     } catch (e) {
-      console.warn("Magic Fix falló", e);
+      console.error(e);
+      setToast({ message: "Error al alterar destino" });
     } finally {
       setLoading(false);
     }
