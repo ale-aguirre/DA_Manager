@@ -1009,79 +1009,85 @@ export default function PlannerView() {
   };
 
   // === LÓGICA DE PRODUCCIÓN ===
+  const buildProductionPayload = () => {
+    // 1. Recursos Meta
+    let resourcesMeta: ResourceMeta[] = [];
+    try {
+      const rawMeta = localStorage.getItem("planner_meta");
+      if (rawMeta) resourcesMeta = JSON.parse(rawMeta);
+    } catch { }
+
+    // 2. Preparar Jobs
+    const preparedJobs: PlannerJob[] = jobs.map(j => {
+      const tech = techConfigByCharacter[j.character_name] || {};
+
+      // Estrategia segura: Partir por "masterpiece" para insertar antes
+      const parts = j.prompt.split("masterpiece");
+      const mainPart = parts[0];
+      const qualityPart = "masterpiece" + (parts[1] || "");
+
+      const extraLorasString = (tech.extraLoras || []).map(l => `<lora:${l}:0.7>`).join(", ");
+
+      // Reconstruir con el ingrediente final
+      const finalPrompt = [mainPart, extraLorasString, qualityPart]
+        .map(s => s?.trim())
+        .filter(Boolean)
+        .join(", ");
+
+      // Negativo
+      let presetNeg = "bad quality, worst quality, sketch, censor";
+      try {
+        const p = JSON.parse(localStorage.getItem("planner_preset_global") || "{}");
+        if (p.negativePrompt) presetNeg = p.negativePrompt;
+      } catch { }
+
+      return {
+        ...j,
+        prompt: finalPrompt,
+        seed: tech.seed ?? -1,
+        negative_prompt: mergeNegative(presetNeg, tech.negativePrompt)
+      };
+    });
+
+    // 3. Configuración de Grupo
+    // Agrupamos por personaje para saber qué configs enviar
+    const uniqueCharacters = Array.from(new Set(jobs.map(j => j.character_name)));
+
+    const groupConfig = uniqueCharacters.map((character) => {
+      const tech = techConfigByCharacter[character] || {};
+      const conf = configByCharacter[character] || {};
+      return {
+        character_name: character,
+        hires_fix: tech.hiresFix ?? true,
+        denoising_strength: conf.denoising ?? 0.35,
+        output_path: conf.outputPath ?? `OUTPUTS_DIR/{Character}/`,
+        steps: tech.steps ?? 30,
+        cfg_scale: tech.cfg ?? 7,
+        sampler: tech.sampler,
+        upscale_by: tech.upscaleBy,
+        upscaler: tech.upscaler,
+        checkpoint: tech.checkpoint,
+        width: tech.width ?? 832,
+        height: tech.height ?? 1216,
+        adetailer_model: (tech.adetailer ?? true) ? (tech.adetailerModel || "face_yolov8n.pt") : undefined,
+        extra_loras: tech.extraLoras || [],
+        hires_steps: tech.hiresSteps,
+        batch_size: tech.batch_size ?? 1,
+        adetailer: tech.adetailer ?? true,
+        vae: tech.vae,
+        clip_skip: tech.clipSkip,
+      };
+    });
+
+    return { preparedJobs, resourcesMeta, groupConfig };
+  };
+
   const startProduction = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // 1. Recursos Meta (Igual que antes)
-      let resourcesMeta: ResourceMeta[] = [];
-      try {
-        const rawMeta = localStorage.getItem("planner_meta");
-        if (rawMeta) resourcesMeta = JSON.parse(rawMeta); // Simplificado para brevedad
-      } catch { }
-
-      // 2. Preparar Jobs (Solo inyección final de LoRAs Extra)
-      const preparedJobs: PlannerJob[] = jobs.map(j => {
-        const tech = techConfigByCharacter[j.character_name] || {};
-
-        // El prompt en la tarjeta (j.prompt) YA TIENE: LoRA Char + Trigger + Global + Escena + Calidad
-        // Solo necesitamos inyectar los Extra LoRAs antes de la calidad final.
-
-        // Estrategia segura: Partir por "masterpiece" para insertar antes
-        const parts = j.prompt.split("masterpiece");
-        const mainPart = parts[0];
-        const qualityPart = "masterpiece" + (parts[1] || "");
-
-        const extraLorasString = (tech.extraLoras || []).map(l => `<lora:${l}:0.7>`).join(", ");
-
-        // Reconstruir con el ingrediente final
-        const finalPrompt = [mainPart, extraLorasString, qualityPart]
-          .map(s => s?.trim())
-          .filter(Boolean)
-          .join(", ");
-
-        // Negativo
-        let presetNeg = "bad quality, worst quality, sketch, censor";
-        try {
-          const p = JSON.parse(localStorage.getItem("planner_preset_global") || "{}");
-          if (p.negativePrompt) presetNeg = p.negativePrompt;
-        } catch { }
-
-        return {
-          ...j,
-          prompt: finalPrompt,
-          seed: tech.seed ?? -1,
-          negative_prompt: mergeNegative(presetNeg, tech.negativePrompt)
-        };
-      });
-
-      // 3. Configuración de Grupo (Igual que antes)
-      const groupConfig = Object.keys(perCharacter).map((character) => {
-        const tech = techConfigByCharacter[character] || {};
-        const conf = configByCharacter[character] || {};
-        return {
-          character_name: character,
-          hires_fix: tech.hiresFix ?? true,
-          denoising_strength: conf.denoising ?? 0.35,
-          output_path: conf.outputPath ?? `OUTPUTS_DIR/{Character}/`,
-          steps: tech.steps ?? 30,
-          cfg_scale: tech.cfg ?? 7,
-          sampler: tech.sampler,
-          upscale_by: tech.upscaleBy,
-          upscaler: tech.upscaler,
-          checkpoint: tech.checkpoint,
-          width: tech.width ?? 832,
-          height: tech.height ?? 1216,
-          adetailer_model: (tech.adetailer ?? true) ? (tech.adetailerModel || "face_yolov8n.pt") : undefined,
-          extra_loras: tech.extraLoras || [],
-          hires_steps: tech.hiresSteps,
-          batch_size: tech.batch_size ?? 1,
-          adetailer: tech.adetailer ?? true,
-          vae: tech.vae,
-          clip_skip: tech.clipSkip,
-        };
-      });
+      const { preparedJobs, resourcesMeta, groupConfig } = buildProductionPayload();
 
       const { postPlannerExecuteV2 } = await import("../../lib/api");
       await postPlannerExecuteV2(preparedJobs, resourcesMeta, groupConfig);
@@ -1265,17 +1271,11 @@ export default function PlannerView() {
             onClick={async () => {
               try {
                 // Lógica de simulación (Preview)
-                // Se ha simplificado el bloque de simulación para mantener consistencia
-                setDryRunPayload(
-                  JSON.stringify(
-                    { status: "Simulación activada", jobs: jobs.length },
-                    null,
-                    2
-                  )
-                );
+                const payload = buildProductionPayload();
+                setDryRunPayload(JSON.stringify(payload, null, 2));
                 setDryRunOpen(true);
-              } catch {
-                void 0;
+              } catch (e) {
+                console.error("Error building simulation payload", e);
               }
             }}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-transparent px-4 py-2 text-sm text-slate-200 hover:bg-slate-700/10 cursor-pointer transition-all active:scale-95"
