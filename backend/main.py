@@ -1564,9 +1564,10 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
         try:
             client = Groq(api_key=GROQ_API_KEY)
             system_prompt = (
-                "Eres un experto otaku. Analiza este personaje. Dime su personalidad, ropa canónica y escenarios típicos en 1-2 frases. "
-                "Luego, sugiere 5 combinaciones de Outfit+Pose+Location+Lighting+Camera+Expression que encajen con su historia pero sean NSFW/Ecchi. "
-                'Devuelve SOLO JSON con formato: {"lore":"texto breve","combos":[{"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}]}'
+                "You are an Anime Art Director. Analyze this character. "
+                "Suggest 5 combinations of Outfit+Pose+Location+Lighting+Camera+Expression that fit their lore but are NSFW/Ecchi. "
+                "CRITICAL: ALL OUTPUT MUST BE IN ENGLISH. USE ONLY DANBOORU TAGS. "
+                'Return ONLY JSON with format: {"combos":[{"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}]}'
             )
             user_prompt = (
                 f"Nombre: {req.character_name}\n"
@@ -1667,30 +1668,33 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
             parts.append(lighting)
         if camera:
             parts.append(camera)
-        if expression:
-            parts.append(expression)
             
-        parts.append(QUALITY_TAGS)
-        prompt = ", ".join([p for p in parts if p and p.strip()])
-        seed = random.randint(0, 2_147_483_647)
+        parts.append(expression)
+        parts.append("masterpiece, best quality, absurdres")
         
-        jobs.append(PlannerJob(
-            character_name=req.character_name, 
-            prompt=prompt, 
-            seed=seed,
-            outfit=outfit,
-            pose=pose,
-            location=location,
-            lighting=lighting,
-            camera=camera,
-            expression=expression,
-            extra_loras=req.extra_loras
-        ))
+        prompt = ", ".join([p for p in parts if p and str(p).strip()])
+        
+        seed = random.randint(0, 2_147_483_647)
+        job_model = PlannerJob(character_name=req.character_name, prompt=prompt, seed=seed)
+        
+        ai_meta = {}
+        if (base.get("lighting") or "").strip(): ai_meta["lighting"] = "AI Suggested"
+        if (base.get("camera") or "").strip(): ai_meta["camera"] = "AI Suggested"
+        if (base.get("outfit") or "").strip(): ai_meta["outfit"] = "AI Suggested"
 
-    ai_msg = f"✨ IA: Contexto de '{req.character_name}' aplicado. Se sugirieron {len(combos_sugeridos)} escenarios."
-    return {"jobs": [j.model_dump() for j in jobs], "lore": lore_text, "ai_reasoning": ai_msg}
+        jobs.append({
+            **job_model.model_dump(),
+            "intensity": "NSFW",
+            "outfit": outfit,
+            "pose": pose,
+            "location": location,
+            "lighting": lighting,
+            "camera": camera,
+            "expression": expression,
+            "ai_meta": ai_meta,
+        })
 
-# BLOQUE DUPLICADO ELIMINADO: se removieron definiciones duplicadas de endpoints y clases añadidas por error durante la edición.
+    return JSONResponse(content={"jobs": jobs})
 
 def get_lora_dir() -> Path | None:
     # Prioridad: LORA_PATH explícita; fallback: 4 niveles desde REFORGE_PATH

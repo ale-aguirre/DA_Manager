@@ -921,6 +921,10 @@ export default function PlannerView() {
         newScene,
         currentJob.prompt
       );
+      updatePrompt(idx, newPrompt);
+      setToast({ message: "✨ Destino alterado" });
+
+    } catch (e) {
       console.error("❌ Error en MagicFix:", e);
       setToast({ message: "Error al alterar destino" });
     } finally {

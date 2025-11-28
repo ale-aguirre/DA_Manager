@@ -510,9 +510,27 @@ export default function ProductionQueue(props: {
                 <ul className="space-y-2">
                   {perCharacter[character]?.jobs.map((job, i) => {
                     const idx = perCharacter[character]!.indices[i];
+
+                    // Debug log requested by user
+                    if (i === 0) console.log(`[ProductionQueue] Job ${i} data:`, job);
+
                     const triplet = extractTriplet(job.prompt, resources || undefined);
                     const intensity = getIntensity(job.prompt);
                     const extras = extractExtras(job.prompt, resources || undefined);
+
+                    // Prioritize root fields (from backend) -> ai_meta -> extraction
+                    // Cast job to any to access root fields that might not be in the strict type yet
+                    const j = job as any;
+                    const meta = job.ai_meta as Record<string, string> | undefined;
+
+                    const outfitVal = j.outfit || meta?.outfit || triplet.outfit || "";
+                    const poseVal = j.pose || meta?.pose || triplet.pose || "";
+                    const locationVal = j.location || meta?.location || triplet.location || "";
+                    const lightingVal = j.lighting || meta?.lighting || extras.lighting || "";
+                    const cameraVal = j.camera || meta?.camera || extras.camera || "";
+                    const expressionVal = j.expression || meta?.expression || extras.expression || "";
+                    const hairstyleVal = j.hairstyle || meta?.hairstyle || extras.hairstyle || "";
+
                     const loraStem = character
                       .toLowerCase()
                       .replace(/\s+/g, "_");
@@ -593,7 +611,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={triplet.outfit || ""}
+                                  value={outfitVal}
                                   onChange={(e) =>
                                     applyQuickEdit(
                                       idx,
@@ -618,7 +636,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={triplet.pose || ""}
+                                  value={poseVal}
                                   onChange={(e) =>
                                     applyQuickEdit(idx, "pose", e.target.value)
                                   }
@@ -639,7 +657,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={triplet.location || ""}
+                                  value={locationVal}
                                   onChange={(e) =>
                                     applyQuickEdit(
                                       idx,
@@ -664,7 +682,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={extras.lighting || ""}
+                                  value={lightingVal}
                                   onChange={(e) =>
                                     applyExtrasEdit(
                                       idx,
@@ -688,7 +706,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={extras.camera || ""}
+                                  value={cameraVal}
                                   onChange={(e) =>
                                     applyExtrasEdit(
                                       idx,
@@ -712,7 +730,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={extras.expression || ""}
+                                  value={expressionVal}
                                   onChange={(e) =>
                                     applyExtrasEdit(
                                       idx,
@@ -723,11 +741,11 @@ export default function ProductionQueue(props: {
                                 >
                                   <option value="">(vacío)</option>
                                   {[
-                                    ...(extras.expression &&
+                                    ...(expressionVal &&
                                       !(resources?.expressions || []).includes(
-                                        extras.expression
+                                        expressionVal
                                       )
-                                      ? [extras.expression]
+                                      ? [expressionVal]
                                       : []),
                                     ...((resources?.expressions ||
                                       []) as string[]),
@@ -745,7 +763,7 @@ export default function ProductionQueue(props: {
                                 </label>
                                 <select
                                   className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
-                                  value={hairstyleSelection[idx] ?? ""}
+                                  value={hairstyleSelection[idx] ?? hairstyleVal}
                                   onChange={(e) => {
                                     const v = e.target.value;
                                     setHairstyleSelection((prev) => ({
