@@ -10,6 +10,14 @@ export interface PlannerJob {
   // Opcionales: integración con A1111 y marcado de IA
   negative_prompt?: string;
   ai_meta?: Record<string, unknown>;
+  // Campos explícitos para UI
+  outfit?: string;
+  pose?: string;
+  location?: string;
+  lighting?: string;
+  camera?: string;
+  expression?: string;
+  hairstyle?: string;
 }
 
 export interface RecommendedParams {
@@ -53,11 +61,13 @@ export interface TechConfig {
   batch_size?: number;
   batch_count?: number;
   adetailer?: boolean;
+  adetailerModel?: string;
   vae?: string;
   clipSkip?: number;
   negativePrompt?: string;
   width?: number;
   height?: number;
+  positivePrompt?: string;
 }
 
 // Metadatos de recursos usados en ejecución
@@ -78,4 +88,7 @@ export interface PlannerResources {
   expressions?: string[];
   hairstyles?: string[];
   upscalers?: string[];
+  checkpoints?: string[];
+  vaes?: string[];
+  loras?: string[];
 }

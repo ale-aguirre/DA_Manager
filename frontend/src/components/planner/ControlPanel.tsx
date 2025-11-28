@@ -1,443 +1,273 @@
 "use client";
+
 import React from "react";
+import { Loader2, RefreshCw } from "lucide-react";
+import { usePlannerContext } from "../../context/PlannerContext";
 import HiresSettings from "./HiresSettings";
 import { SliderBar } from "./SliderBar";
-import { RefreshCw, Loader2 } from "lucide-react";
 
-export default function ControlPanel(props: {
+interface ControlPanelProps {
   activeCharacter: string;
   paramTab: "generation" | "hires" | "adetailer";
   setParamTab: (tab: "generation" | "hires" | "adetailer") => void;
-  techConfigByCharacter: Record<string, {
-    steps?: number;
-    cfg?: number;
-    sampler?: string;
-    schedulerType?: string;
-    width?: number;
-    height?: number;
-    batch_count?: number;
-    batch_size?: number;
-    seed?: number;
-    hiresFix?: boolean;
-    upscaleBy?: number;
-    upscaler?: string;
-    hiresSteps?: number;
-    adetailer?: boolean;
-    adetailerModel?: string;
-    extraLoras?: string[];
-  }>;
-  configByCharacter: Record<string, { denoising?: number; hiresFix?: boolean; outputPath?: string }>;
-  plannerContext: Record<string, { recommended_params?: { sampler?: string; steps?: number; cfg?: number } } & { base_prompt?: string; reference_images?: Array<{ url: string; meta: Record<string, unknown> }> } >;
-  setTechConfig: (character: string, partial: Partial<{
-    steps: number;
-    cfg: number;
-    sampler: string;
-    schedulerType: string;
-    seed: number;
-    hiresFix: boolean;
-    upscaleBy: number;
-    upscaler: string;
-    hiresSteps: number;
-    batch_size: number;
-    batch_count: number;
-    adetailer: boolean;
-    adetailerModel: string;
-    width: number;
-    height: number;
-    extraLoras: string[];
-  }>) => void;
-  setConfigByCharacter: React.Dispatch<React.SetStateAction<Record<string, { denoising?: number; hiresFix?: boolean; outputPath?: string }>>>;
+  isRegenerating: boolean;
+  onRegenerateDrafts: () => void | Promise<void>;
+  // Upscaler props passed down for now or moved to context later
   reforgeUpscalers: string[];
   refreshingUpscalers: boolean;
   upscalerVersion: number;
   refreshUpscalers: () => void | Promise<void>;
-  isRegenerating: boolean;
-  onRegenerateDrafts: () => void | Promise<void>;
-}) {
+}
+
+export default function ControlPanel(props: ControlPanelProps) {
   const {
     activeCharacter,
     paramTab,
     setParamTab,
-    techConfigByCharacter,
-    configByCharacter,
-    plannerContext,
-    setTechConfig,
-    setConfigByCharacter,
+    isRegenerating,
+    onRegenerateDrafts,
     reforgeUpscalers,
     refreshingUpscalers,
     upscalerVersion,
     refreshUpscalers,
-    isRegenerating,
-    onRegenerateDrafts,
   } = props;
+
+  const { techConfig, setTechConfig, globalConfig, setGlobalConfig } = usePlannerContext();
+
+  // Helper to get current config for active character
+  const currentConfig = techConfig[activeCharacter] || {};
+  const globalDefaults = globalConfig || {};
+
+  const handleConfigChange = (updates: any) => {
+    setTechConfig(activeCharacter, updates);
+  };
 
   return (
     <div className="mt-4">
+      {/* Tabs */}
       <div className="mb-3 flex items-center justify-between gap-2">
-        <button
-          onClick={() => setParamTab("generation")}
-          className={`rounded-md px-3 py-1 text-xs border ${
-            paramTab === "generation"
-              ? "border-slate-600 bg-slate-800 text-slate-100"
-              : "border-slate-700 bg-slate-900 text-slate-300"
-          }`}
-        >
-          Generation
-        </button>
-        <button
-          onClick={() => setParamTab("hires")}
-          className={`rounded-md px-3 py-1 text-xs border ${
-            paramTab === "hires"
-              ? "border-slate-600 bg-slate-800 text-slate-100"
-              : "border-slate-700 bg-slate-900 text-slate-300"
-          }`}
-        >
-          Hires. Fix
-        </button>
-        <button
-          onClick={() => setParamTab("adetailer")}
-          className={`rounded-md px-3 py-1 text-xs border ${
-            paramTab === "adetailer"
-              ? "border-slate-600 bg-slate-800 text-slate-100"
-              : "border-slate-700 bg-slate-900 text-slate-300"
-          }`}
-        >
-          ADetailer
-        </button>
-        <div className="ml-auto">
-          <button
-            type="button"
-            onClick={onRegenerateDrafts}
-            className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-[12px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-            title="Generar"
-            disabled={isRegenerating}
-          >
-            {isRegenerating ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" /> Generando...
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1">
-                <RefreshCw className="h-3 w-3" /> Generar
-              </span>
-            )}
-          </button>
+        <div className="flex gap-2">
+          {(["generation", "hires", "adetailer"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setParamTab(tab)}
+              className={`rounded-md px-3 py-1 text-xs border ${paramTab === tab
+                ? "border-slate-600 bg-slate-800 text-slate-100"
+                : "border-slate-700 bg-slate-900 text-slate-300"
+                }`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
         </div>
+
+        <button
+          type="button"
+          onClick={onRegenerateDrafts}
+          disabled={isRegenerating}
+          className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-[12px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+        >
+          {isRegenerating ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" /> Generando...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-3 w-3" /> Generar
+            </>
+          )}
+        </button>
       </div>
+
+      {/* Content */}
       <div className="grid grid-cols-2 gap-4 p-4 bg-slate-900 border border-slate-700 rounded-lg">
-        {paramTab === "generation" ? (
-          <div>
-            <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
-              <div className="col-span-2">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-slate-300">Sampling method</label>
-                    <select
-                      value={
-                        techConfigByCharacter[activeCharacter]?.sampler ??
-                        plannerContext[activeCharacter]?.recommended_params?.sampler ??
-                        "Euler a"
-                      }
-                      onChange={(e) =>
-                        setTechConfig(activeCharacter, { sampler: e.target.value })
-                      }
-                      className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                    >
-                      <option>Euler a</option>
-                      <option>Euler</option>
-                      <option>DDIM</option>
-                      <option>DPM++ 2M Karras</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-300">Schedule type</label>
-                    <select
-                      value={
-                        techConfigByCharacter[activeCharacter]?.schedulerType ?? "Automatic"
-                      }
-                      onChange={(e) =>
-                        setTechConfig(activeCharacter, { schedulerType: e.target.value })
-                      }
-                      className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
-                    >
-                      <option>Automatic</option>
-                      <option>Karras</option>
-                      <option>Default</option>
-                    </select>
-                  </div>
-                </div>
+        {paramTab === "generation" && (
+          <div className="col-span-2 grid grid-cols-4 gap-4 items-end">
+            {/* Sampler & Scheduler */}
+            <div className="col-span-2 grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-300">Sampling method</label>
+                <select
+                  value={currentConfig.sampler || "Euler a"}
+                  onChange={(e) => handleConfigChange({ sampler: e.target.value })}
+                  className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                >
+                  <option>Euler a</option>
+                  <option>Euler</option>
+                  <option>DDIM</option>
+                  <option>DPM++ 2M Karras</option>
+                </select>
               </div>
               <div>
-                <label className="text-xs text-slate-300">Steps</label>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="flex-1">
-                    {SliderBar({
-                      value:
-                        techConfigByCharacter[activeCharacter]?.steps ??
-                        plannerContext[activeCharacter]?.recommended_params?.steps ??
-                        30,
-                      min: 1,
-                      max: 60,
-                      step: 1,
-                      onChange: (v) => setTechConfig(activeCharacter, { steps: v }),
-                    })}
-                  </div>
-                  <input
-                    type="number"
-                    value={
-                      techConfigByCharacter[activeCharacter]?.steps ??
-                      plannerContext[activeCharacter]?.recommended_params?.steps ??
-                      30
-                    }
-                    onChange={(e) => {
-                      let v = Number(e.target.value);
-                      if (!Number.isFinite(v)) return;
-                      if (v < 1) v = 1;
-                      if (v > 60) v = 60;
-                      setTechConfig(activeCharacter, { steps: v });
-                    }}
-                    className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-slate-300">CFG</label>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="flex-1">
-                    {SliderBar({
-                      value:
-                        techConfigByCharacter[activeCharacter]?.cfg ??
-                        plannerContext[activeCharacter]?.recommended_params?.cfg ??
-                        7,
-                      min: 1,
-                      max: 20,
-                      step: 0.5,
-                      onChange: (v) => setTechConfig(activeCharacter, { cfg: v }),
-                    })}
-                  </div>
-                  <input
-                    type="number"
-                    step={0.5}
-                    value={
-                      techConfigByCharacter[activeCharacter]?.cfg ??
-                      plannerContext[activeCharacter]?.recommended_params?.cfg ??
-                      7
-                    }
-                    onChange={(e) => {
-                      let v = Number(e.target.value);
-                      if (!Number.isFinite(v)) return;
-                      if (v < 1) v = 1;
-                      if (v > 20) v = 20;
-                      setTechConfig(activeCharacter, { cfg: v });
-                    }}
-                    className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                  />
-                </div>
+                <label className="text-xs text-slate-300">Schedule type</label>
+                <select
+                  value={currentConfig.schedulerType || "Automatic"}
+                  onChange={(e) => handleConfigChange({ schedulerType: e.target.value })}
+                  className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                >
+                  <option>Automatic</option>
+                  <option>Karras</option>
+                  <option>Default</option>
+                </select>
               </div>
             </div>
-            <div className="col-span-2 grid grid-cols-2 gap-4">
+
+            {/* Steps */}
+            <div>
+              <label className="text-xs text-slate-300">Steps</label>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex-1">
+                  <SliderBar
+                    value={currentConfig.steps || 30}
+                    min={1}
+                    max={60}
+                    step={1}
+                    onChange={(v) => handleConfigChange({ steps: v })}
+                  />
+                </div>
+                <input
+                  type="number"
+                  value={currentConfig.steps || 30}
+                  onChange={(e) => handleConfigChange({ steps: Number(e.target.value) })}
+                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                />
+              </div>
+            </div>
+
+            {/* CFG */}
+            <div>
+              <label className="text-xs text-slate-300">CFG</label>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex-1">
+                  <SliderBar
+                    value={currentConfig.cfg || 7}
+                    min={1}
+                    max={20}
+                    step={0.5}
+                    onChange={(v) => handleConfigChange({ cfg: v })}
+                  />
+                </div>
+                <input
+                  type="number"
+                  value={currentConfig.cfg || 7}
+                  onChange={(e) => handleConfigChange({ cfg: Number(e.target.value) })}
+                  className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                />
+              </div>
+            </div>
+
+            {/* Width/Height & Batch */}
+            <div className="col-span-2 grid grid-cols-2 gap-4 mt-2">
+              {/* Dimensions */}
               <div className="space-y-4">
                 <div>
                   <label className="text-xs text-slate-300">Width</label>
                   <div className="mt-2 flex items-center gap-2">
                     <div className="flex-1">
-                      {SliderBar({
-                        value: techConfigByCharacter[activeCharacter]?.width ?? 832,
-                        min: 512,
-                        max: 2048,
-                        step: 8,
-                        onChange: (v) => setTechConfig(activeCharacter, { width: v }),
-                      })}
+                      <SliderBar value={currentConfig.width || 832} min={512} max={2048} step={8} onChange={(v) => handleConfigChange({ width: v })} />
                     </div>
-                    <input
-                      type="number"
-                      min={512}
-                      max={2048}
-                      step={8}
-                      value={techConfigByCharacter[activeCharacter]?.width ?? 832}
-                      onChange={(e) => {
-                        let v = Number(e.target.value);
-                        if (!Number.isFinite(v)) return;
-                        if (v < 512) v = 512;
-                        if (v > 2048) v = 2048;
-                        setTechConfig(activeCharacter, { width: v });
-                      }}
-                      className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                    />
+                    <input type="number" value={currentConfig.width || 832} onChange={(e) => handleConfigChange({ width: Number(e.target.value) })} className="w-16 rounded bg-slate-800 px-2 py-1 text-right" />
                   </div>
                 </div>
                 <div>
                   <label className="text-xs text-slate-300">Height</label>
                   <div className="mt-2 flex items-center gap-2">
                     <div className="flex-1">
-                      {SliderBar({
-                        value: techConfigByCharacter[activeCharacter]?.height ?? 1216,
-                        min: 512,
-                        max: 2048,
-                        step: 8,
-                        onChange: (v) => setTechConfig(activeCharacter, { height: v }),
-                      })}
+                      <SliderBar value={currentConfig.height || 1216} min={512} max={2048} step={8} onChange={(v) => handleConfigChange({ height: v })} />
                     </div>
-                    <input
-                      type="number"
-                      min={512}
-                      max={2048}
-                      step={8}
-                      value={techConfigByCharacter[activeCharacter]?.height ?? 1216}
-                      onChange={(e) => {
-                        let v = Number(e.target.value);
-                        if (!Number.isFinite(v)) return;
-                        if (v < 512) v = 512;
-                        if (v > 2048) v = 2048;
-                        setTechConfig(activeCharacter, { height: v });
-                      }}
-                      className="w-20 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
-                    />
+                    <input type="number" value={currentConfig.height || 1216} onChange={(e) => handleConfigChange({ height: Number(e.target.value) })} className="w-16 rounded bg-slate-800 px-2 py-1 text-right" />
                   </div>
                 </div>
               </div>
+
+              {/* Batch */}
               <div className="space-y-4">
                 <div>
                   <label className="text-xs text-slate-300">Batch count</label>
                   <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="range"
-                      min={1}
-                      max={20}
-                      value={techConfigByCharacter[activeCharacter]?.batch_count ?? 1}
-                      onChange={(e) =>
-                        setTechConfig(activeCharacter, { batch_count: Number(e.target.value) })
-                      }
-                      className="flex-1"
-                    />
+                    <input type="range" min={1} max={20} value={currentConfig.batch_count || 1} onChange={(e) => handleConfigChange({ batch_count: Number(e.target.value) })} className="flex-1" />
                     <input
                       type="number"
                       min={1}
                       max={20}
-                      value={techConfigByCharacter[activeCharacter]?.batch_count ?? 1}
-                      onChange={(e) => {
-                        let v = Number(e.target.value);
-                        if (!Number.isFinite(v)) v = 1;
-                        if (v < 1) v = 1;
-                        if (v > 20) v = 20;
-                        setTechConfig(activeCharacter, { batch_count: v });
-                      }}
-                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                      value={currentConfig.batch_count || 1}
+                      onChange={(e) => handleConfigChange({ batch_count: Number(e.target.value) })}
+                      className="w-12 rounded border border-slate-600 bg-slate-800 px-1 py-0.5 text-right text-xs text-slate-100 focus:border-violet-500 focus:outline-none"
                     />
-                  </div>
-                  <div className="mt-1 text-[11px] text-slate-400">
-                    {(techConfigByCharacter[activeCharacter]?.batch_count ?? 1)} jobs planificados
                   </div>
                 </div>
                 <div>
                   <label className="text-xs text-slate-300">Batch size</label>
                   <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="range"
-                      min={1}
-                      max={8}
-                      value={techConfigByCharacter[activeCharacter]?.batch_size ?? 1}
-                      onChange={(e) =>
-                        setTechConfig(activeCharacter, { batch_size: Number(e.target.value) })
-                      }
-                      className="flex-1"
-                    />
+                    <input type="range" min={1} max={8} value={currentConfig.batch_size || 1} onChange={(e) => handleConfigChange({ batch_size: Number(e.target.value) })} className="flex-1" />
                     <input
                       type="number"
                       min={1}
                       max={8}
-                      value={techConfigByCharacter[activeCharacter]?.batch_size ?? 1}
-                      onChange={(e) => {
-                        let v = Number(e.target.value);
-                        if (!Number.isFinite(v)) v = 1;
-                        if (v < 1) v = 1;
-                        if (v > 8) v = 8;
-                        setTechConfig(activeCharacter, { batch_size: v });
-                      }}
-                      className="w-16 rounded-md border border-slate-600 bg-slate-800 px-2 py-1 text-right text-slate-100"
+                      value={currentConfig.batch_size || 1}
+                      onChange={(e) => handleConfigChange({ batch_size: Number(e.target.value) })}
+                      className="w-12 rounded border border-slate-600 bg-slate-800 px-1 py-0.5 text-right text-xs text-slate-100 focus:border-violet-500 focus:outline-none"
                     />
                   </div>
                 </div>
               </div>
             </div>
-            <div className="col-span-2">
+
+            {/* Seed */}
+            <div className="col-span-2 mt-2">
               <label className="text-xs text-slate-300">Seed</label>
               <div className="mt-2 flex items-center gap-2">
                 <input
                   type="number"
-                  placeholder="Random (-1)"
-                  value={techConfigByCharacter[activeCharacter]?.seed ?? -1}
-                  onChange={(e) => {
-                    let v = Number(e.target.value);
-                    if (!Number.isFinite(v)) v = -1;
-                    setTechConfig(activeCharacter, { seed: v });
-                  }}
-                  className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                  value={currentConfig.seed ?? -1}
+                  onChange={(e) => handleConfigChange({ seed: Number(e.target.value) })}
+                  className="flex-1 rounded border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                  placeholder="-1 (Random)"
                 />
-                <button
-                  type="button"
-                  className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
-                  onClick={() => setTechConfig(activeCharacter, { seed: -1 })}
-                >
+                <button onClick={() => handleConfigChange({ seed: -1 })} className="rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs hover:bg-slate-700">
                   Random
                 </button>
               </div>
             </div>
           </div>
-        ) : null}
+        )}
+
         {paramTab === "hires" && (
           <HiresSettings
-            hiresFix={
-              techConfigByCharacter[activeCharacter]?.hiresFix ??
-              configByCharacter[activeCharacter]?.hiresFix ??
-              true
-            }
-            onToggleHiresFix={(v) => setTechConfig(activeCharacter, { hiresFix: v })}
+            hiresFix={currentConfig.hiresFix ?? true}
+            onToggleHiresFix={(v) => handleConfigChange({ hiresFix: v })}
             upscalerList={reforgeUpscalers}
-            currentUpscaler={techConfigByCharacter[activeCharacter]?.upscaler ?? ""}
-            onChangeUpscaler={(v) => setTechConfig(activeCharacter, { upscaler: v })}
+            currentUpscaler={currentConfig.upscaler || ""}
+            onChangeUpscaler={(v) => handleConfigChange({ upscaler: v })}
             refreshUpscalers={refreshUpscalers}
             refreshing={refreshingUpscalers}
             upscalerVersion={upscalerVersion}
-            denoise={configByCharacter[activeCharacter]?.denoising ?? 0.35}
-            onChangeDenoise={(v) =>
-              setConfigByCharacter((prev) => {
-                const next = {
-                  ...prev,
-                  [activeCharacter]: {
-                    ...(prev[activeCharacter] || { hiresFix: true, denoising: 0.35 }),
-                    denoising: v,
-                  },
-                };
-                try {
-                  localStorage.setItem("planner_config", JSON.stringify(next));
-                } catch {}
-                return next;
-              })
-            }
-            upscaleBy={techConfigByCharacter[activeCharacter]?.upscaleBy ?? 1.5}
-            onChangeUpscaleBy={(v) => setTechConfig(activeCharacter, { upscaleBy: v })}
-            hiresSteps={techConfigByCharacter[activeCharacter]?.hiresSteps ?? 10}
-            onChangeHiresSteps={(v) => setTechConfig(activeCharacter, { hiresSteps: v })}
+            denoise={0.35} // TODO: Add denoise to TechConfig if needed or keep separate
+            onChangeDenoise={() => { }} // Placeholder
+            upscaleBy={currentConfig.upscaleBy || 1.5}
+            onChangeUpscaleBy={(v) => handleConfigChange({ upscaleBy: v })}
+            hiresSteps={currentConfig.hiresSteps || 10}
+            onChangeHiresSteps={(v) => handleConfigChange({ hiresSteps: v })}
           />
         )}
+
         {paramTab === "adetailer" && (
           <div className="col-span-2 flex items-center gap-6">
             <label className="flex items-center gap-2 text-slate-300 text-sm">
               <input
                 type="checkbox"
-                checked={techConfigByCharacter[activeCharacter]?.adetailer ?? true}
-                onChange={(e) => setTechConfig(activeCharacter, { adetailer: e.target.checked })}
+                checked={currentConfig.adetailer ?? true}
+                onChange={(e) => handleConfigChange({ adetailer: e.target.checked })}
                 className="accent-blue-500"
               />
               ADetailer
             </label>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-slate-300">Modelo</label>
+              <label className="text-xs text-slate-300">Model</label>
               <select
-                value={techConfigByCharacter[activeCharacter]?.adetailerModel ?? "face_yolov8n.pt"}
-                onChange={(e) => setTechConfig(activeCharacter, { adetailerModel: e.target.value })}
-                disabled={!(techConfigByCharacter[activeCharacter]?.adetailer ?? true)}
+                value={currentConfig.adetailerModel || "face_yolov8n.pt"}
+                onChange={(e) => handleConfigChange({ adetailerModel: e.target.value })}
+                disabled={!(currentConfig.adetailer ?? true)}
                 className="rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
               >
                 <option>face_yolov8n.pt</option>
@@ -447,7 +277,6 @@ export default function ControlPanel(props: {
             </div>
           </div>
         )}
-        {paramTab === "generation" && null}
       </div>
     </div>
   );

@@ -327,10 +327,9 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return [...base, ...tags];
   };
 
-
   const handleSendToPlanning = async () => {
     if (selectedItems.length === 0) return;
-    setLoaderOpen(true); // Reutilizamos el loader de pantalla completa o creamos uno local
+    setLoaderOpen(true);
     try {
       const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
 
@@ -357,8 +356,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       const res = await postPlannerDraft(payload, jobCount);
 
       // 4. PRE-GENERACIÓN: Llamar a analyzeLore para cada personaje
-      // Esto reemplaza la espera en el PlannerView
-      const enrichedJobs = [...res.jobs];
+      let enrichedJobs = [...res.jobs];
       const loreMap: Record<string, string> = {};
       const reasoningMap: Record<string, string> = {};
 
@@ -368,9 +366,8 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
         Object.assign(loreMap, oldLore);
       } catch { }
 
-      // Iteramos secuencialmente o en paralelo (paralelo es más rápido pero carga más al backend)
-      // Usaremos Promise.all para velocidad
-      await Promise.all(selectedModels.map(async (m) => {
+      // Iteramos secuencialmente o en paralelo
+      const analysisResults = await Promise.all(selectedModels.map(async (m) => {
         try {
           console.log("📡 [Radar] Iniciando envío para:", m.name);
           const triggers = deriveTriggerWords(m);
@@ -381,14 +378,24 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           const analysis = await postPlannerAnalyze(m.name, triggers, jobCount);
           console.log("📡 [Radar] Respuesta Backend:", analysis);
 
+          return { modelName: m.name, analysis, success: true };
+        } catch (e) {
+          console.warn(`Fallo pre-generación para ${m.name}`, e);
+          return { modelName: m.name, error: e, success: false };
+        }
+      }));
+
+      // Procesar resultados secuencialmente para evitar race conditions
+      analysisResults.forEach((result) => {
+        if (result.success && result.analysis) {
+          const { modelName, analysis } = result;
+
           if (analysis.jobs && analysis.jobs.length > 0) {
             // Reemplazamos los jobs "vacíos" del draft con los jobs "inteligentes" del analyze
-            // Filtramos los jobs del draft para este personaje y metemos los nuevos
-            const others = enrichedJobs.filter(j => j.character_name !== m.name);
-            enrichedJobs.length = 0; // Limpiar array in-place
+            const others = enrichedJobs.filter(j => j.character_name !== modelName);
 
             // Map backend fields to ai_meta for frontend consumption
-            const mappedJobs = analysis.jobs.map((j: any) => ({
+            const mappedJobs = analysis.jobs.map((j) => ({
               ...j,
               ai_meta: {
                 outfit: j.outfit,
@@ -402,20 +409,19 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
               }
             }));
 
-            enrichedJobs.push(...others, ...mappedJobs);
-          } else {
-            throw new Error("Empty analysis result");
+            // Reconstruimos el array
+            enrichedJobs = [...others, ...mappedJobs];
           }
+
           if (analysis.lore) {
-            loreMap[m.name] = analysis.lore;
+            loreMap[modelName] = analysis.lore;
           }
           if (analysis.ai_reasoning) {
-            reasoningMap[m.name] = analysis.ai_reasoning;
+            reasoningMap[modelName] = analysis.ai_reasoning;
           }
-        } catch (e) {
-          console.warn(`Fallo pre-generación para ${m.name}`, e);
+        } else {
           // Fallback Manual: Inyectar escena básica si falla la IA
-          const draftJob = enrichedJobs.find(j => j.character_name === m.name);
+          const draftJob = enrichedJobs.find(j => j.character_name === result.modelName);
           if (draftJob) {
             const FALLBACK_SCENES = [
               "standing, casual outfit, simple background",
@@ -426,13 +432,13 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             const randomScene = FALLBACK_SCENES[Math.floor(Math.random() * FALLBACK_SCENES.length)];
             // Aseguramos que no se duplique si ya tenía algo
             if (!draftJob.prompt.includes(randomScene)) {
-              draftJob.prompt = `${draftJob.prompt}, ${randomScene}, best quality, masterpiece`;
+              draftJob.prompt = `${draftJob.prompt}, ${randomScene}`;
             }
           }
         }
-      }));
+      });
 
-      // 5. Guardar Jobs enriquecidos (CRITICAL FIX)
+      // 5. Guardar Jobs enriquecidos
       console.log("📡 [Radar] Guardando planner_jobs en localStorage:", enrichedJobs);
       localStorage.setItem("planner_jobs", JSON.stringify(enrichedJobs));
       localStorage.setItem("planner_lore", JSON.stringify(loreMap));
@@ -453,43 +459,62 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
         };
       }
       localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
-    } catch { }
 
-    // 6.5 Forzar Configuración Técnica (Batch Count = 1)
-    try {
-      const techByCharacter: Record<string, any> = JSON.parse(localStorage.getItem("planner_tech") || "{}");
-      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
-      selectedModels.forEach(m => {
-        techByCharacter[m.name] = {
-          ...(techByCharacter[m.name] || {}),
-          batch_count: 1 // FORZAR 1 SIEMPRE AL ENVIAR DESDE RADAR
-        };
-      });
-      localStorage.setItem("planner_tech", JSON.stringify(techByCharacter));
-    } catch { }
+      // 6.5 Forzar Configuración Técnica (Batch Count = 1)
+      try {
+        const techByCharacter: Record<string, unknown> = JSON.parse(localStorage.getItem("planner_tech") || "{}");
+        const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+        selectedModels.forEach(m => {
+          const current = (techByCharacter[m.name] as Record<string, unknown>) || {};
+          techByCharacter[m.name] = {
+            ...current,
+            batch_count: 1
+          };
+        });
+        localStorage.setItem("planner_tech", JSON.stringify(techByCharacter));
+      } catch { }
 
-    // 7. Guardar Metadatos (Download URLs, images)
-    try {
-      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
-      const meta = JSON.parse(localStorage.getItem("planner_meta") || "[]");
-      const newMeta = selectedModels.map((m) => {
-        const versions = m.modelVersions || [];
-        let url: string | undefined;
-        for (const v of versions) {
-          if (v.downloadUrl) { url = v.downloadUrl; break; }
-          const files = v.files || [];
-          for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
-          if (url) break;
+      // 7. Guardar Metadatos (Download URLs, images)
+      try {
+        const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+        const rawMeta = JSON.parse(localStorage.getItem("planner_meta") || "{}");
+        let metaObj: Record<string, unknown> = {};
+
+        if (Array.isArray(rawMeta)) {
+          rawMeta.forEach((m: unknown) => {
+            if (m && typeof m === "object" && "character_name" in m) {
+              metaObj[(m as { character_name: string }).character_name] = m;
+            }
+          });
+        } else if (typeof rawMeta === "object" && rawMeta !== null) {
+          metaObj = rawMeta as Record<string, unknown>;
         }
-        const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
-        return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
-      });
-      // Fusionar meta
-      const metaMap = new Map(meta.map((x: any) => [x.character_name, x]));
-      newMeta.forEach(x => metaMap.set(x.character_name, x));
-      localStorage.setItem("planner_meta", JSON.stringify(Array.from(metaMap.values())));
 
-      router.push("/planner");
+        const newMeta = selectedModels.map((m) => {
+          const versions = m.modelVersions || [];
+          let url: string | undefined;
+          for (const v of versions) {
+            if (v.downloadUrl) { url = v.downloadUrl; break; }
+            const files = v.files || [];
+            for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
+            if (url) break;
+          }
+          const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
+          return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
+        });
+
+        // Fusionar meta
+        newMeta.forEach(x => {
+          metaObj[x.character_name] = x;
+        });
+
+        localStorage.setItem("planner_meta", JSON.stringify(metaObj));
+
+        router.push("/planner");
+      } catch (e: unknown) {
+        throw e;
+      }
+
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to draft planner", msg);

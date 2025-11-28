@@ -1032,8 +1032,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
         triggers = ", ".join(_clean_tags(trigger_words or [])) or sanitize_filename(character_name)
         # Fallback base prompt cuando Civitai no está disponible
-        fallback_quality = "masterpiece, best quality, absurdres"
-        base_prompt = fallback_quality
+        # Fallback base prompt cuando Civitai no está disponible
+        base_prompt = ""
 
         token = os.getenv("CIVITAI_API_KEY")
         scraper = cloudscraper.create_scraper()
@@ -1349,7 +1349,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot"))
             expression_choice = random.choice(expressions) if expressions else "smile"
             hairstyle_choice = random.choice(hairstyles) if hairstyles else "ponytail"
-            quality_end = "masterpiece, best quality, absurdres"
+            # quality_end removed
+            # Prompt incluye cámara, expresión, peinado y estilo/atmósfera además del triplete base
             # Prompt incluye cámara, expresión, peinado y estilo/atmósfera además del triplete base
             parts = [
                 lora_tag,
@@ -1362,7 +1363,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 base["outfit"],
                 base["pose"],
                 base["location"],
-                quality_end,
+                # quality_end removed
             ]
             if allow_extra_loras:
                 try:
@@ -1467,7 +1468,7 @@ async def planner_magicfix(req: MagicFixRequest):
         client = Groq(api_key=GROQ_API_KEY)
         system_prompt = (
             "Eres un asistente de planificación para Stable Diffusion. "
-            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinación coherente de Outfit+Pose+Location+Lighting+Camera+Expression que encaje con el personaje. "
+            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinación coherente y estéticamente agradable de Outfit+Pose+Location+Lighting+Camera+Expression que encaje con el personaje. "
             "NO reescribas el prompt completo y NO incluyas explicaciones. "
             'Devuelve SOLO JSON con formato EXACTO: {"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}.'
         )
@@ -1565,7 +1566,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
             client = Groq(api_key=GROQ_API_KEY)
             system_prompt = (
                 "You are an Anime Art Director. Analyze this character. "
-                "Suggest 5 combinations of Outfit+Pose+Location+Lighting+Camera+Expression that fit their lore but are NSFW/Ecchi. "
+                "Suggest 5 combinations of Outfit+Pose+Location+Lighting+Camera+Expression that are visually striking and character-accurate. "
                 "CRITICAL: ALL OUTPUT MUST BE IN ENGLISH. USE ONLY DANBOORU TAGS. "
                 'Return ONLY JSON with format: {"combos":[{"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}]}'
             )
@@ -1670,7 +1671,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
             parts.append(camera)
             
         parts.append(expression)
-        parts.append("masterpiece, best quality, absurdres")
+        # parts.append("masterpiece, best quality, absurdres") # Removed hardcoded quality tags
         
         prompt = ", ".join([p for p in parts if p and str(p).strip()])
         

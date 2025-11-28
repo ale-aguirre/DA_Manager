@@ -14,6 +14,27 @@ export interface PlannerJob {
   seed: number;
   // Nuevo: negativo por job para A1111
   negative_prompt?: string;
+  // Metadata from analysis
+  outfit?: string;
+  pose?: string;
+  location?: string;
+  lighting?: string;
+  camera?: string;
+  expression?: string;
+  intensity?: string;
+  extra_loras?: string[];
+  // Frontend meta container
+  ai_meta?: {
+    outfit?: string;
+    pose?: string;
+    location?: string;
+    lighting?: string;
+    camera?: string;
+    expression?: string;
+    intensity?: string;
+    extra_loras?: string[];
+    [key: string]: unknown;
+  };
 }
 
 export interface FactoryStatus {
@@ -153,6 +174,7 @@ export async function magicFixPrompt(prompt: string): Promise<{
   lighting: string;
   camera: string;
   expression: string;
+  hairstyle: string;
   ai_reasoning?: string;
 }> {
   const res = await fetch(`${BASE_URL}/planner/magicfix`, {
