@@ -552,20 +552,6 @@ export default function ProductionQueue(props: {
                                 <Loader2 className="h-5 w-5 animate-spin text-slate-200" />
                               </div>
                             )}
-                            <div className="mb-2 text-[11px] text-slate-300 flex items-center gap-2">
-                              <span>{loraTag}</span>
-                              {Array.isArray(
-                                metaByCharacter[character]?.trigger_words
-                              ) &&
-                                metaByCharacter[character]!.trigger_words!
-                                  .length > 0 ? (
-                                <span className="text-zinc-400">
-                                  {metaByCharacter[
-                                    character
-                                  ]!.trigger_words!.join(", ")}
-                                </span>
-                              ) : null}
-                            </div>
                             <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                               <div>
                                 <label className="text-xs text-slate-400 flex items-center gap-1">
@@ -794,10 +780,11 @@ export default function ProductionQueue(props: {
                   })}
                 </ul>
               </div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
+            </div >
+          </article >
+        ))
+        }
+      </div >
+    </div >
   );
 }

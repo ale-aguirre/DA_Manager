@@ -1424,14 +1424,20 @@ async def planner_magicfix(req: MagicFixRequest):
     outfits = _read_lines("outfits.txt")
     poses = _read_lines("poses.txt")
     locations = _read_lines("locations.txt")
+    
+    print(f"[MagicFix] Resources loaded: Outfits={len(outfits)}, Poses={len(poses)}, Locations={len(locations)}")
+
     if not outfits or not poses or not locations:
+        print("[MagicFix] ERROR: Resources empty!")
         raise HTTPException(status_code=500, detail="Recursos insuficientes: outfits/poses/locations vacíos.")
 
     # Fallback sin Groq: sugerir combinación aleatoria válida
     if not GROQ_API_KEY or Groq is None:
+        print("[MagicFix] No Groq API Key. Using Fallback.")
         o = random.choice(outfits)
         p = random.choice(poses)
         l = random.choice(locations)
+        print(f"[MagicFix] Fallback selected: {o} / {p} / {l}")
         return {
             "outfit": o,
             "pose": p,
@@ -1482,9 +1488,12 @@ async def planner_magicfix(req: MagicFixRequest):
                 }
         except Exception:
             pass
+        
+        print("[MagicFix] Groq failed or returned invalid JSON. Using Fallback.")
         o = random.choice(outfits)
         p = random.choice(poses)
         l = random.choice(locations)
+        print(f"[MagicFix] Fallback selected: {o} / {p} / {l}")
         return {
             "outfit": o,
             "pose": p,
@@ -1498,11 +1507,14 @@ class PlannerAnalyzeRequest(BaseModel):
     character_name: str
     tags: List[str] = []
     batch_count: Optional[int] = None
+    extra_loras: List[str] = []
 
 @app.post("/planner/analyze")
 async def planner_analyze(req: PlannerAnalyzeRequest):
+    print(f"🔍 [Backend] Analyze solicitado para: {req.character_name}")
     if not req.character_name or not req.character_name.strip():
         raise HTTPException(status_code=400, detail="character_name requerido")
+    
     outfits_old = _read_lines("outfits.txt")
     poses_old = _read_lines("poses.txt")
     locations_old = _read_lines("locations.txt")
@@ -1546,6 +1558,8 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
                 temperature=0.8,
             )
             content = completion.choices[0].message.content.strip()
+            print(f"🔍 [Backend] Groq Analyze Response: {content}")
+            
             # Intentar extraer el objeto JSON
             start = content.find("{")
             end = content.rfind("}")
@@ -1570,11 +1584,14 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
 
     # Fallback: 5 combinaciones aleatorias
     if not combos_sugeridos:
+        print("[planner/analyze] Using Fallback (Random Shuffle)")
         from itertools import product
         all_combos = list(product(outfits, poses, locations))
         random.shuffle(all_combos)
+        print(f"[planner/analyze] Total combos available: {len(all_combos)}")
         for o, p, l in all_combos[:5]:
             combos_sugeridos.append({"outfit": o, "pose": p, "location": l})
+            print(f"[planner/analyze] Fallback combo: {o} / {p} / {l}")
 
     # Generar 10 jobs con enriquecimiento de style/concept y QUALITY_TAGS
     real_stem = _find_lora_file_stem(req.character_name) or sanitize_filename(req.character_name)
@@ -1593,7 +1610,16 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
         base = combos_sugeridos[i % len(combos_sugeridos)]
         style = (random.choice(style_pool) if style_pool else random.choice(atmospheres))
         concept = (random.choice(concept_pool) if concept_pool else "")
+        
+        # PROMPT CONSTRUCTION: <lora> + trigger + base + extra
         parts = [lora_tag, trigger, base["outfit"], base["pose"], base["location"]]
+        
+        # Add extra loras if present
+        if req.extra_loras:
+            for extra in req.extra_loras:
+                if extra and extra.strip():
+                    parts.append(f"<lora:{sanitize_filename(extra.strip())}:0.6>")
+
         if style:
             parts.append(style)
         if concept:

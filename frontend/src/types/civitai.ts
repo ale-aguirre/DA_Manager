@@ -37,4 +37,5 @@ export interface CivitaiModel {
   local_exists?: boolean;
   // Categoría IA (backend)
   ai_category?: "Character" | "Pose" | "Clothing" | "Style" | "Concept";
+  trainedWords?: string[];
 }

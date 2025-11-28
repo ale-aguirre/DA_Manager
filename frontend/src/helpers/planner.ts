@@ -24,12 +24,13 @@ export function extractTriplet(
 
   if (!resources) return result;
 
-  // Helper para buscar coincidencia
+  // Helper para buscar coincidencia y devolver el nombre canónico del recurso
   const findMatch = (list: string[]) => {
-    return tokens.find((t) => {
-      const low = t.toLowerCase();
-      return list.some((r) => {
-        const rLow = r.toLowerCase();
+    // Buscamos el recurso que coincida con algún token
+    return list.find((r) => {
+      const rLow = r.toLowerCase();
+      return tokens.some((t) => {
+        const low = t.toLowerCase();
         // Match exacto o contenido si es lo suficientemente largo
         return low === rLow || (rLow.length > 3 && low.includes(rLow));
       });
@@ -68,10 +69,10 @@ export function extractExtras(
   if (!resources) return result;
 
   const findMatch = (list: string[]) => {
-    return tokens.find((t) => {
-      const low = t.toLowerCase();
-      return list.some((r) => {
-        const rLow = r.toLowerCase();
+    return list.find((r) => {
+      const rLow = r.toLowerCase();
+      return tokens.some((t) => {
+        const low = t.toLowerCase();
         return low === rLow || (rLow.length > 3 && low.includes(rLow));
       });
     });

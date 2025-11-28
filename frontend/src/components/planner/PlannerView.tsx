@@ -148,15 +148,20 @@ export default function PlannerView() {
         const API_BASE =
           process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
-        const res = await fetch(`${API_BASE}/local/loras`);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.files)) {
-            setLocalLoras(data.files);
-          }
+        // Carga paralela de recursos críticos
+        const [lorasRes, resourcesData] = await Promise.all([
+          fetch(`${API_BASE}/local/loras`).then(r => r.ok ? r.json() : { files: [] }).catch(() => ({ files: [] })),
+          getPlannerResources().catch(() => null)
+        ]);
+
+        if (Array.isArray(lorasRes.files)) {
+          setLocalLoras(lorasRes.files);
+        }
+        if (resourcesData) {
+          setResources(resourcesData);
         }
       } catch (e) {
-        console.warn("❌ Planner: Excepción cargando LoRAs locales:", e);
+        console.warn("❌ Planner: Excepción cargando recursos iniciales:", e);
       }
     })();
   }, []);
@@ -337,7 +342,11 @@ export default function PlannerView() {
         // Rescatar trigger del prompt actual (asumimos que es el segundo elemento si existe)
         // O mejor, usar el mismo trigger que ya tiene el job si podemos detectarlo.
         // Simplificación: Usar el nombre simple si no tenemos info a mano.
-        const trigger = metaByCharacter[job.character_name]?.trigger_words?.[0] || job.character_name.split(" - ")[0];
+        let trigger = metaByCharacter[job.character_name]?.trigger_words?.[0];
+        if (!trigger) {
+          // Fallback: Cleaned name (remove parentheses, versions, etc.)
+          trigger = job.character_name.replace(/\(.*\)/g, "").replace(/v\d+/i, "").replace(/SDXL/i, "").trim();
+        }
 
         const scenePart = [triplet.outfit, triplet.pose, triplet.location].filter(Boolean).join(", ");
         const extrasPart = [extras.lighting, extras.camera, extras.expression].filter(Boolean).join(", ");
@@ -627,13 +636,19 @@ export default function PlannerView() {
 
   React.useEffect(() => {
     // Si no hay lore para el personaje activo, cargarlo automáticamente
+    // PERO: Si ya tenemos jobs para este personaje (porque vinieron del Radar), NO analizar de nuevo.
     if (!activeCharacter) return;
-    const existing = loreByCharacter[activeCharacter];
-    if (!existing) {
+
+    // Check if we have jobs for this character
+    const hasJobs = jobs.some(j => j.character_name === activeCharacter);
+    const existingLore = loreByCharacter[activeCharacter];
+
+    // Solo analizar si NO hay jobs Y NO hay lore
+    if (!hasJobs && !existingLore) {
       analyzeLore(activeCharacter);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCharacter, loreByCharacter]);
+  }, [activeCharacter, loreByCharacter]); // jobs intentionally omitted from deps to avoid loops, but checked inside
 
   // Auto-ajuste de Clip Skip
   React.useEffect(() => {
@@ -706,7 +721,7 @@ export default function PlannerView() {
         if (!key) return;
         map[key] = {
           image_url: obj.image_url,
-          trigger_words: obj.trigger_words,
+          trigger_words: obj.trigger_words?.map(t => t.replace(/\(.*\)/g, "").replace(/v\d+/i, "").replace(/SDXL/i, "").trim()).filter(Boolean),
           download_url: obj.download_url || obj.downloadUrl,
         };
       });
@@ -796,27 +811,40 @@ export default function PlannerView() {
     const sanitize = (s: string) => s.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
     const loraTag = `<lora:${sanitize(characterName)}:0.8>`;
 
-    // Trigger logic mejorada
+    // Trigger logic mejorada: Prioridad a Meta (Radar) > Local Info > Fallback
     let firstTrig = "";
     try {
-      const info = await getLocalLoraInfo(characterName);
-      if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) {
-        firstTrig = info.trainedWords[0];
-      } else if (metaByCharacter[characterName]?.trigger_words?.length) {
-        firstTrig = metaByCharacter[characterName]!.trigger_words![0];
-      }
-    } catch { }
+      // 1. Intentar desde Meta (lo que vino del Radar/Civitai)
+      const availableKeys = Object.keys(metaByCharacter);
+      // console.log(`[reconstructJobPrompt] Looking for '${characterName}' in meta. Available:`, availableKeys);
 
-    // Fallback: Si no hay trigger oficial, limpiar el nombre del archivo
+      let metaEntry = metaByCharacter[characterName];
+      if (!metaEntry) {
+        const foundKey = availableKeys.find(k => k.toLowerCase() === characterName.toLowerCase());
+        if (foundKey) metaEntry = metaByCharacter[foundKey];
+      }
+
+      if (metaEntry?.trigger_words?.length) {
+        firstTrig = metaEntry.trigger_words[0];
+        console.log(`[reconstructJobPrompt] Found trigger in Meta for ${characterName}: ${firstTrig}`);
+      }
+
+      // 2. Si no hay, intentar info local (asíncrono)
+      if (!firstTrig) {
+        console.log(`[reconstructJobPrompt] No meta trigger for ${characterName}, fetching local info...`);
+        const info = await getLocalLoraInfo(characterName);
+        if (Array.isArray(info?.trainedWords) && info.trainedWords.length > 0) {
+          firstTrig = info.trainedWords[0];
+          console.log(`[reconstructJobPrompt] Found trigger in Local Info for ${characterName}: ${firstTrig}`);
+        }
+      }
+    } catch (e) {
+      console.warn("Error recuperando triggers para prompt:", e);
+    }
+
+    // Fallback final: Si no hay trigger, usar nombre limpio
     if (!firstTrig) {
-      // 1. Quitar parte después del guion (ej "Personaje - Serie")
-      let clean = characterName.split(" - ")[0];
-      // 2. Reemplazar guiones bajos por espacios
-      clean = clean.replace(/_/g, " ");
-      // 3. Quitar parientes y versiones (v1, v2...)
-      clean = clean.replace(/\(.*\)/g, "").replace(/v\d+/i, "");
-      // 4. Trim
-      firstTrig = clean.trim();
+      firstTrig = characterName.replace(/\(.*\)/g, "").replace(/v\d+/i, "").replace(/SDXL/i, "").trim();
     }
 
     // 2. PROMPT GLOBAL (Estilo/Calidad) - SIEMPRE INYECTADO
@@ -860,13 +888,18 @@ export default function PlannerView() {
       setToast({ message: "🔮 Alterando el destino..." });
 
       // 1. Obtener job actual fresco
-      // Nota: Usamos setJobs callback para leer, pero aquí simplificamos
       const currentJob = jobs[idx];
       if (!currentJob) return;
 
+      console.log("🔮 [AlterFate] Click en job:", idx);
+      console.log("🔮 [AlterFate] Prompt actual enviado:", currentJob.prompt);
+      console.log("[MagicFix] Current Job Prompt:", currentJob.prompt);
+
       // 2. Llamada a API
       console.log("🪄 Enviando solicitud MagicFix...");
-      const res = await magicFixPrompt(currentJob.prompt);
+      // Append random seed to force variation
+      const res = await magicFixPrompt(currentJob.prompt + ` [Seed: ${Math.random()}]`);
+      console.log("🔮 [AlterFate] Respuesta RAW del Backend:", res);
       console.log("🪄 Respuesta MagicFix:", res);
 
       // 3. Construir nueva escena con TODOS los campos
@@ -882,11 +915,14 @@ export default function PlannerView() {
       };
 
       // 4. Reconstruir Prompt
+      console.log("[MagicFix] Reconstructing prompt for:", currentJob.character_name);
       const newPrompt = await reconstructJobPrompt(
         currentJob.character_name,
         newScene,
         currentJob.prompt
       );
+      console.log("🔮 [AlterFate] Prompt reconstruido:", newPrompt);
+      console.log("[MagicFix] New Prompt:", newPrompt);
 
       // 5. Actualizar Estado
       updatePrompt(idx, newPrompt);

@@ -3,7 +3,7 @@ import React from "react";
 import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft, postCivitaiDownloadInfo } from "../../lib/api";
+import { postPlannerDraft, postCivitaiDownloadInfo, postPlannerAnalyze } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import COPY from "../../lib/copy";
 
@@ -82,10 +82,28 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
               const j = await r.json();
               const ok = (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) || j?.id || j?.modelId || (Array.isArray(j?.imageUrls) && j.imageUrls.length > 0);
               setInfoStates((prev) => ({ ...prev, [s.modelId]: ok ? "ok" : "missing" }));
+
+              // CRITICAL: Update the item in the list with the fetched trainedWords
+              if (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) {
+                // We need to update the 'items' state, but 'items' is a prop. 
+                // However, we can't mutate props. We should probably have a local state or a way to store this enrichment.
+                // Actually, 'deriveTriggerWords' takes a CivitaiModel.
+                // Let's mutate the object in place if possible (not ideal but works for this reference) 
+                // OR better, store it in a map and use it in deriveTriggerWords.
+                // But deriveTriggerWords is used in handleSendToPlanning which iterates 'items'.
+                // Let's try to update the item in the 'items' array if it's a reference, or use a ref/map.
+                // Since 'items' comes from parent, let's use a side-effect map or just mutate the object found in 'items' 
+                // assuming it's a shallow copy or mutable reference from the parent. 
+                // Given the constraints, let's try to mutate the found model object directly for now as a quick fix, 
+                // or better, create a 'enrichedModels' state.
+                // Let's stick to the plan: "Update RadarView to merge fetched trigger words into model items."
+                // Since we can't easily change the prop 'items', I will mutate the found 'model' object.
+                model.trainedWords = j.trainedWords;
+              }
             }
-          } catch {}
+          } catch { }
         }
-      } catch {}
+      } catch { }
     };
     if (confirmOpen) precheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,7 +210,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           const data = await res.json();
           local.files = Array.isArray(data?.files) ? data.files : [];
         }
-      } catch {}
+      } catch { }
       const sanitize = (name: string) => name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
       const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
       for (const s of selectedItems) {
@@ -293,27 +311,37 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return byTab.filter((m) => !isBlocked(m));
   }, [items, tab, blacklist]);
 
-const deriveTriggerWords = (m: CivitaiModel): string[] => {
-  const base = [m.name];
-  const banned = new Set(["character", "hentai", "anime", "high quality", "masterpiece"]);
-  const tags = (m.tags || []).filter((t) => {
-    const v = (t || "").trim().toLowerCase();
-    return v.length > 0 && !banned.has(v);
-  }).slice(0, 5);
-  return [...base, ...tags];
-};
+  const deriveTriggerWords = (m: CivitaiModel): string[] => {
+    // Prioridad: trainedWords oficiales
+    if (Array.isArray(m.trainedWords) && m.trainedWords.length > 0) {
+      return m.trainedWords;
+    }
+    // Fallback: Nombre + Tags
+    const cleanName = m.name.replace(/\(.*\)/g, "").replace(/v\d+/i, "").replace(/SDXL/i, "").trim();
+    const base = [cleanName];
+    const banned = new Set(["character", "hentai", "anime", "high quality", "masterpiece"]);
+    const tags = (m.tags || []).filter((t) => {
+      const v = (t || "").trim().toLowerCase();
+      return v.length > 0 && !banned.has(v);
+    }).slice(0, 5);
+    return [...base, ...tags];
+  };
 
 
   const handleSendToPlanning = async () => {
     if (selectedItems.length === 0) return;
-    const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
-    const payload = selectedModels.map((m) => ({
-      character_name: m.name,
-      trigger_words: deriveTriggerWords(m),
-    }));
+    setLoaderOpen(true); // Reutilizamos el loader de pantalla completa o creamos uno local
     try {
-      // Leer preset global (batch_count y prompts)
-      let jobCount: number | undefined = undefined;
+      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+
+      // 1. Preparar metadatos básicos
+      const payload = selectedModels.map((m) => ({
+        character_name: m.name,
+        trigger_words: deriveTriggerWords(m),
+      }));
+
+      // 2. Leer preset global
+      let jobCount = 1;
       let preset: Record<string, unknown> | null = null;
       try {
         const raw = localStorage.getItem("planner_preset_global");
@@ -323,28 +351,112 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
             jobCount = preset.batch_count as number;
           }
         }
-      } catch {}
-      if (!jobCount) jobCount = 1; // default estricto: 1 job por personaje
-      const res = await postPlannerDraft(payload, jobCount);
-      localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
-      // Nuevo: guardar contexto enriquecido por personaje
-      try {
-        const stripLora = (s: string): string => (s || "").split(",").map((t) => t.trim()).filter((t) => t.length > 0 && !/^<lora:[^>]+>$/i.test(t)).join(", ");
-        const contextByCharacter: Record<string, unknown> = {};
-        for (const d of res.drafts || []) {
-          const pos = typeof preset?.positivePrompt === "string" && (preset!.positivePrompt as string).trim().length > 0
-            ? (preset!.positivePrompt as string)
-            : stripLora(d.base_prompt || "");
-          contextByCharacter[d.character] = {
-            base_prompt: pos,
-            recommended_params: d.recommended_params,
-            reference_images: d.reference_images,
-          };
-        }
-        localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
       } catch { }
-      // Guardar metadatos para la Fábrica (modelId + downloadUrl)
-      const meta = selectedModels.map((m) => {
+
+      // 3. Generar Drafts iniciales (estructura base)
+      const res = await postPlannerDraft(payload, jobCount);
+
+      // 4. PRE-GENERACIÓN: Llamar a analyzeLore para cada personaje
+      // Esto reemplaza la espera en el PlannerView
+      const enrichedJobs = [...res.jobs];
+      const loreMap: Record<string, string> = {};
+      const reasoningMap: Record<string, string> = {};
+
+      // Cargamos lo que ya exista para no sobrescribir si no es necesario
+      try {
+        const oldLore = JSON.parse(localStorage.getItem("planner_lore") || "{}");
+        Object.assign(loreMap, oldLore);
+      } catch { }
+
+      // Iteramos secuencialmente o en paralelo (paralelo es más rápido pero carga más al backend)
+      // Usaremos Promise.all para velocidad
+      await Promise.all(selectedModels.map(async (m) => {
+        try {
+          console.log("📡 [Radar] Iniciando envío para:", m.name);
+          const triggers = deriveTriggerWords(m);
+          console.log("📡 [Radar] Triggers detectados:", triggers);
+
+          // Llamada al backend para generar escenarios
+          console.log("📡 [Radar] Solicitando análisis al backend...");
+          const analysis = await postPlannerAnalyze(m.name, triggers, jobCount);
+          console.log("📡 [Radar] Respuesta Backend:", analysis);
+
+          if (analysis.jobs && analysis.jobs.length > 0) {
+            // Reemplazamos los jobs "vacíos" del draft con los jobs "inteligentes" del analyze
+            // Filtramos los jobs del draft para este personaje y metemos los nuevos
+            const others = enrichedJobs.filter(j => j.character_name !== m.name);
+            enrichedJobs.length = 0; // Limpiar array in-place
+            enrichedJobs.push(...others, ...analysis.jobs);
+          } else {
+            throw new Error("Empty analysis result");
+          }
+          if (analysis.lore) {
+            loreMap[m.name] = analysis.lore;
+          }
+          if (analysis.ai_reasoning) {
+            reasoningMap[m.name] = analysis.ai_reasoning;
+          }
+        } catch (e) {
+          console.warn(`Fallo pre-generación para ${m.name}`, e);
+          // Fallback Manual: Inyectar escena básica si falla la IA
+          const draftJob = enrichedJobs.find(j => j.character_name === m.name);
+          if (draftJob) {
+            const FALLBACK_SCENES = [
+              "standing, casual outfit, simple background",
+              "sitting, cozy sweater, indoor lighting",
+              "portrait, smiling, soft lighting",
+              "walking, street fashion, city background"
+            ];
+            const randomScene = FALLBACK_SCENES[Math.floor(Math.random() * FALLBACK_SCENES.length)];
+            // Aseguramos que no se duplique si ya tenía algo
+            if (!draftJob.prompt.includes(randomScene)) {
+              draftJob.prompt = `${draftJob.prompt}, ${randomScene}, best quality, masterpiece`;
+            }
+          }
+        }
+      }));
+
+      // 5. Guardar Jobs enriquecidos (CRITICAL FIX)
+      console.log("📡 [Radar] Guardando planner_jobs en localStorage:", enrichedJobs);
+      localStorage.setItem("planner_jobs", JSON.stringify(enrichedJobs));
+      localStorage.setItem("planner_lore", JSON.stringify(loreMap));
+      localStorage.setItem("planner_reasoning", JSON.stringify(reasoningMap));
+
+      const stripLora = (s: string): string => (s || "").split(",").map((t) => t.trim()).filter((t) => t.length > 0 && !/^<lora:[^>]+>$/i.test(t)).join(", ");
+      const contextByCharacter: Record<string, unknown> = JSON.parse(localStorage.getItem("planner_context") || "{}");
+
+      for (const d of res.drafts || []) {
+        const pos = typeof preset?.positivePrompt === "string" && (preset!.positivePrompt as string).trim().length > 0
+          ? (preset!.positivePrompt as string)
+          : stripLora(d.base_prompt || "");
+
+        contextByCharacter[d.character] = {
+          base_prompt: pos,
+          recommended_params: d.recommended_params,
+          reference_images: d.reference_images,
+        };
+      }
+      localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
+    } catch { }
+
+    // 6.5 Forzar Configuración Técnica (Batch Count = 1)
+    try {
+      const techByCharacter: Record<string, any> = JSON.parse(localStorage.getItem("planner_tech") || "{}");
+      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+      selectedModels.forEach(m => {
+        techByCharacter[m.name] = {
+          ...(techByCharacter[m.name] || {}),
+          batch_count: 1 // FORZAR 1 SIEMPRE AL ENVIAR DESDE RADAR
+        };
+      });
+      localStorage.setItem("planner_tech", JSON.stringify(techByCharacter));
+    } catch { }
+
+    // 7. Guardar Metadatos (Download URLs, images)
+    try {
+      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+      const meta = JSON.parse(localStorage.getItem("planner_meta") || "[]");
+      const newMeta = selectedModels.map((m) => {
         const versions = m.modelVersions || [];
         let url: string | undefined;
         for (const v of versions) {
@@ -356,12 +468,18 @@ const deriveTriggerWords = (m: CivitaiModel): string[] => {
         const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
         return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
       });
-      localStorage.setItem("planner_meta", JSON.stringify(meta));
+      // Fusionar meta
+      const metaMap = new Map(meta.map((x: any) => [x.character_name, x]));
+      newMeta.forEach(x => metaMap.set(x.character_name, x));
+      localStorage.setItem("planner_meta", JSON.stringify(Array.from(metaMap.values())));
+
       router.push("/planner");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to draft planner", msg);
       alert("Error al generar plan: " + msg);
+    } finally {
+      setLoaderOpen(false);
     }
   };
 
