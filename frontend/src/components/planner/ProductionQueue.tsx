@@ -133,6 +133,14 @@ export default function ProductionQueue(props: {
       }
       const fname = `${stem}.safetensors`;
       await api.postDownloadLora(url, fname);
+
+      // Force download of Civitai Info
+      try {
+        await api.postCivitaiDownloadInfo(stem);
+      } catch (e) {
+        console.warn("Could not download civitai info:", e);
+      }
+
       try {
         const info = await api.getLocalLoraInfo(character);
         const words = Array.isArray(info?.trainedWords)
@@ -233,21 +241,27 @@ export default function ProductionQueue(props: {
         const idx = perCharacter[character]!.indices[i];
         const tokens = splitPrompt(jobsList[i].prompt);
         const tokensLower = new Set(tokens.map((t) => t.toLowerCase()));
-        const hasCurrentLora = tokens.some((t) =>
-          new RegExp(`^<lora:${stem}(:[0-9.]+)?>$`, "i").test(t)
-        );
+
         const rest: string[] = [];
         const quality: string[] = [];
+        const extraLoras: string[] = [];
+
         for (const t of tokens) {
           const low = t.toLowerCase();
+          const isCharLora = new RegExp(`^<lora:${stem}(:[0-9.]+)?>$`, "i").test(t);
           const isAnyLora = /^<lora:[^>]+>$/i.test(t);
-          if (isAnyLora) continue; // removemos todas las loras para reinsertar sólo una
-          if (QUALITY_SET.has(low)) {
+
+          if (isCharLora) {
+            continue; // Skip character lora, added at start
+          } else if (isAnyLora) {
+            extraLoras.push(t); // Keep extra loras
+          } else if (QUALITY_SET.has(low)) {
             quality.push(t);
           } else {
             rest.push(t);
           }
         }
+
         const dedup: string[] = [];
         const seenLower = new Set<string>();
         const pushOne = (x: string) => {
@@ -256,17 +270,25 @@ export default function ProductionQueue(props: {
           seenLower.add(lx);
           dedup.push(x);
         };
-        // 1) Lora actual: insertar sólo si no estaba
-        if (!hasCurrentLora) pushOne(loraTag);
-        // 2) Triggers: agregar sólo los que no existan
+
+        // 1) Character Lora
+        pushOne(loraTag);
+
+        // 2) Triggers (only if not already in prompt)
         for (const trig of cleanTriggers) {
           const tl = trig.toLowerCase();
           if (!tokensLower.has(tl)) pushOne(trig);
         }
-        // 3) Resto del prompt (dedup conservador)
+
+        // 3) Rest (Resources + Base Prompt)
         for (const t of rest) pushOne(t);
-        // 4) Quality al final
+
+        // 4) Extra Loras
+        for (const l of extraLoras) pushOne(l);
+
+        // 5) Quality
         for (const q of quality) pushOne(q);
+
         updatePrompt(idx, dedup.join(", "));
       }
       setOpStatus((prev) => ({ ...prev, [character]: "Prompts actualizados" }));

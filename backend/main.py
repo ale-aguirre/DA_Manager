@@ -146,6 +146,14 @@ class PlannerJob(BaseModel):
     prompt: str
     seed: int
     negative_prompt: Optional[str] = None
+    outfit: Optional[str] = None
+    pose: Optional[str] = None
+    location: Optional[str] = None
+    lighting: Optional[str] = None
+    camera: Optional[str] = None
+    expression: Optional[str] = None
+    intensity: Optional[str] = None
+    extra_loras: Optional[List[str]] = []
 
 class PlannerExecutionRequest(BaseModel):
     # Usamos modelos tipados para asegurar parseo desde Body
@@ -1424,6 +1432,9 @@ async def planner_magicfix(req: MagicFixRequest):
     outfits = _read_lines("outfits.txt")
     poses = _read_lines("poses.txt")
     locations = _read_lines("locations.txt")
+    lighting = _read_lines("styles/lighting.txt")
+    camera = _read_lines("styles/camera.txt")
+    expressions = _read_lines("visuals/expressions.txt")
     
     print(f"[MagicFix] Resources loaded: Outfits={len(outfits)}, Poses={len(poses)}, Locations={len(locations)}")
 
@@ -1437,11 +1448,17 @@ async def planner_magicfix(req: MagicFixRequest):
         o = random.choice(outfits)
         p = random.choice(poses)
         l = random.choice(locations)
+        li = random.choice(lighting) if lighting else "soft lighting"
+        cam = random.choice(camera) if camera else "front view"
+        exp = random.choice(expressions) if expressions else "smile"
         print(f"[MagicFix] Fallback selected: {o} / {p} / {l}")
         return {
             "outfit": o,
             "pose": p,
             "location": l,
+            "lighting": li,
+            "camera": cam,
+            "expression": exp,
             "ai_reasoning": f"✨ IA: Fallback aplicado con combinación aleatoria coherente ({o} / {p} / {l}).",
         }
 
@@ -1450,9 +1467,9 @@ async def planner_magicfix(req: MagicFixRequest):
         client = Groq(api_key=GROQ_API_KEY)
         system_prompt = (
             "Eres un asistente de planificación para Stable Diffusion. "
-            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinación coherente de Outfit+Pose+Location que encaje con el personaje. "
+            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinación coherente de Outfit+Pose+Location+Lighting+Camera+Expression que encaje con el personaje. "
             "NO reescribas el prompt completo y NO incluyas explicaciones. "
-            'Devuelve SOLO JSON con formato EXACTO: {"outfit":"...","pose":"...","location":"..."}.'
+            'Devuelve SOLO JSON con formato EXACTO: {"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}.'
         )
         example_outfits = ", ".join(outfits[:10])
         example_poses = ", ".join(poses[:10])
@@ -1462,7 +1479,7 @@ async def planner_magicfix(req: MagicFixRequest):
             f"Outfits disponibles (ejemplos): {example_outfits}\n"
             f"Poses disponibles (ejemplos): {example_poses}\n"
             f"Locations disponibles (ejemplos): {example_locations}\n"
-            "Responde con SOLO JSON del triplete."
+            "Responde con SOLO JSON del sexteto."
         )
         completion = await groq_chat_with_fallbacks(
             client,
@@ -1479,11 +1496,15 @@ async def planner_magicfix(req: MagicFixRequest):
         try:
             data = json.loads(json_str)
             if isinstance(data, dict) and data.get("outfit") and data.get("pose") and data.get("location"):
-                o = str(data["outfit"]) ; p = str(data["pose"]) ; l = str(data["location"]) 
+                o = str(data["outfit"]) ; p = str(data["pose"]) ; l = str(data["location"])
+                li = str(data.get("lighting") or "") ; cam = str(data.get("camera") or "") ; exp = str(data.get("expression") or "")
                 return {
                     "outfit": o,
                     "pose": p,
                     "location": l,
+                    "lighting": li,
+                    "camera": cam,
+                    "expression": exp,
                     "ai_reasoning": f"✨ IA: Combinación sugerida por contexto del prompt ({o} / {p} / {l}).",
                 }
         except Exception:
@@ -1493,11 +1514,17 @@ async def planner_magicfix(req: MagicFixRequest):
         o = random.choice(outfits)
         p = random.choice(poses)
         l = random.choice(locations)
+        li = random.choice(lighting) if lighting else "soft lighting"
+        cam = random.choice(camera) if camera else "front view"
+        exp = random.choice(expressions) if expressions else "smile"
         print(f"[MagicFix] Fallback selected: {o} / {p} / {l}")
         return {
             "outfit": o,
             "pose": p,
             "location": l,
+            "lighting": li,
+            "camera": cam,
+            "expression": exp,
             "ai_reasoning": f"✨ IA: Fallback aplicado con combinación aleatoria coherente ({o} / {p} / {l}).",
         }
     except Exception as e:
@@ -1538,8 +1565,8 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
             client = Groq(api_key=GROQ_API_KEY)
             system_prompt = (
                 "Eres un experto otaku. Analiza este personaje. Dime su personalidad, ropa canónica y escenarios típicos en 1-2 frases. "
-                "Luego, sugiere 5 combinaciones de Outfit+Pose+Location que encajen con su historia pero sean NSFW/Ecchi. "
-                'Devuelve SOLO JSON con formato: {"lore":"texto breve","combos":[{"outfit":"...","pose":"...","location":"..."}]}'
+                "Luego, sugiere 5 combinaciones de Outfit+Pose+Location+Lighting+Camera+Expression que encajen con su historia pero sean NSFW/Ecchi. "
+                'Devuelve SOLO JSON con formato: {"lore":"texto breve","combos":[{"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}]}'
             )
             user_prompt = (
                 f"Nombre: {req.character_name}\n"
@@ -1576,6 +1603,9 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
                                     "outfit": str(c["outfit"]),
                                     "pose": str(c["pose"]),
                                     "location": str(c["location"]),
+                                    "lighting": str(c.get("lighting") or ""),
+                                    "camera": str(c.get("camera") or ""),
+                                    "expression": str(c.get("expression") or ""),
                                 })
             except Exception:
                 pass
@@ -1590,7 +1620,14 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
         random.shuffle(all_combos)
         print(f"[planner/analyze] Total combos available: {len(all_combos)}")
         for o, p, l in all_combos[:5]:
-            combos_sugeridos.append({"outfit": o, "pose": p, "location": l})
+            combos_sugeridos.append({
+                "outfit": o, 
+                "pose": p, 
+                "location": l,
+                "lighting": random.choice(styles) if styles else "soft lighting",
+                "camera": random.choice(concepts) if concepts else "front view",
+                "expression": "smile"
+            })
             print(f"[planner/analyze] Fallback combo: {o} / {p} / {l}")
 
     # Generar 10 jobs con enriquecimiento de style/concept y QUALITY_TAGS
@@ -1608,11 +1645,17 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
 
     for i in range(n):
         base = combos_sugeridos[i % len(combos_sugeridos)]
-        style = (random.choice(style_pool) if style_pool else random.choice(atmospheres))
-        concept = (random.choice(concept_pool) if concept_pool else "")
+        
+        # Extract metadata
+        outfit = base.get("outfit")
+        pose = base.get("pose")
+        location = base.get("location")
+        lighting = base.get("lighting") or (random.choice(style_pool) if style_pool else random.choice(atmospheres))
+        camera = base.get("camera") or (random.choice(concept_pool) if concept_pool else "")
+        expression = base.get("expression") or "smile"
         
         # PROMPT CONSTRUCTION: <lora> + trigger + base + extra
-        parts = [lora_tag, trigger, base["outfit"], base["pose"], base["location"]]
+        parts = [lora_tag, trigger, outfit, pose, location]
         
         # Add extra loras if present
         if req.extra_loras:
@@ -1620,14 +1663,29 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
                 if extra and extra.strip():
                     parts.append(f"<lora:{sanitize_filename(extra.strip())}:0.6>")
 
-        if style:
-            parts.append(style)
-        if concept:
-            parts.append(concept)
+        if lighting:
+            parts.append(lighting)
+        if camera:
+            parts.append(camera)
+        if expression:
+            parts.append(expression)
+            
         parts.append(QUALITY_TAGS)
-        prompt = ", ".join(parts)
+        prompt = ", ".join([p for p in parts if p and p.strip()])
         seed = random.randint(0, 2_147_483_647)
-        jobs.append(PlannerJob(character_name=req.character_name, prompt=prompt, seed=seed))
+        
+        jobs.append(PlannerJob(
+            character_name=req.character_name, 
+            prompt=prompt, 
+            seed=seed,
+            outfit=outfit,
+            pose=pose,
+            location=location,
+            lighting=lighting,
+            camera=camera,
+            expression=expression,
+            extra_loras=req.extra_loras
+        ))
 
     ai_msg = f"✨ IA: Contexto de '{req.character_name}' aplicado. Se sugirieron {len(combos_sugeridos)} escenarios."
     return {"jobs": [j.model_dump() for j in jobs], "lore": lore_text, "ai_reasoning": ai_msg}

@@ -921,17 +921,6 @@ export default function PlannerView() {
         newScene,
         currentJob.prompt
       );
-      console.log("🔮 [AlterFate] Prompt reconstruido:", newPrompt);
-      console.log("[MagicFix] New Prompt:", newPrompt);
-
-      // 5. Actualizar Estado
-      updatePrompt(idx, newPrompt);
-
-      const msg = res.ai_reasoning || "✨ Destino alterado";
-      setAiReasoningByJob(prev => ({ ...prev, [idx]: msg }));
-      setToast({ message: "✨ Nuevo destino aplicado" });
-
-    } catch (e) {
       console.error("❌ Error en MagicFix:", e);
       setToast({ message: "Error al alterar destino" });
     } finally {

@@ -386,7 +386,23 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             // Filtramos los jobs del draft para este personaje y metemos los nuevos
             const others = enrichedJobs.filter(j => j.character_name !== m.name);
             enrichedJobs.length = 0; // Limpiar array in-place
-            enrichedJobs.push(...others, ...analysis.jobs);
+
+            // Map backend fields to ai_meta for frontend consumption
+            const mappedJobs = analysis.jobs.map((j: any) => ({
+              ...j,
+              ai_meta: {
+                outfit: j.outfit,
+                pose: j.pose,
+                location: j.location,
+                lighting: j.lighting,
+                camera: j.camera,
+                expression: j.expression,
+                intensity: j.intensity,
+                extra_loras: j.extra_loras
+              }
+            }));
+
+            enrichedJobs.push(...others, ...mappedJobs);
           } else {
             throw new Error("Empty analysis result");
           }
