@@ -5,7 +5,7 @@ import React from "react";
 import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle, AlertCircle } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft, postPlannerAnalyze, getLoraVerify, postDownloadLora, type LoraVerifyResponse } from "../../lib/api";
+import { postPlannerDraft, postPlannerAnalyze, getLoraVerify, postDownloadLora, type LoraVerifyResponse, getLocalLoraInfo } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import COPY from "../../lib/copy";
 
@@ -265,10 +265,27 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     try {
 
 
-      // 1. Preparar metadatos básicos
-      const payload = selectedModels.map((m) => ({
-        character_name: m.name,
-        trigger_words: deriveTriggerWords(m),
+      // 1. Preparar metadatos básicos (con fetch de info fresca)
+      const payload = await Promise.all(selectedModels.map(async (m) => {
+        let triggers = deriveTriggerWords(m);
+        try {
+          // Intentar obtener info fresca del backend (por si se acaba de descargar)
+          const filename = getBestFilename(m);
+          // Quitamos extensión para buscar por nombre (el backend espera nombre sin extensión a veces, o con)
+          // Probemos con el nombre del modelo limpio o el filename
+          const info = await getLocalLoraInfo(filename);
+          if (info && Array.isArray(info.trainedWords) && info.trainedWords.length > 0) {
+            console.log(`[Radar] Fresh triggers for ${m.name}:`, info.trainedWords);
+            triggers = info.trainedWords;
+          }
+        } catch (e) {
+          console.warn(`[Radar] Could not fetch fresh info for ${m.name}, using fallback.`, e);
+        }
+
+        return {
+          character_name: m.name,
+          trigger_words: triggers,
+        };
       }));
 
       // 2. Leer preset global
@@ -892,6 +909,6 @@ function useAutoVerify(
     verifyAll();
 
     return () => { mounted = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmOpen, selectedModels]); // Removed loraStatuses to prevent loop
 }

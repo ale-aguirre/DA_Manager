@@ -2,8 +2,8 @@
 
 import React, { useState } from "react";
 import {
-    Bot, Camera, ChevronDown, ChevronUp, Loader2, MapPin,
-    Shirt, Sparkles, Trash2, User, Zap
+    Camera, ChevronDown, ChevronUp, Loader2, MapPin,
+    Shirt, Sparkles, Trash2, User, Zap, Lock, Unlock
 } from "lucide-react";
 import { usePlannerContext } from "../../../context/PlannerContext";
 import { PlannerJob } from "../../../types/planner";
@@ -27,7 +27,6 @@ export default function JobCard({ job, index }: JobCardProps) {
 
     // Helper to safely get value from job or ai_meta
     const getValue = (field: keyof PlannerJob | string) => {
-        // @ts-ignore
         return job[field] || (job.ai_meta && job.ai_meta[field]) || "";
     };
 
@@ -35,6 +34,55 @@ export default function JobCard({ job, index }: JobCardProps) {
         setLocalLoading(true);
         await magicFixJob(index);
         setLocalLoading(false);
+    };
+
+    const toggleLock = (field: string) => {
+        const currentLocks = new Set(job.locked_fields || []);
+        if (currentLocks.has(field)) {
+            currentLocks.delete(field);
+        } else {
+            currentLocks.add(field);
+        }
+        updateJob(index, { locked_fields: Array.from(currentLocks) });
+    };
+
+    const isLocked = (field: string) => (job.locked_fields || []).includes(field);
+
+    const renderSelect = (label: string, icon: React.ReactNode, field: keyof PlannerJob, options: string[] = []) => {
+        const locked = isLocked(field as string);
+        return (
+            <div>
+                <div className="flex items-center justify-between mb-1">
+                    <label className="flex items-center gap-1 text-xs text-slate-400">
+                        {icon} {label}
+                    </label>
+                    <button
+                        onClick={() => toggleLock(field as string)}
+                        className="text-slate-500 hover:text-slate-300"
+                        title={locked ? "Unlock" : "Lock"}
+                    >
+                        {locked ? <Lock className="h-3 w-3 text-amber-500" /> : <Unlock className="h-3 w-3 opacity-50" />}
+                    </button>
+                </div>
+                <select
+                    className={`w-full rounded border px-2 py-1 text-xs text-slate-200 ${locked ? "border-amber-900/50 bg-amber-950/20 text-amber-200/70" : "border-slate-700 bg-slate-950"
+                        }`}
+                    value={getValue(field)}
+                    onChange={(e) => updateJob(index, { [field]: e.target.value } as any)}
+                    disabled={locked}
+                >
+                    <option value="">(Empty)</option>
+                    {/* Dynamic Options + Resource List */}
+                    {[
+                        ...(getValue(field) && !(options || []).includes(getValue(field))
+                            ? [getValue(field)] : []),
+                        ...(options || [])
+                    ].map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                </select>
+            </div>
+        );
     };
 
     return (
@@ -79,147 +127,13 @@ export default function JobCard({ job, index }: JobCardProps) {
 
                     {/* Controls Grid */}
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                        {/* Outfit */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <Shirt className="h-3 w-3" /> Outfit
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("outfit")}
-                                onChange={(e) => updateJob(index, { outfit: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {/* Dynamic Options + Resource List */}
-                                {[
-                                    ...(getValue("outfit") && !(resources?.outfits || []).includes(getValue("outfit"))
-                                        ? [getValue("outfit")] : []),
-                                    ...(resources?.outfits || [])
-                                ].map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Pose */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <User className="h-3 w-3" /> Pose
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("pose")}
-                                onChange={(e) => updateJob(index, { pose: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {[
-                                    ...(getValue("pose") && !(resources?.poses || []).includes(getValue("pose"))
-                                        ? [getValue("pose")] : []),
-                                    ...(resources?.poses || [])
-                                ].map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Location */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <MapPin className="h-3 w-3" /> Location
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("location")}
-                                onChange={(e) => updateJob(index, { location: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {[
-                                    ...(getValue("location") && !(resources?.locations || []).includes(getValue("location"))
-                                        ? [getValue("location")] : []),
-                                    ...(resources?.locations || [])
-                                ].map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Lighting */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <Zap className="h-3 w-3" /> Lighting
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("lighting")}
-                                onChange={(e) => updateJob(index, { lighting: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {/* Show current value if not in list */}
-                                {getValue("lighting") && !resources?.lighting?.includes(getValue("lighting")) && (
-                                    <option value={getValue("lighting")}>{getValue("lighting")} (Custom)</option>
-                                )}
-                                {resources?.lighting?.map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Camera */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <Camera className="h-3 w-3" /> Camera
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("camera")}
-                                onChange={(e) => updateJob(index, { camera: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {getValue("camera") && !resources?.camera?.includes(getValue("camera")) && (
-                                    <option value={getValue("camera")}>{getValue("camera")} (Custom)</option>
-                                )}
-                                {resources?.camera?.map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Expression */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <User className="h-3 w-3" /> Expression
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("expression")}
-                                onChange={(e) => updateJob(index, { expression: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {getValue("expression") && !resources?.expressions?.includes(getValue("expression")) && (
-                                    <option value={getValue("expression")}>{getValue("expression")} (Custom)</option>
-                                )}
-                                {resources?.expressions?.map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* Hairstyle */}
-                        <div>
-                            <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <Sparkles className="h-3 w-3" /> Hairstyle
-                            </label>
-                            <select
-                                className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
-                                value={getValue("hairstyle")}
-                                onChange={(e) => updateJob(index, { hairstyle: e.target.value } as any)}
-                            >
-                                <option value="">(Empty)</option>
-                                {resources?.hairstyles?.map((opt) => (
-                                    <option key={opt} value={opt}>{opt}</option>
-                                ))}
-                            </select>
-                        </div>
+                        {renderSelect("Outfit", <Shirt className="h-3 w-3" />, "outfit", resources?.outfits)}
+                        {renderSelect("Pose", <User className="h-3 w-3" />, "pose", resources?.poses)}
+                        {renderSelect("Location", <MapPin className="h-3 w-3" />, "location", resources?.locations)}
+                        {renderSelect("Lighting", <Zap className="h-3 w-3" />, "lighting", resources?.lighting)}
+                        {renderSelect("Camera", <Camera className="h-3 w-3" />, "camera", resources?.camera)}
+                        {renderSelect("Expression", <User className="h-3 w-3" />, "expression", resources?.expressions)}
+                        {renderSelect("Hairstyle", <Sparkles className="h-3 w-3" />, "hairstyle", resources?.hairstyles)}
                     </div>
 
                     {/* Actions Bar */}

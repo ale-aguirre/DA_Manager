@@ -123,33 +123,43 @@ export function mergeNegative(
 export function rebuildPromptWithTriplet(
   currentPrompt: string,
   newValues: { outfit?: string; pose?: string; location?: string },
-  knownResources?: { outfits: string[]; poses: string[]; locations: string[] }
+  knownResources?: { outfits: string[]; poses: string[]; locations: string[] },
+  oldValues?: { outfit?: string; pose?: string; location?: string }
 ): string {
   let tokens = splitPrompt(currentPrompt);
 
-  const replaceOrAdd = (newValue: string | undefined, resourceList: string[]) => {
+  const replaceOrAdd = (newValue: string | undefined, oldValue: string | undefined, resourceList: string[]) => {
     if (!newValue) return;
     const newValClean = newValue.trim();
     if (!newValClean) return;
 
-    // Lógica de Limpieza Fuzzy (Coincidencia Parcial)
+    // 1. Estrategia de Eliminación: Old Value (Prioridad Alta)
+    if (oldValue) {
+      const oldClean = oldValue.trim().toLowerCase();
+      if (oldClean) {
+        tokens = tokens.filter(t => {
+          const tLow = t.toLowerCase();
+          // Si el token es igual al valor viejo, o lo contiene (ej: "red dress" vs "dress")
+          // Pero cuidado con falsos positivos. Usamos coincidencia exacta o "word boundary" simulado.
+          return tLow !== oldClean && !tLow.includes(oldClean) && !oldClean.includes(tLow);
+        });
+      }
+    }
+
+    // 2. Estrategia de Eliminación: Resource List (Limpieza Profunda)
     if (resourceList && resourceList.length > 0) {
       tokens = tokens.filter((t) => {
         const lowToken = t.toLowerCase();
 
-        // 1. Si es EXACTAMENTE el nuevo valor, mantenlo (evita borrar y re-agregar innecesariamente)
+        // Si es EXACTAMENTE el nuevo valor, mantenlo (idempotencia)
         if (lowToken === newValClean.toLowerCase()) return true;
 
-        // 2. Chequear si el token actual es "parte de" o "contiene" un recurso conocido.
-        // Esto elimina variaciones como "standing pose" si la lista tiene "standing".
+        // Chequear si es un recurso conocido
         const isResource = resourceList.some(r => {
           const rLow = r.toLowerCase();
-          // Match si uno contiene al otro.
-          // Filtramos rLow.length > 2 para evitar que recursos cortos como "in" borren todo.
           return (rLow.length > 2 && lowToken.includes(rLow)) || (lowToken.length > 2 && rLow.includes(lowToken));
         });
 
-        // Si es un recurso viejo, DEVUELVE FALSE para borrarlo del array.
         return !isResource;
       });
     }
@@ -159,13 +169,18 @@ export function rebuildPromptWithTriplet(
   };
 
   if (knownResources) {
-    replaceOrAdd(newValues.outfit, knownResources.outfits);
-    replaceOrAdd(newValues.pose, knownResources.poses);
-    replaceOrAdd(newValues.location, knownResources.locations);
+    replaceOrAdd(newValues.outfit, oldValues?.outfit, knownResources.outfits);
+    replaceOrAdd(newValues.pose, oldValues?.pose, knownResources.poses);
+    replaceOrAdd(newValues.location, oldValues?.location, knownResources.locations);
   } else {
-    // Fallback si no hay recursos (solo añade)
+    // Fallback: intentar borrar oldValues si existen, aunque no tengamos resource list
+    if (oldValues?.outfit) tokens = tokens.filter(t => !t.toLowerCase().includes(oldValues.outfit!.toLowerCase()));
     if (newValues.outfit) tokens.push(newValues.outfit);
+
+    if (oldValues?.pose) tokens = tokens.filter(t => !t.toLowerCase().includes(oldValues.pose!.toLowerCase()));
     if (newValues.pose) tokens.push(newValues.pose);
+
+    if (oldValues?.location) tokens = tokens.filter(t => !t.toLowerCase().includes(oldValues.location!.toLowerCase()));
     if (newValues.location) tokens.push(newValues.location);
   }
 

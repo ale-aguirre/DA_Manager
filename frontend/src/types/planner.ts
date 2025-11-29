@@ -10,6 +10,7 @@ export interface PlannerJob {
   // Opcionales: integración con A1111 y marcado de IA
   negative_prompt?: string;
   ai_meta?: Record<string, unknown>;
+  locked_fields?: string[]; // Campos bloqueados (outfit, pose, etc.)
   // Campos explícitos para UI
   outfit?: string;
   pose?: string;

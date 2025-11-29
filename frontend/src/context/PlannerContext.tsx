@@ -136,20 +136,25 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     }, [techConfig, isLoaded]);
 
     // Auto-cleanup: Remove techConfig for characters that no longer have jobs
+    // Auto-cleanup: Remove techConfig for characters that no longer have jobs
     useEffect(() => {
         if (!isLoaded) return;
-        const activeCharacters = new Set(jobs.map(j => j.character_name));
-        const configCharacters = Object.keys(techConfig);
 
-        // Find orphaned configs (configs for characters no longer in jobs)
-        const orphaned = configCharacters.filter(char => !activeCharacters.has(char));
+        // Use functional update to avoid dependency on techConfig state directly in the effect trigger
+        setTechConfigState(prevConfig => {
+            const activeCharacters = new Set(jobs.map(j => j.character_name));
+            const configCharacters = Object.keys(prevConfig);
+            const orphaned = configCharacters.filter(char => !activeCharacters.has(char));
 
-        if (orphaned.length > 0) {
-            const cleaned = { ...techConfig };
-            orphaned.forEach(char => delete cleaned[char]);
-            setTechConfigState(cleaned);
-        }
-    }, [jobs, techConfig, isLoaded]);
+            if (orphaned.length > 0) {
+                const cleaned = { ...prevConfig };
+                orphaned.forEach(char => delete cleaned[char]);
+                // Only update if changes were made
+                return cleaned;
+            }
+            return prevConfig;
+        });
+    }, [jobs, isLoaded]); // Removed techConfig from dependencies
 
     useEffect(() => {
         if (!isLoaded) return;
@@ -250,39 +255,69 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         try {
             const fixed = await magicFixPrompt(job.prompt);
 
+            // Check locks
+            const locked = new Set(job.locked_fields || []);
+
+            // Determine what to apply and what to remove
+            // If locked, we do NOT remove the old value and do NOT add the new value.
+            // This preserves the tag in its original position in the prompt.
+            const applyOutfit = locked.has("outfit") ? undefined : fixed.outfit;
+            const removeOutfit = locked.has("outfit") ? undefined : job.outfit;
+
+            const applyPose = locked.has("pose") ? undefined : fixed.pose;
+            const removePose = locked.has("pose") ? undefined : job.pose;
+
+            const applyLocation = locked.has("location") ? undefined : fixed.location;
+            const removeLocation = locked.has("location") ? undefined : job.location;
+
             // Rebuild the prompt string using the new values
             // We need the resources to know what to replace, but they are in state.
             // Since we are inside the provider, we have access to 'resources'.
             let newPrompt = rebuildPromptWithTriplet(
                 job.prompt,
-                { outfit: fixed.outfit, pose: fixed.pose, location: fixed.location },
+                { outfit: applyOutfit, pose: applyPose, location: applyLocation },
                 resources ? {
                     outfits: resources.outfits,
                     poses: resources.poses,
                     locations: resources.locations
-                } : undefined
+                } : undefined,
+                // Pass old values to help removal logic
+                { outfit: removeOutfit, pose: removePose, location: removeLocation }
             );
 
             // Add extras (lighting, camera, expression, hairstyle)
             // This helper appends them if not present
             const { rebuildPromptWithExtras } = await import("../helpers/planner");
+
+            // Also respect locks for extras if we decide to support them later, 
+            // but for now the user only asked for outfit/pose/location locks in UI.
+            // However, let's be safe and check if they are locked too.
+            const applyLighting = locked.has("lighting") ? undefined : fixed.lighting;
+            const applyCamera = locked.has("camera") ? undefined : fixed.camera;
+            const applyExpression = locked.has("expression") ? undefined : fixed.expression;
+            const applyHairstyle = locked.has("hairstyle") ? undefined : fixed.hairstyle;
+
+            // Note: rebuildPromptWithExtras currently only adds, doesn't remove/replace intelligently.
+            // If we want to support locking properly for extras, we might need a better helper.
+            // For now, we just don't add the new one if locked.
             newPrompt = rebuildPromptWithExtras(newPrompt, {
-                lighting: fixed.lighting,
-                camera: fixed.camera,
-                expression: fixed.expression,
-                hairstyle: fixed.hairstyle
+                lighting: applyLighting,
+                camera: applyCamera,
+                expression: applyExpression,
+                hairstyle: applyHairstyle
             });
 
             updateJob(index, {
                 prompt: newPrompt,
                 // Apply fixed values to the job fields so they are visible in UI
-                outfit: fixed.outfit,
-                pose: fixed.pose,
-                location: fixed.location,
-                lighting: fixed.lighting,
-                camera: fixed.camera,
-                expression: fixed.expression,
-                hairstyle: fixed.hairstyle,
+                // If locked, keep the old value
+                outfit: locked.has("outfit") ? job.outfit : fixed.outfit,
+                pose: locked.has("pose") ? job.pose : fixed.pose,
+                location: locked.has("location") ? job.location : fixed.location,
+                lighting: locked.has("lighting") ? job.lighting : fixed.lighting,
+                camera: locked.has("camera") ? job.camera : fixed.camera,
+                expression: locked.has("expression") ? job.expression : fixed.expression,
+                hairstyle: locked.has("hairstyle") ? job.hairstyle : fixed.hairstyle,
                 // Also store in ai_meta for reference
                 ai_meta: {
                     ...job.ai_meta,

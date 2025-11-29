@@ -1,6 +1,7 @@
-import os
+﻿import os
 import asyncio
 import random
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
@@ -35,7 +36,7 @@ OUTPUTS_DIR = os.getenv("OUTPUTS_DIR")
 RESOURCES_DIR = os.getenv("RESOURCES_DIR")
 PRESETS_DIR = os.getenv("PRESETS_DIR")
 
-# Listas de emergencia (Hardcode) para recursos vacíos
+# Listas de emergencia (Hardcode) para recursos vacÃ­os
 FALLBACK_OUTFITS = [
     "casual clothes",
     "bikini",
@@ -58,7 +59,7 @@ FALLBACK_LOCATIONS = [
 
 # Utilidades
 def sanitize_filename(name: str) -> str:
-    """Sanitiza nombres para uso en sistemas de archivos: minúsculas, '_' y '-'."""
+    """Sanitiza nombres para uso en sistemas de archivos: minÃºsculas, '_' y '-'."""
     base = (name or "").strip().lower().replace(" ", "_")
     allowed = set("abcdefghijklmnopqrstuvwxyz0123456789_-")
     cleaned = "".join(c for c in base if c in allowed)
@@ -100,6 +101,44 @@ async def canonicalize_character_name(name: str) -> str:
     except Exception:
         return sanitize_filename(name)
 
+def _find_best_match_info(lora_dir: Path, char_name: str) -> Path | None:
+    """
+    Búsqueda robusta de archivo .civitai.info.
+    Itera sobre todos los archivos y busca si el nombre del personaje (sanitizado)
+    está contenido en el nombre del archivo (sanitizado).
+    """
+    if not lora_dir or not lora_dir.exists():
+        return None
+    
+    # Sanitizar nombre del personaje: "Mitsuri Kanroji (Demon Slayer)" -> "mitsurikanrojidemonslayer"
+    # Eliminamos todo lo que no sea alfanumérico para maximizar coincidencia
+    clean_char = re.sub(r"[^a-z0-9]", "", char_name.lower())
+    
+    best_match = None
+    best_len = float("inf") # Preferimos el nombre más corto que contenga el match (menos basura)
+    
+    try:
+        for f in lora_dir.glob("*.civitai.info"):
+            # Sanitizar nombre de archivo: "Mitsuri_Kanroji_..." -> "mitsurikanrojidemonslayer..."
+            clean_file = re.sub(r"[^a-z0-9]", "", f.stem.lower())
+            
+            if clean_char in clean_file:
+                # Encontramos un candidato
+                # Si hay varios, podríamos usar heurísticas. Por ahora, el más corto suele ser el más exacto?
+                # O el que empiece igual?
+                # Vamos a preferir el que sea más corto, asumiendo que "Mitsuri Kanroji" es mejor que "Mitsuri Kanroji XL Turbo" si buscamos solo el primero.
+                # Pero cuidado, "Mitsuri" match "Mitsuri Kanroji".
+                # Aquí buscamos "Mitsuri Kanroji (Demon Slayer)".
+                
+                if len(clean_file) < best_len:
+                    best_len = len(clean_file)
+                    best_match = f
+    except Exception as e:
+        print(f"Error en búsqueda robusta: {e}")
+    
+    return best_match
+
+
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
     id: Optional[int] = None
@@ -136,7 +175,7 @@ class PlannerDraftItem(BaseModel):
     trigger_words: List[str] = []
     # Nuevo: permitir especificar cantidad de jobs deseados por personaje (opcional)
     batch_count: Optional[int] = None
-    # Distribución explícita por intensidad (opcional)
+    # DistribuciÃ³n explÃ­cita por intensidad (opcional)
     safe_count: Optional[int] = None
     ecchi_count: Optional[int] = None
     nsfw_count: Optional[int] = None
@@ -163,20 +202,20 @@ class PlannerExecutionRequest(BaseModel):
 class MagicFixRequest(BaseModel):
     prompt: str
 
-# Advertencias y configuración de entorno (inicio)
+# Advertencias y configuraciÃ³n de entorno (inicio)
 print(f"\033[33m[ENV] REFORGE_PATH: {REFORGE_PATH}\033[0m")
 print(f"\033[33m[ENV] OUTPUTS_DIR: {OUTPUTS_DIR}\033[0m")
 print(f"\033[33m[ENV] LORA_PATH: {LORA_PATH}\033[0m")
 
 if not REFORGE_PATH:
-    print("\033[33m[Advertencia] REFORGE_PATH no está definido en .env.\033[0m")
+    print("\033[33m[Advertencia] REFORGE_PATH no estÃ¡ definido en .env.\033[0m")
 else:
     rp = Path(REFORGE_PATH)
     if not rp.exists():
         print(f"\033[33m[Advertencia] REFORGE_PATH '{REFORGE_PATH}' no existe en el sistema.\033[0m")
 
 if not OUTPUTS_DIR:
-    print("\033[33m[Advertencia] OUTPUTS_DIR no está definido en .env.\033[0m")
+    print("\033[33m[Advertencia] OUTPUTS_DIR no estÃ¡ definido en .env.\033[0m")
 
 # [CONFIG] Log inicial del directorio de LoRAs
 try:
@@ -206,7 +245,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Montar directorio estático para servir imágenes generadas
+# Montar directorio estÃ¡tico para servir imÃ¡genes generadas
 try:
     if OUTPUTS_DIR and Path(OUTPUTS_DIR).exists():
         abs_out = str(Path(OUTPUTS_DIR).resolve())
@@ -269,7 +308,7 @@ async def presets_save(req: PresetSaveRequest):
 
 @app.get("/")
 async def root():
-    """Endpoint básico de salud del sistema."""
+    """Endpoint bÃ¡sico de salud del sistema."""
     return {
         "status": "online",
         "reforge_path": REFORGE_PATH,
@@ -307,8 +346,8 @@ async def local_lora_info(name: str):
 
 @app.get("/civitai/model-info")
 async def civitai_model_info(modelId: int, versionId: Optional[int] = None):
-    """Obtiene información de un modelo específico de Civitai usando cloudscraper.
-    Devuelve `imageUrls` (lista) y metadatos mínimos. Usa token si está configurado.
+    """Obtiene informaciÃ³n de un modelo especÃ­fico de Civitai usando cloudscraper.
+    Devuelve `imageUrls` (lista) y metadatos mÃ­nimos. Usa token si estÃ¡ configurado.
     """
     try:
         scraper = cloudscraper.create_scraper()
@@ -321,7 +360,7 @@ async def civitai_model_info(modelId: int, versionId: Optional[int] = None):
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=f"Civitai fallo: {resp.text}")
         data = resp.json()
-        # Intentar obtener imágenes desde la versión solicitada
+        # Intentar obtener imÃ¡genes desde la versiÃ³n solicitada
         versions = data.get("modelVersions") or data.get("versions") or []
         imgs: list = []
         if versionId and isinstance(versions, list):
@@ -329,7 +368,7 @@ async def civitai_model_info(modelId: int, versionId: Optional[int] = None):
                 if isinstance(v, dict) and int(v.get("id") or 0) == int(versionId):
                     imgs = v.get("images") or []
                     break
-        # Fallback: primera versión o toplevel
+        # Fallback: primera versiÃ³n o toplevel
         if not imgs and isinstance(versions, list) and versions:
             first_v = versions[0]
             if isinstance(first_v, dict):
@@ -375,7 +414,7 @@ async def delete_file(path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error borrando archivo: {e}")
 
-# Modelo y endpoint de galería
+# Modelo y endpoint de galerÃ­a
 class GalleryItem(BaseModel):
     filename: str
     path: str
@@ -385,7 +424,7 @@ class GalleryItem(BaseModel):
 
 @app.get("/gallery")
 async def get_gallery(request: Request, page: int = 1, limit: int = 100, character: Optional[str] = None, override_base: Optional[str] = None):
-    """Explora OUTPUTS_DIR y devuelve lista paginada de imágenes.
+    """Explora OUTPUTS_DIR y devuelve lista paginada de imÃ¡genes.
     - filename: nombre del archivo
     - path: ruta relativa dentro de OUTPUTS_DIR (usada para DELETE)
     - url: /files/<path> para servir en navegador
@@ -425,7 +464,7 @@ async def get_gallery(request: Request, page: int = 1, limit: int = 100, charact
                     # derivar personaje desde primer segmento
                     parts = rel_str.split("/")
                     char_name = parts[0] if parts else "unknown"
-                    # presentación amigable
+                    # presentaciÃ³n amigable
                     character_pretty = char_name.replace("_", " ")
                     ts = int(fpath.stat().st_mtime)
                     out.append(GalleryItem(
@@ -437,20 +476,20 @@ async def get_gallery(request: Request, page: int = 1, limit: int = 100, charact
                     ))
             return out
         all_items = await asyncio.to_thread(scan)
-        # filtro por personaje si se envía
+        # filtro por personaje si se envÃ­a
         if character and character.strip():
             cc = character.strip().lower()
             all_items = [it for it in all_items if it.character.lower() == cc]
         # ordenar por fecha desc
         all_items.sort(key=lambda x: x.timestamp, reverse=True)
-        # paginación simple
+        # paginaciÃ³n simple
         page = max(1, int(page))
         limit = max(1, min(500, int(limit)))
         start = (page - 1) * limit
         end = start + limit
         return JSONResponse(content=[it.dict() for it in all_items[start:end]])
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error escaneando galería: {e}")
+        raise HTTPException(status_code=500, detail=f"Error escaneando galerÃ­a: {e}")
 
 @app.get("/gallery/folders")
 async def get_gallery_folders():
@@ -512,7 +551,7 @@ async def system_open_folder(payload: dict):
         raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
     base = Path(OUTPUTS_DIR).resolve()
     rel = (payload.get("path") or "").strip()
-    # Permitir vacío o '.' para abrir el directorio base
+    # Permitir vacÃ­o o '.' para abrir el directorio base
     if not rel or rel == ".":
         try:
             import os as _os
@@ -549,7 +588,7 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
     id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
     """
     url = "https://civitai.com/api/v1/models"
-    # Mapear desde UI a valores válidos de Civitai
+    # Mapear desde UI a valores vÃ¡lidos de Civitai
     sort_map = {
         "Rating": "Highest Rated",
         "Downloads": "Most Downloaded",
@@ -611,11 +650,11 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
                 code = getattr(code, "status_code", None)
             except Exception:
                 code = None
-            print(f"[ERROR] Búsqueda fallida para '{q or ''}': {code}")
+            print(f"[ERROR] BÃºsqueda fallida para '{q or ''}': {code}")
             return JSONResponse(content=[])
         items = data.get("items", [])
         if not isinstance(items, list):
-            raise HTTPException(status_code=502, detail="Respuesta inválida de Civitai: 'items' no es lista.")
+            raise HTTPException(status_code=502, detail="Respuesta invÃ¡lida de Civitai: 'items' no es lista.")
 
         def normalize_item(item: dict) -> dict:
             # Campos base
@@ -623,15 +662,15 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
             name = item.get("name")
             tags = item.get("tags") if isinstance(item.get("tags"), list) else []
             stats_raw = item.get("stats") or {}
-            stats = dict(stats_raw)  # pasar tal cual, con pequeños fallbacks si existen en el item
+            stats = dict(stats_raw)  # pasar tal cual, con pequeÃ±os fallbacks si existen en el item
             model_versions = item.get("modelVersions") or []
-            # Fecha de creación/publicación
+            # Fecha de creaciÃ³n/publicaciÃ³n
             created_at = (
                 item.get("createdAt")
                 or item.get("publishedAt")
                 or (model_versions and (model_versions[0].get("createdAt") or model_versions[0].get("publishedAt")))
             )
-            # Fallback de claves frecuentes en stats si están fuera del objeto o faltan
+            # Fallback de claves frecuentes en stats si estÃ¡n fuera del objeto o faltan
             if "downloadCount" not in stats and item.get("downloadCount") is not None:
                 stats["downloadCount"] = item.get("downloadCount")
             if "thumbsUpCount" not in stats and item.get("thumbsUpCount") is not None:
@@ -639,7 +678,7 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
             if "rating" not in stats and item.get("rating") is not None:
                 stats["rating"] = item.get("rating")
             
-            # Recolectar imágenes (top-level y dentro de modelVersions)
+            # Recolectar imÃ¡genes (top-level y dentro de modelVersions)
             images: list[dict] = []
 
             for img in (item.get("images") or []):
@@ -683,15 +722,15 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
 
         normalized = [it for it in normalized if not is_non_anime(it)]
 
-        # Paginación: devolver SOLO la página solicitada
+        # PaginaciÃ³n: devolver SOLO la pÃ¡gina solicitada
 
-        # Clasificación IA (Groq) de categorías: Character, Pose, Clothing, Style, Concept
+        # ClasificaciÃ³n IA (Groq) de categorÃ­as: Character, Pose, Clothing, Style, Concept
         classified = normalized
 
-        # Heurística de respaldo para clasificar si Groq falla o no devuelve categoría válida
+        # HeurÃ­stica de respaldo para clasificar si Groq falla o no devuelve categorÃ­a vÃ¡lida
         allowed_categories = {"Character", "Pose", "Clothing", "Style", "Concept"}
         def classify_item(it: dict) -> str:
-            # Heurística estricta basada únicamente en tags
+            # HeurÃ­stica estricta basada Ãºnicamente en tags
             tl = [ (t or "").lower() for t in (it.get("tags") or []) ]
             if any(x in tl for x in ["character", "personaje", "waifu", "1girl"]):
                 return "Character"
@@ -762,14 +801,14 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
                     else:
                         it["ai_category"] = classify_item(it)
             except Exception as e:
-                print(f"[scan_civitai] Clasificación Groq falló: {e}. Aplicando heurística de respaldo.")
+                print(f"[scan_civitai] ClasificaciÃ³n Groq fallÃ³: {e}. Aplicando heurÃ­stica de respaldo.")
                 for it in classified:
                     it["ai_category"] = classify_item(it)
         else:
             for it in classified:
                 it["ai_category"] = classify_item(it)
 
-        # Enriquecer con existencia local y devolver TODOS los items (sin filtrar), por página
+        # Enriquecer con existencia local y devolver TODOS los items (sin filtrar), por pÃ¡gina
         base_dir = Path(OUTPUTS_DIR) if OUTPUTS_DIR else None
         try:
             if base_dir:
@@ -788,11 +827,11 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         print(f"[scan_civitai] HTTPException: {getattr(he, 'detail', he)}")
         raise
     except Exception as e:
-        # En modo búsqueda, devolver vacío para no romper la UI
+        # En modo bÃºsqueda, devolver vacÃ­o para no romper la UI
         if use_query:
-            print(f"[ERROR] Búsqueda fallida para '{q or ''}': {repr(e)}")
+            print(f"[ERROR] BÃºsqueda fallida para '{q or ''}': {repr(e)}")
             return JSONResponse(content=[])
-        print(f"[scan_civitai] Error de conexión/parseo: {repr(e)}")
+        print(f"[scan_civitai] Error de conexiÃ³n/parseo: {repr(e)}")
         raise HTTPException(status_code=502, detail=f"Error al consultar Civitai: {str(e)}")
 
 @app.post("/process-ai")
@@ -804,7 +843,7 @@ async def process_ai(req: ProcessRequest):
     if Groq is None:
         raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor.")
 
-    # Preparar entrada (máx 50 para reducir tokens)
+    # Preparar entrada (mÃ¡x 50 para reducir tokens)
     items_text = "\n".join([
         f"- {i.name} | tags: {', '.join(i.tags or [])}" for i in req.items[:50]
     ])
@@ -816,7 +855,7 @@ async def process_ai(req: ProcessRequest):
         "\"poses\":[{\"nombre\":\"string\",\"triggers\":[\"string\"]}]}"
     )
     user_prompt = (
-        f"Entrada (máx 50):\n{items_text}\n\n"
+        f"Entrada (mÃ¡x 50):\n{items_text}\n\n"
         "Instrucciones:\n- Extrae personajes y poses/acciones.\n"
         "- Normaliza nombres (sin emojis).\n- Incluye triggers concisos.\n- Devuelve SOLO JSON."
     )
@@ -856,9 +895,9 @@ async def process_ai(req: ProcessRequest):
 # Fase 3: Planificador de batalla
 
 def _read_lines(file_name: str) -> List[str]:
-    # Rutas SIEMPRE desde .env (disciplina de entorno). Si falta, devolvemos vacío con advertencia.
+    # Rutas SIEMPRE desde .env (disciplina de entorno). Si falta, devolvemos vacÃ­o con advertencia.
     if not RESOURCES_DIR:
-        print("[Advertencia] RESOURCES_DIR no está definido en .env. No se pueden cargar recursos.")
+        print("[Advertencia] RESOURCES_DIR no estÃ¡ definido en .env. No se pueden cargar recursos.")
         return []
     path = Path(RESOURCES_DIR) / file_name
     try:
@@ -874,10 +913,10 @@ QUALITY_TAGS = (
 
 @app.get("/planner/resources")
 async def planner_resources():
-    """Devuelve listas de recursos para planificación.
-    Incluye: outfits, poses, locations y además lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (visuals/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). También styles y concepts legacy.
+    """Devuelve listas de recursos para planificaciÃ³n.
+    Incluye: outfits, poses, locations y ademÃ¡s lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (visuals/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). TambiÃ©n styles y concepts legacy.
     """
-    # Lectura desde ambas rutas para máxima compatibilidad
+    # Lectura desde ambas rutas para mÃ¡xima compatibilidad
     outfits_top = _read_lines("outfits.txt")
     outfits_casual = _read_lines("wardrobe/casual.txt")
     outfits_lingerie = _read_lines("wardrobe/lingerie.txt")
@@ -899,7 +938,7 @@ async def planner_resources():
     poses = list(dict.fromkeys([x for x in (poses_top + poses_concepts) if x and x.strip()]))
     locations = list(dict.fromkeys([x for x in (locations_top + locations_concepts) if x and x.strip()]))
 
-    # Fallback de emergencia para evitar vacíos
+    # Fallback de emergencia para evitar vacÃ­os
     if not outfits:
         outfits = FALLBACK_OUTFITS
     if not poses:
@@ -936,7 +975,7 @@ async def resources_upscalers():
     return {"items": items}
 
 async def _get_atmospheres_for_character(character: str) -> List[str]:
-    """Intenta obtener 3 descripciones cortas de atmósfera/iluminación vía Groq (70B)."""
+    """Intenta obtener 3 descripciones cortas de atmÃ³sfera/iluminaciÃ³n vÃ­a Groq (70B)."""
     if not GROQ_API_KEY or Groq is None:
         return [
             "soft ambient light",
@@ -984,12 +1023,12 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
 async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int] = None, allow_extra_loras: Optional[bool] = False):
     """Genera 10 jobs por personaje con relleno INFALIBLE y enriquece contexto:
     - Intento IA (Groq) para sugerir combinaciones Outfit+Pose+Location.
-    - Validación y Fallback determinista: si IA falla o hay vacíos, se eligen aleatorios.
+    - ValidaciÃ³n y Fallback determinista: si IA falla o hay vacÃ­os, se eligen aleatorios.
     - Enriquecimiento Civitai: base_prompt, reference_images, recommended_params.
 
-    Devuelve compatiblemente "jobs" agregados y además "drafts" por personaje.
+    Devuelve compatiblemente "jobs" agregados y ademÃ¡s "drafts" por personaje.
     """
-    # Lectura desde nueva estructura jerárquica en RESOURCES_DIR
+    # Lectura desde nueva estructura jerÃ¡rquica en RESOURCES_DIR
     poses = _read_lines("concepts/poses.txt")
     locations = _read_lines("concepts/locations.txt")
     outfits_casual = _read_lines("wardrobe/casual.txt")
@@ -1005,7 +1044,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     if not all_outfits:
         all_outfits = FALLBACK_OUTFITS
 
-    # Fallbacks si los recursos están vacíos
+    # Fallbacks si los recursos estÃ¡n vacÃ­os
     if not poses:
         poses = FALLBACK_POSES
     if not locations:
@@ -1019,7 +1058,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     if not hairstyles:
         hairstyles = ["ponytail", "long hair"]
 
-    # Filtro simple para SAFE (evitar poses más explícitas).
+    # Filtro simple para SAFE (evitar poses mÃ¡s explÃ­citas).
     banned = {"spread legs", "straddling", "all fours"}
     safe_poses = [p for p in poses if not any(b in p.lower() for b in banned)] or poses
 
@@ -1031,8 +1070,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
             return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
         triggers = ", ".join(_clean_tags(trigger_words or [])) or sanitize_filename(character_name)
-        # Fallback base prompt cuando Civitai no está disponible
-        # Fallback base prompt cuando Civitai no está disponible
+        # Fallback base prompt cuando Civitai no estÃ¡ disponible
+        # Fallback base prompt cuando Civitai no estÃ¡ disponible
         base_prompt = ""
 
         token = os.getenv("CIVITAI_API_KEY")
@@ -1221,7 +1260,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             "camera": random.choice(camera) if camera else "front view",
         }
 
-    # Construcción de trabajos y borradores enriquecidos por personaje
+    # ConstrucciÃ³n de trabajos y borradores enriquecidos por personaje
     all_jobs: List[PlannerJob] = []
     drafts: List[dict] = []
 
@@ -1255,7 +1294,19 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             if le and str(le).strip():
                 return Path(le).resolve()
             return Path(re).resolve().parents[3] / "models" / "Lora"
-        info_path = _find_lora_info_path(char.character_name) or (_lora_dir() / f"{sanitize_filename(char.character_name)}.civitai.info").resolve()
+        
+        # Búsqueda robusta de .civitai.info usando el helper
+        lora_dir = _lora_dir()
+        info_path = _find_best_match_info(lora_dir, char.character_name)
+        
+        if not info_path:
+             # Fallback a búsqueda flexible antigua si falla la robusta (aunque la robusta es muy amplia)
+             base_name = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
+             candidates = list(lora_dir.glob(f"*{base_name}*.civitai.info"))
+             if candidates:
+                 info_path = candidates[0]
+             else:
+                 info_path = lora_dir / f"{sanitize_filename(char.character_name)}.civitai.info"
         official_triggers: list[str] = []
         try:
             if info_path.exists():
@@ -1273,20 +1324,27 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
         def _clean_tags(tags: List[str]) -> List[str]:
             banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
             return [t for t in (tags or []) if (t and str(t).strip() and str(t).strip().lower() not in banned)]
-        trigger = ", ".join(_clean_tags(official_triggers or (char.trigger_words or []))) or sanitize_filename(char.character_name)
+        
+        # Si tenemos triggers oficiales, usarlos tal cual (especialmente el primero que suele ser el principal)
+        if official_triggers:
+             # Usamos EXACTAMENTE el primer elemento completo, que suele ser la frase de activación completa.
+             # El usuario ha especificado explícitamente que NO quiere nada más.
+             trigger = official_triggers[0]
+        else:
+             trigger = ", ".join(_clean_tags(char.trigger_words or [])) or sanitize_filename(char.character_name)
         # Determinar cantidad de jobs solicitada
         requested_n = job_count if (isinstance(job_count, int) and job_count > 0) else (char.batch_count if (hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count and char.batch_count > 0) else 10)
 
         # 1) Intentar combos con IA
         combos = await groq_suggest_combos(char.character_name, official_triggers or (char.trigger_words or []), None, requested_n)
-        # 2) Validación y fallback determinista
+        # 2) ValidaciÃ³n y fallback determinista
         while len(combos) < requested_n:
             combos.append(random_combo())
-        # Garantía de no vacíos
+        # GarantÃ­a de no vacÃ­os
         validated: List[dict] = []
         def _bad_value(s: str) -> bool:
             low = (s or "").strip().lower()
-            return low in ("none", "null", "n/a", "na", "vacío", "empty", "undefined")
+            return low in ("none", "null", "n/a", "na", "vacÃ­o", "empty", "undefined")
         def _pick_outfit() -> str:
             pool = all_outfits
             return random.choice(pool) if pool else random.choice(FALLBACK_OUTFITS)
@@ -1306,7 +1364,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             l = _pick_location() if _bad_value(l_raw) or (l_raw.strip() == "") else l_raw.strip()
             li = (li_raw or "").strip()
             ca = (ca_raw or "").strip()
-            # Coherencia básica: evitar bikini en dungeon
+            # Coherencia bÃ¡sica: evitar bikini en dungeon
             if "dungeon" in (l or "").lower() and "bikini" in (o or "").lower():
                 o = "armor" if "armor" in [x.lower() for x in all_outfits] else "rags"
             # Garantizar string seguro
@@ -1319,7 +1377,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
         per_char_jobs_payload: List[dict] = []
         atmospheres: List[str] = await _get_atmospheres_for_character(char.character_name)
 
-        # Clasificar intensidad usando distribución explícita si viene en el payload; si no, proporcional al N solicitado
+        # Clasificar intensidad usando distribuciÃ³n explÃ­cita si viene en el payload; si no, proporcional al N solicitado
         def _clean_int(v: Optional[int]) -> int:
             try:
                 return int(v) if (v is not None and int(v) > 0) else 0
@@ -1343,15 +1401,15 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             else:
                 intensity = "NSFW"
             rating = "rating_safe" if intensity == "SAFE" else ("rating_questionable, cleavage" if intensity == "ECCHI" else "rating_explicit, nsfw, explicit")
-            # Lighting/Cámara: usar sugerencia IA si existe; si no, fallback y atmósfera
+            # Lighting/CÃ¡mara: usar sugerencia IA si existe; si no, fallback y atmÃ³sfera
             lighting_choice = (base.get("lighting") or "").strip() or (random.choice(lighting) if lighting else "soft lighting")
             atmo_choice = random.choice(atmospheres) if atmospheres else ""
             cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot"))
             expression_choice = random.choice(expressions) if expressions else "smile"
             hairstyle_choice = random.choice(hairstyles) if hairstyles else "ponytail"
             # quality_end removed
-            # Prompt incluye cámara, expresión, peinado y estilo/atmósfera además del triplete base
-            # Prompt incluye cámara, expresión, peinado y estilo/atmósfera además del triplete base
+            # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
+            # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
             parts = [
                 lora_tag,
                 trigger,
@@ -1380,7 +1438,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             seed = random.randint(0, 2_147_483_647)
             job_model = PlannerJob(character_name=char.character_name, prompt=prompt, seed=seed)
             per_char_jobs.append(job_model)
-            # Marcar visibilidad de IA en campos técnicos cuando provienen de la sugerencia
+            # Marcar visibilidad de IA en campos tÃ©cnicos cuando provienen de la sugerencia
             ai_meta = {}
             if (base.get("lighting") or "").strip():
                 ai_meta["lighting"] = "Sugerido por IA por coherencia"
@@ -1412,7 +1470,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             "jobs": per_char_jobs_payload,
         })
         all_jobs.extend(per_char_jobs)
-        # También agregamos payload extendido para la respuesta agregada
+        # TambiÃ©n agregamos payload extendido para la respuesta agregada
         if "all_jobs_payload" not in locals():
             all_jobs_payload = []
         all_jobs_payload.extend(per_char_jobs_payload)
@@ -1424,8 +1482,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
 
 @app.post("/planner/magicfix")
 async def planner_magicfix(req: MagicFixRequest):
-    """Sugiere SOLO una nueva combinación coherente de Outfit+Pose+Location.
-    No reescribe el prompt; mantiene la estructura técnica intacta en el cliente.
+    """Sugiere SOLO una nueva combinaciÃ³n coherente de Outfit+Pose+Location.
+    No reescribe el prompt; mantiene la estructura tÃ©cnica intacta en el cliente.
     Devuelve JSON: {"outfit": str, "pose": str, "location": str}
     """
     if not req.prompt or not req.prompt.strip():
@@ -1441,9 +1499,9 @@ async def planner_magicfix(req: MagicFixRequest):
 
     if not outfits or not poses or not locations:
         print("[MagicFix] ERROR: Resources empty!")
-        raise HTTPException(status_code=500, detail="Recursos insuficientes: outfits/poses/locations vacíos.")
+        raise HTTPException(status_code=500, detail="Recursos insuficientes: outfits/poses/locations vacÃ­os.")
 
-    # Fallback sin Groq: sugerir combinación aleatoria válida
+    # Fallback sin Groq: sugerir combinaciÃ³n aleatoria vÃ¡lida
     if not GROQ_API_KEY or Groq is None:
         print("[MagicFix] No Groq API Key. Using Fallback.")
         o = random.choice(outfits)
@@ -1460,15 +1518,15 @@ async def planner_magicfix(req: MagicFixRequest):
             "lighting": li,
             "camera": cam,
             "expression": exp,
-            "ai_reasoning": f"✨ IA: Fallback aplicado con combinación aleatoria coherente ({o} / {p} / {l}).",
+            "ai_reasoning": f"âœ¨ IA: Fallback aplicado con combinaciÃ³n aleatoria coherente ({o} / {p} / {l}).",
         }
 
-    # Con Groq: sugerir combinación coherente basada en el prompt y recursos
+    # Con Groq: sugerir combinaciÃ³n coherente basada en el prompt y recursos
     try:
         client = Groq(api_key=GROQ_API_KEY)
         system_prompt = (
-            "Eres un asistente de planificación para Stable Diffusion. "
-            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinación coherente y estéticamente agradable de Outfit+Pose+Location+Lighting+Camera+Expression que encaje con el personaje. "
+            "Eres un asistente de planificaciÃ³n para Stable Diffusion. "
+            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinaciÃ³n coherente y estÃ©ticamente agradable de Outfit+Pose+Location+Lighting+Camera+Expression que encaje con el personaje. "
             "NO reescribas el prompt completo y NO incluyas explicaciones. "
             'Devuelve SOLO JSON con formato EXACTO: {"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}.'
         )
@@ -1506,7 +1564,7 @@ async def planner_magicfix(req: MagicFixRequest):
                     "lighting": li,
                     "camera": cam,
                     "expression": exp,
-                    "ai_reasoning": f"✨ IA: Combinación sugerida por contexto del prompt ({o} / {p} / {l}).",
+                    "ai_reasoning": f"âœ¨ IA: CombinaciÃ³n sugerida por contexto del prompt ({o} / {p} / {l}).",
                 }
         except Exception:
             pass
@@ -1526,7 +1584,7 @@ async def planner_magicfix(req: MagicFixRequest):
             "lighting": li,
             "camera": cam,
             "expression": exp,
-            "ai_reasoning": f"✨ IA: Fallback aplicado con combinación aleatoria coherente ({o} / {p} / {l}).",
+            "ai_reasoning": f"âœ¨ IA: Fallback aplicado con combinaciÃ³n aleatoria coherente ({o} / {p} / {l}).",
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
@@ -1539,7 +1597,7 @@ class PlannerAnalyzeRequest(BaseModel):
 
 @app.post("/planner/analyze")
 async def planner_analyze(req: PlannerAnalyzeRequest):
-    print(f"🔍 [Backend] Analyze solicitado para: {req.character_name}")
+    print(f"ðŸ” [Backend] Analyze solicitado para: {req.character_name}")
     if not req.character_name or not req.character_name.strip():
         raise HTTPException(status_code=400, detail="character_name requerido")
     
@@ -1577,7 +1635,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
                 f"Outfits disponibles (ejemplo): {', '.join(outfits[:10])}\n"
                 f"Poses disponibles (ejemplo): {', '.join(poses[:10])}\n"
                 f"Locations disponibles (ejemplo): {', '.join(locations[:10])}\n"
-                "Responde en INGLÉS con SOLO JSON."
+                "Responde en Ingles con SOLO JSON."
             )
             completion = await groq_chat_with_fallbacks(
                 client,
@@ -1588,7 +1646,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
                 temperature=0.8,
             )
             content = completion.choices[0].message.content.strip()
-            print(f"🔍 [Backend] Groq Analyze Response: {content}")
+            print(f"ðŸ” [Backend] Groq Analyze Response: {content}")
             
             # Intentar extraer el objeto JSON
             start = content.find("{")
@@ -1613,7 +1671,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
             except Exception:
                 pass
         except Exception as e:
-            print(f"[planner/analyze] Groq falló: {e}")
+            print(f"[planner/analyze] Groq fallÃ³: {e}")
 
     # Fallback: 5 combinaciones aleatorias
     if not combos_sugeridos:
@@ -1703,7 +1761,7 @@ async def planner_analyze(req: PlannerAnalyzeRequest):
     })
 
 def get_lora_dir() -> Path | None:
-    # Prioridad: LORA_PATH explícita; fallback: 4 niveles desde REFORGE_PATH
+    # Prioridad: LORA_PATH explÃ­cita; fallback: 4 niveles desde REFORGE_PATH
     try:
         if LORA_PATH and str(LORA_PATH).strip():
             d = Path(LORA_PATH).resolve()
@@ -1760,9 +1818,9 @@ def _find_lora_file_stem(character_name: str) -> str | None:
     except Exception:
         return None
 
-# Nota: _parse_lora_names unificado y definido una sola vez más abajo para evitar duplicaciones.
+# Nota: _parse_lora_names unificado y definido una sola vez mÃ¡s abajo para evitar duplicaciones.
 
-# Nota: _lora_exists unificado y definido una sola vez más arriba para evitar duplicaciones.
+# Nota: _lora_exists unificado y definido una sola vez mÃ¡s arriba para evitar duplicaciones.
 # async def _maybe_download_lora(name: str) -> bool:
 #     # Sin metadata de URL en PlannerJob, registramos y omitimos descarga.
 #     _log(f"LoRA '{name}' no encontrado; no hay metadata para descargar. Se omite.")
@@ -1785,7 +1843,7 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
         except Exception:
             # Fallback seguro
             dest_dir = base_env / safe_key
-    # Intento de creación con saneamiento defensivo para Windows
+    # Intento de creaciÃ³n con saneamiento defensivo para Windows
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -1802,7 +1860,7 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
     try:
         date_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
-        # Si por alguna razón falla, usar carpeta base del personaje
+        # Si por alguna razÃ³n falla, usar carpeta base del personaje
         date_dir = dest_dir
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg = FACTORY_STATE.get("current_config") or {}
@@ -1830,9 +1888,9 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
         pass
     return str(target)
 
-# [DEPRECATED] produce_jobs (v1) eliminado. Usar produce_jobs para producción asíncrona con aprovisionamiento.
+# [DEPRECATED] produce_jobs (v1) eliminado. Usar produce_jobs para producciÃ³n asÃ­ncrona con aprovisionamiento.
 
-# ===== FASE 4: Motor de Producción =====
+# ===== FASE 4: Motor de ProducciÃ³n =====
 from fastapi import BackgroundTasks
 import base64
 from datetime import datetime
@@ -1847,7 +1905,7 @@ class ExecuteRequest(BaseModel):
     jobs: List[PlannerJob]
     resources_meta: Optional[List[ResourceMeta]] = []
 
-# Nuevo: configuración por personaje (steps/cfg)
+# Nuevo: configuraciÃ³n por personaje (steps/cfg)
 class GroupConfigItem(BaseModel):
     character_name: str
     cfg_scale: Optional[float] = None
@@ -1860,7 +1918,7 @@ class GroupConfigItem(BaseModel):
     batch_size: Optional[int] = None
     adetailer: Optional[bool] = None
     adetailer_model: Optional[str] = None
-    # Nuevos controles técnicos avanzados
+    # Nuevos controles tÃ©cnicos avanzados
     vae: Optional[str] = None
     clip_skip: Optional[int] = None
     # Hires Fix y sampler/upscaler/checkpoint
@@ -1876,7 +1934,7 @@ class ExecuteV2Request(BaseModel):
     resources_meta: Optional[List[ResourceMeta]] = []
     group_config: Optional[List[GroupConfigItem]] = []
 
-# Estado global de Fábrica (consulta vía /factory/status)
+# Estado global de FÃ¡brica (consulta vÃ­a /factory/status)
 FACTORY_STATE: Dict[str, Any] = {
     "is_active": False,
     "current_job_index": 0,
@@ -1891,7 +1949,7 @@ FACTORY_STATE: Dict[str, Any] = {
 def _log(msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     FACTORY_STATE["logs"].append(f"[{ts}] {msg}")
-    # Limitar tamaño de log para no crecer indefinidamente
+    # Limitar tamaÃ±o de log para no crecer indefinidamente
     if len(FACTORY_STATE["logs"]) > 400:
         FACTORY_STATE["logs"] = FACTORY_STATE["logs"][-300:]
 
@@ -1903,7 +1961,7 @@ async def reforge_progress():
     try:
         return await get_progress()
     except Exception as e:
-        # Si falla, devolver estructura vacía para no romper frontend
+        # Si falla, devolver estructura vacÃ­a para no romper frontend
         return {"progress": 0, "eta_relative": 0, "state": {"job": "", "job_no": 0, "job_count": 0}}
 
 async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[GroupConfigItem]] = None):
@@ -1923,7 +1981,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         name = (gc.character_name or "").strip()
         if name:
             cfg_map[name] = gc
-    _log(f"Producción iniciada: {len(jobs)} trabajos.")
+    _log(f"ProducciÃ³n iniciada: {len(jobs)} trabajos.")
     for idx, job in enumerate(jobs, start=1):
         if FACTORY_STATE.get("stop_requested"):
             _log("Parada de emergencia solicitada. Deteniendo cola.")
@@ -1945,9 +2003,9 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         final_prompt = job.prompt
         extra_loras = gc.extra_loras if gc and isinstance(gc.extra_loras, list) else []
         if extra_loras:
-            # Formato esperado: "nombre_archivo" (sin extensión ni ruta, ya que ReForge lo busca por nombre)
-            # Se asume peso 0.7 por defecto si no se especifica, pero el frontend enviará strings formateados si es necesario.
-            # Aquí el frontend enviará strings como "pixel_art_v2:0.8" o simplemente "pixel_art_v2".
+            # Formato esperado: "nombre_archivo" (sin extensiÃ³n ni ruta, ya que ReForge lo busca por nombre)
+            # Se asume peso 0.7 por defecto si no se especifica, pero el frontend enviarÃ¡ strings formateados si es necesario.
+            # AquÃ­ el frontend enviarÃ¡ strings como "pixel_art_v2:0.8" o simplemente "pixel_art_v2".
             # Nosotros envolvemos en <lora:...>
             lora_blocks = []
             for l in extra_loras:
@@ -2007,7 +2065,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             hires_str = f"ON (x{hr_scale})" if enable_hr else "OFF"
             bs = options.get("sd_batch_size") if isinstance(options, dict) else None
             bs = bs if isinstance(bs, int) else 1
-            # Persistir prompt y configuración actual
+            # Persistir prompt y configuraciÃ³n actual
             FACTORY_STATE["current_prompt"] = final_prompt
             FACTORY_STATE["current_negative_prompt"] = getattr(job, "negative_prompt", None)
             # Override de checkpoint por job si se especifica
@@ -2028,7 +2086,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             # Determinar estado real de Hires Fix para el log
             hr_override = (gc.hires_fix if (gc and isinstance(gc.hires_fix, bool)) else None)
             actual_hr = hr_override if hr_override is not None else enable_hr
-            # Si hay override de escala desde el group_config, úsalo para el log
+            # Si hay override de escala desde el group_config, Ãºsalo para el log
             hr_scale_override = (gc.upscale_by if (gc and isinstance(gc.upscale_by, (int, float))) else None)
             def _coerce_scale(val):
                 try:
@@ -2039,7 +2097,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             hr_display = _coerce_scale(hr_scale_override) if (actual_hr and hr_scale_override is not None) else (_coerce_scale(raw_hr_scale) if actual_hr else None)
             hires_str = f"ON (x{hr_display})" if actual_hr else "OFF"
             try:
-                _log(f"Hires Fix override: enable={actual_hr}, scale_override={hr_scale_override if hr_scale_override is not None else '—'}, raw_scale={raw_hr_scale if raw_hr_scale is not None else '—'}")
+                _log(f"Hires Fix override: enable={actual_hr}, scale_override={hr_scale_override if hr_scale_override is not None else 'â€”'}, raw_scale={raw_hr_scale if raw_hr_scale is not None else 'â€”'}")
             except Exception:
                 pass
 
@@ -2063,7 +2121,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
                 _log(f"ADetailer: ON (model={gc.adetailer_model or 'face_yolov8n.pt'})")
             _log(f"Generando imagen {idx}/{len(jobs)}...")
             
-            # Overrides de Hires Fix y Denoising según group_config
+            # Overrides de Hires Fix y Denoising segÃºn group_config
             dn_override = (float(gc.denoising_strength) if (gc and isinstance(gc.denoising_strength, (int, float))) else None)
             hr_steps_override = (gc.hires_steps if (gc and isinstance(gc.hires_steps, int)) else None)
             
@@ -2082,8 +2140,8 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
                 })
 
             # Upscaler override (si existe en group config o se pasa como extra)
-            # Nota: call_txt2img debe soportar hr_upscaler si queremos cambiarlo dinámicamente.
-            # Por ahora solo logueamos, la implementación completa requeriría actualizar call_txt2img.
+            # Nota: call_txt2img debe soportar hr_upscaler si queremos cambiarlo dinÃ¡micamente.
+            # Por ahora solo logueamos, la implementaciÃ³n completa requerirÃ­a actualizar call_txt2img.
             
             # Overrides avanzados: VAE y Clip Skip (CLIP_stop_at_last_layers)
             vae_override = (gc.vae if (gc and isinstance(gc.vae, str) and gc.vae.strip()) else None)
@@ -2134,13 +2192,13 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
                     )
                 else:
                     raise
-            # Si se solicitó STOP mientras esperábamos respuesta, no continuar.
+            # Si se solicitÃ³ STOP mientras esperÃ¡bamos respuesta, no continuar.
             if FACTORY_STATE.get("stop_requested"):
                 _log("Parada detectada tras la respuesta. Omitiendo guardado y cancelando cola.")
                 break
             images = data.get("images", []) if isinstance(data, dict) else []
             if not images:
-                _log("ReForge no devolvió imágenes.")
+                _log("ReForge no devolviÃ³ imÃ¡genes.")
                 continue
             last_b64 = images[0]
             # Guardado con posible override de ruta basado en env tokens
@@ -2150,17 +2208,17 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             FACTORY_STATE["last_image_b64"] = f"data:image/png;base64,{last_b64}"
             _log(f"[INFO] Imagen guardada en: {path}")
         except Exception as e:
-            _log(f"Error en generación: {e}")
+            _log(f"Error en generaciÃ³n: {e}")
             continue
     FACTORY_STATE["is_active"] = False
-    _log("Producción finalizada.")
+    _log("ProducciÃ³n finalizada.")
 
 def schedule_production(jobs: List[PlannerJob]):
     try:
         loop = asyncio.get_event_loop()
         loop.create_task(produce_jobs(jobs))
     except RuntimeError:
-        # Si no hay loop (entornos específicos), ejecutar en to_thread
+        # Si no hay loop (entornos especÃ­ficos), ejecutar en to_thread
         asyncio.run(produce_jobs(jobs))
 
 async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[ResourceMeta]] = None, group_config: Optional[List[GroupConfigItem]] = None):
@@ -2175,7 +2233,7 @@ async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[Reso
         "current_config": None,
     })
     _log("Iniciando aprovisionamiento de LoRAs...")
-    # Normalización robusta de resources_meta (dicts/objetos) y filtrado por URL válida
+    # NormalizaciÃ³n robusta de resources_meta (dicts/objetos) y filtrado por URL vÃ¡lida
     normalized = []
     try:
         raw_list = resources or []
@@ -2229,10 +2287,10 @@ async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[Reso
         try:
             ok = await ensure_lora(char, filename, download_url, _log)
         except Exception as e:
-            _log(f"❌ Error de conexión con Civitai para {safe_fname}: {e}")
+            _log(f"âŒ Error de conexiÃ³n con Civitai para {safe_fname}: {e}")
             ok = False
         if not ok:
-            _log(f"❌ Error descargando {char}. Saltando sus trabajos.")
+            _log(f"âŒ Error descargando {char}. Saltando sus trabajos.")
             failed.add(char)
         else:
             succeeded.add(char)
@@ -2240,25 +2298,25 @@ async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[Reso
     activos = len(filtered_jobs)
     omitidos = len(failed)
     FACTORY_STATE["total_jobs"] = activos
-    _log(f"Producción ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
+    _log(f"ProducciÃ³n ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
     if activos == 0:
         FACTORY_STATE["is_active"] = False
         _log("No hay trabajos ejecutables tras aprovisionamiento.")
         return
-    _log("Aprovisionamiento completado. Iniciando generación...")
+    _log("Aprovisionamiento completado. Iniciando generaciÃ³n...")
     await produce_jobs(filtered_jobs, group_config)
 
 @app.post("/planner/execute")
 async def execute_plan(payload: ExecuteRequest, background_tasks: BackgroundTasks):
     """
-    Endpoint V1 (legacy): No soporta configuración por personaje.
+    Endpoint V1 (legacy): No soporta configuraciÃ³n por personaje.
     """
     if FACTORY_STATE["is_active"]:
-        raise HTTPException(status_code=400, detail="Fábrica ocupada")
+        raise HTTPException(status_code=400, detail="FÃ¡brica ocupada")
     
     # Validar jobs
     if not payload.jobs:
-        raise HTTPException(status_code=400, detail="Lista de jobs vacía")
+        raise HTTPException(status_code=400, detail="Lista de jobs vacÃ­a")
 
     # Iniciar proceso en background
     background_tasks.add_task(execute_pipeline, payload.jobs, payload.resources_meta or [], [])
@@ -2267,13 +2325,13 @@ async def execute_plan(payload: ExecuteRequest, background_tasks: BackgroundTask
 @app.post("/planner/execute_v2")
 async def execute_plan_v2(payload: ExecuteV2Request, background_tasks: BackgroundTasks):
     """
-    Endpoint V2: Soporta configuración por personaje (steps, cfg, hires fix, etc).
+    Endpoint V2: Soporta configuraciÃ³n por personaje (steps, cfg, hires fix, etc).
     """
     if FACTORY_STATE["is_active"]:
-        raise HTTPException(status_code=400, detail="Fábrica ocupada")
+        raise HTTPException(status_code=400, detail="FÃ¡brica ocupada")
     
     if not payload.jobs:
-        raise HTTPException(status_code=400, detail="Lista de jobs vacía")
+        raise HTTPException(status_code=400, detail="Lista de jobs vacÃ­a")
 
     background_tasks.add_task(execute_pipeline, payload.jobs, payload.resources_meta or [], payload.group_config or [])
     return {"status": "started", "total_jobs": len(payload.jobs), "version": "v2"}
@@ -2336,10 +2394,10 @@ async def reforge_vaes():
         return {"names": names}
     except httpx.HTTPStatusError as e:
         status = e.response.status_code if getattr(e, "response", None) else None
-        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        message = "No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). AsegÃºrate de iniciarlo con --api."
         raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError:
-        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
@@ -2351,17 +2409,17 @@ async def reforge_upscalers():
         return {"names": names}
     except httpx.HTTPStatusError as e:
         status = e.response.status_code if getattr(e, "response", None) else None
-        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        message = "No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). AsegÃºrate de iniciarlo con --api."
         raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError:
-        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
 
 @app.get("/reforge/options")
 async def reforge_options():
-    """Lee configuración actual simplificada: VAE y Clip Skip."""
+    """Lee configuraciÃ³n actual simplificada: VAE y Clip Skip."""
     try:
         opts = await get_options()
         current_vae = None
@@ -2375,10 +2433,10 @@ async def reforge_options():
         }
     except httpx.HTTPStatusError as e:
         status = e.response.status_code if getattr(e, "response", None) else None
-        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        message = "No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). AsegÃºrate de iniciarlo con --api."
         raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError:
-        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
@@ -2392,10 +2450,10 @@ async def reforge_set_checkpoint(req: CheckpointRequest):
         return result
     except httpx.HTTPStatusError as e:
         status = e.response.status_code if getattr(e, "response", None) else None
-        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        message = "No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). AsegÃºrate de iniciarlo con --api."
         raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
 
@@ -2433,9 +2491,9 @@ async def dream(req: DreamRequest):
 
 @app.post("/generate")
 async def generate(payload: GenerateRequest):
-    """Genera imagen vía ReForge (txt2img) con posibilidad de overrides."""
+    """Genera imagen vÃ­a ReForge (txt2img) con posibilidad de overrides."""
     try:
-        # Logs previos a la generación (transparencia)
+        # Logs previos a la generaciÃ³n (transparencia)
         cfg = payload.cfg_scale if payload.cfg_scale is not None else 7
         _log(f"Enviando a ReForge: [Seed N/A] Prompt: {payload.prompt}")
         options = await get_options()
@@ -2460,10 +2518,10 @@ async def generate(payload: GenerateRequest):
         return JSONResponse(content={"images": images, "info": info})
     except httpx.HTTPStatusError as e:
         status = e.response.status_code if getattr(e, "response", None) else None
-        message = "No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). Asegúrate de iniciarlo con --api."
+        message = "No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api." if status == 404 else f"Error al contactar ReForge (status {status}). AsegÃºrate de iniciarlo con --api."
         raise HTTPException(status_code=502, detail=message)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail="No se detecta ReForge. Asegúrate de iniciarlo con el argumento --api.")
+        raise HTTPException(status_code=502, detail="No se detecta ReForge. AsegÃºrate de iniciarlo con el argumento --api.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado al generar: {str(e)}")
 
@@ -2476,7 +2534,7 @@ async def save_files(payload: dict):
     """
     out = payload.get("output")
     if not out or not isinstance(out, dict):
-        raise HTTPException(status_code=400, detail="Formato inválido: 'output' requerido.")
+        raise HTTPException(status_code=400, detail="Formato invÃ¡lido: 'output' requerido.")
     if not REFORGE_PATH:
         raise HTTPException(status_code=400, detail="REFORGE_PATH no configurado en .env.")
 
@@ -2502,12 +2560,12 @@ async def save_files(payload: dict):
                 ]
                 if not nombre:
                     return None
-                # Consolidar todos los triggers en una sola línea
+                # Consolidar todos los triggers en una sola lÃ­nea
                 prefix = ", ".join(triggers) if triggers else ""
                 if prefix:
                     return f"{prefix}, {nombre}, {quality_tags}"
                 else:
-                    # Si no hay triggers, aún guardamos nombre + calidad
+                    # Si no hay triggers, aÃºn guardamos nombre + calidad
                     return f"{nombre}, {quality_tags}"
 
             personajes_lines = [l for l in (make_line(e) for e in personajes) if l]
@@ -2565,17 +2623,17 @@ async def download_lora(req: DownloadLoraRequest):
             # Usar el nombre proporcionado (que viene de Civitai) o fallback
             filename = _safe_name(req.filename or "downloaded_lora.safetensors")
             
-            # ... resto del código ...
+            # ... resto del cÃ³digo ...
             char = Path(filename).stem
             ok, reason = await ensure_lora(char, filename, req.url, _log)
             if not ok:
                 raise HTTPException(status_code=502, detail=f"No se pudo descargar/asegurar LoRA: {reason}")
             
             # Descargar metadata .civitai.info si es posible
-            # Intentamos inferir el ID del modelo desde la URL o el request si lo tuviéramos
-            # Por ahora, ensure_lora ya hace un trabajo básico, pero idealmente deberíamos
-            # llamar a civitai_download_info si tuviéramos el ID.
-            # Como simplificación, confiamos en que ensure_lora maneje lo básico.
+            # Intentamos inferir el ID del modelo desde la URL o el request si lo tuviÃ©ramos
+            # Por ahora, ensure_lora ya hace un trabajo bÃ¡sico, pero idealmente deberÃ­amos
+            # llamar a civitai_download_info si tuviÃ©ramos el ID.
+            # Como simplificaciÃ³n, confiamos en que ensure_lora maneje lo bÃ¡sico.
             
             lora_dir = get_lora_dir()
             saved = str((lora_dir / filename).resolve()) if lora_dir else filename
@@ -2589,12 +2647,12 @@ async def download_lora(req: DownloadLoraRequest):
 
 @app.get("/lora/verify")
 async def verify_lora(filename: str):
-    """Verifica si existe un archivo LoRA específico por su nombre de archivo exacto."""
+    """Verifica si existe un archivo LoRA especÃ­fico por su nombre de archivo exacto."""
     lora_dir = get_lora_dir()
     if not lora_dir or not lora_dir.exists():
         return {"exists": False}
     
-    # Sanitizar mínimamente para evitar path traversal
+    # Sanitizar mÃ­nimamente para evitar path traversal
     safe_name = filename.replace("/", "").replace("\\", "")
     file_path = lora_dir / safe_name
     info_path = file_path.with_suffix(".civitai.info")
@@ -2630,7 +2688,7 @@ async def download_checkpoint(req: DownloadCheckpointRequest):
     async def _run() -> dict:
         try:
             base = Path(REFORGE_PATH).resolve()
-            # Checkpoints están en models/Stable-diffusion
+            # Checkpoints estÃ¡n en models/Stable-diffusion
             ckpt_dir = base.parents[1] / "models" / "Stable-diffusion"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             filename = _safe_name(req.filename or "downloaded_checkpoint.safetensors")
@@ -2683,9 +2741,9 @@ async def delete_local_lora(req: DeleteLoraRequest):
         lora_dir = base.parents[1] / "models" / "Lora"
         lora_dir.mkdir(parents=True, exist_ok=True)
         target = (lora_dir / req.filename).resolve()
-        # prevención de path traversal
+        # prevenciÃ³n de path traversal
         if lora_dir.resolve() not in target.parents:
-            raise HTTPException(status_code=400, detail="Ruta inválida")
+            raise HTTPException(status_code=400, detail="Ruta invÃ¡lida")
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         target.unlink()
@@ -2695,22 +2753,11 @@ async def delete_local_lora(req: DeleteLoraRequest):
 
 
 
-# get_lora_dir centralizado en la sección superior. Esta definición duplicada ha sido eliminada para unificar rutas.
-
-def _parse_lora_names(prompt: str) -> List[str]:
-    names: List[str] = []
-    p = (prompt or "")
-    # Formatos esperados: <lora:NAME> o <lora:NAME:WEIGHT>
-    import re
-    for m in re.finditer(r"<lora:([a-zA-Z0-9_\-\.]+)(?::[0-9\.]+)?>", p):
-        names.append(m.group(1))
-    return names
+# get_lora_dir centralizado en la secciÃ³n superior. Esta definiciÃ³n duplicada ha sido eliminada para unificar rutas.
 
 def _lora_exists(name: str) -> bool:
     d = get_lora_dir()
-    if not d:
-        return False
-    if not d.exists():
+    if not d or not d.exists():
         return False
     name_low = name.strip().lower()
     for f in d.glob("*.safetensors"):
@@ -2723,7 +2770,7 @@ async def _maybe_download_lora(name: str) -> bool:
     _log(f"LoRA '{name}' no encontrado; no hay metadata para descargar. Se omite.")
     return False
 
-# Eliminada duplicación de _save_image: se usa la versión única definida arriba.
+# Eliminada duplicaciÃ³n de _save_image: se usa la versiÃ³n Ãºnica definida arriba.
 
 
 def schedule_production(jobs: List[PlannerJob]):
@@ -2731,7 +2778,7 @@ def schedule_production(jobs: List[PlannerJob]):
         loop = asyncio.get_event_loop()
         loop.create_task(produce_jobs(jobs))
     except RuntimeError:
-        # Si no hay loop (entornos específicos), ejecutar en to_thread
+        # Si no hay loop (entornos especÃ­ficos), ejecutar en to_thread
         asyncio.run(produce_jobs(jobs))
 
 
@@ -2764,13 +2811,13 @@ async def factory_status(limit: int = 50):
 @app.post("/factory/stop")
 async def factory_stop():
     FACTORY_STATE["stop_requested"] = True
-    _log("Parada de emergencia activada por el usuario. Solicitando interrupción a Stable Diffusion...")
+    _log("Parada de emergencia activada por el usuario. Solicitando interrupciÃ³n a Stable Diffusion...")
     try:
         data = await interrupt_generation()
         status = data.get("status", "ok") if isinstance(data, dict) else "ok"
-        _log(f"Interrupción enviada a ReForge: {status}")
+        _log(f"InterrupciÃ³n enviada a ReForge: {status}")
     except Exception as e:
-        _log(f"Error al interrumpir la generación en ReForge: {e}")
+        _log(f"Error al interrumpir la generaciÃ³n en ReForge: {e}")
     return {"status": "stopping"}
 class MarketingGenerateRequest(BaseModel):
     prompt_used: Optional[str] = None
@@ -2860,7 +2907,7 @@ async def civitai_download_info(payload: dict):
             if resp.status_code == 200:
                 data = resp.json()
         if not data:
-            raise HTTPException(status_code=502, detail="Civitai no devolvió datos")
+            raise HTTPException(status_code=502, detail="Civitai no devolviÃ³ datos")
         target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"status": "downloaded", "path": str(target)}
     except HTTPException:
@@ -2878,11 +2925,11 @@ def _read_resource_lines(rel_path: str) -> List[str]:
     except Exception:
         return []
 
-# Busca la función planner_magicfix y REEMPLÁZALA completamente por esto:
+# Busca la funciÃ³n planner_magicfix y REEMPLÃZALA completamente por esto:
 
 @app.post("/planner/magicfix")
 async def planner_magicfix(req: MagicFixRequest):
-    """Genera una escena VÍVIDA y COMPLETA (Outfit, Pose, Location, Light, Cam, Expr)."""
+    """Genera una escena VÃVIDA y COMPLETA (Outfit, Pose, Location, Light, Cam, Expr)."""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt requerido")
     
@@ -2903,13 +2950,13 @@ async def planner_magicfix(req: MagicFixRequest):
             "lighting": random.choice(lighting) if lighting else "cinematic lighting",
             "camera": random.choice(camera) if camera else "cowboy shot",
             "expression": random.choice(expressions) if expressions else "blush",
-            "ai_reasoning": "🎲 Fallback Aleatorio (IA no disponible)"
+            "ai_reasoning": "ðŸŽ² Fallback Aleatorio (IA no disponible)"
         }
 
     if not GROQ_API_KEY or Groq is None:
         return get_random()
 
-    # 3. Generación IA con Temperatura Alta
+    # 3. GeneraciÃ³n IA con Temperatura Alta
     try:
         client = Groq(api_key=GROQ_API_KEY)
         system_prompt = (
@@ -2925,7 +2972,7 @@ async def planner_magicfix(req: MagicFixRequest):
         completion = await groq_chat_with_fallbacks(
             client,
             [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            temperature=0.95  # <--- CREATIVIDAD MÁXIMA
+            temperature=0.95  # <--- CREATIVIDAD MÃXIMA
         )
         
         content = completion.choices[0].message.content.strip()
@@ -2941,7 +2988,7 @@ async def planner_magicfix(req: MagicFixRequest):
             "lighting": data.get("lighting") or random.choice(lighting),
             "camera": data.get("camera") or random.choice(camera),
             "expression": data.get("expression") or random.choice(expressions),
-            "ai_reasoning": "✨ Destino Alterado por IA"
+            "ai_reasoning": "âœ¨ Destino Alterado por IA"
         }
     except Exception as e:
         print(f"MagicFix Error: {e}")
@@ -2964,7 +3011,7 @@ async def magic_fix_endpoint(req: MagicFixRequest):
             "lighting": random.choice(lighting) if lighting else "soft lighting",
             "camera": random.choice(camera) if camera else "cowboy shot",
             "expression": random.choice(expressions) if expressions else "smile",
-            "ai_reasoning": "🎲 Destino Aleatorio (IA no disponible)"
+            "ai_reasoning": "ðŸŽ² Destino Aleatorio (IA no disponible)"
         }
 
     # 3. Consultar a la IA (Plan A)
@@ -2982,7 +3029,7 @@ async def magic_fix_endpoint(req: MagicFixRequest):
             "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\"}"
         )
         
-        # Añadir aleatoriedad al prompt del usuario para evitar caché de la IA
+        # AÃ±adir aleatoriedad al prompt del usuario para evitar cachÃ© de la IA
         seed_noise = str(random.randint(0, 99999))
         user_prompt = f"Current Tags: {req.prompt}\nSeed: {seed_noise}\nTask: Remix this into a new scenario."
 
@@ -3017,9 +3064,62 @@ async def magic_fix_endpoint(req: MagicFixRequest):
             "lighting": data.get("lighting") or (random.choice(lighting) if lighting else "soft lighting"),
             "camera": data.get("camera") or (random.choice(camera) if camera else "cowboy shot"),
             "expression": data.get("expression") or (random.choice(expressions) if expressions else "smile"),
-            "ai_reasoning": "✨ Destino Alterado por IA"
+            "ai_reasoning": "âœ¨ Destino Alterado por IA"
         }
         
     except Exception as e:
         print(f"MagicFix Error: {e}")
         return get_random()
+
+@app.get("/local/lora-info")
+async def local_lora_info(name: str):
+    """Lee el archivo .civitai.info asociado a un LoRA local y devuelve sus metadatos."""
+    if not name:
+        raise HTTPException(status_code=400, detail="name requerido")
+    
+    lora_dir = get_lora_dir()
+    if not lora_dir or not lora_dir.exists():
+        raise HTTPException(status_code=404, detail="Directorio de LoRAs no encontrado")
+
+    # Intentar encontrar el archivo .safetensors primero para asegurar el nombre base correcto
+    base_name = Path(name).stem
+    
+    # Búsqueda robusta usando el helper
+    info_path = _find_best_match_info(lora_dir, name)
+    
+    if not info_path:
+        # Intentar búsqueda flexible antigua
+        candidates = list(lora_dir.glob(f"*{base_name}*.civitai.info"))
+        if candidates:
+            info_path = candidates[0]
+        else:
+            return {"trainedWords": [], "name": base_name, "baseModel": None}
+
+    try:
+        text = info_path.read_text(encoding="utf-8")
+        data = json.loads(text)
+        
+        # Flatten trainedWords if necessary (sometimes it's a list of lists)
+        raw_words = data.get("trainedWords", [])
+        trained_words = []
+        if isinstance(raw_words, list):
+            for item in raw_words:
+                if isinstance(item, list):
+                    trained_words.extend([str(w) for w in item if w])
+                elif isinstance(item, str):
+                    trained_words.append(item)
+                else:
+                    trained_words.append(str(item))
+        
+        return {
+            "trainedWords": trained_words,
+            "name": data.get("name"),
+            "baseModel": data.get("baseModel") or data.get("base_model"),
+            "id": data.get("id"),
+            "modelId": data.get("modelId") or data.get("model_id"),
+            "imageUrls": data.get("images") or []
+        }
+    except Exception as e:
+        print(f"Error leyendo info de {name}: {e}")
+        return {"trainedWords": [], "name": base_name, "error": str(e)}
+
