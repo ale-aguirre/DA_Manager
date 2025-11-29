@@ -2567,9 +2567,9 @@ async def download_lora(req: DownloadLoraRequest):
             
             # ... resto del código ...
             char = Path(filename).stem
-            ok = await ensure_lora(char, filename, req.url, _log)
+            ok, reason = await ensure_lora(char, filename, req.url, _log)
             if not ok:
-                raise HTTPException(status_code=502, detail="No se pudo descargar/asegurar LoRA")
+                raise HTTPException(status_code=502, detail=f"No se pudo descargar/asegurar LoRA: {reason}")
             
             # Descargar metadata .civitai.info si es posible
             # Intentamos inferir el ID del modelo desde la URL o el request si lo tuviéramos

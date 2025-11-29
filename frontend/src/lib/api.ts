@@ -466,7 +466,7 @@ export interface LoraVerifyResponse {
 }
 
 export async function getLoraVerify(filename: string): Promise<LoraVerifyResponse> {
-  const res = await fetch(`${BASE_URL}/lora/verify?filename=${encodeURIComponent(filename)}`);
+  const res = await fetch(`${BASE_URL}/lora/verify?filename=${encodeURIComponent(filename)}`, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Failed to verify LoRA: ${text}`);

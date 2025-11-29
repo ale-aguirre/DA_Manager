@@ -10,7 +10,7 @@ import re
 class DownloadError(Exception):
     pass
 
-async def ensure_lora(character_name: str, filename: str, download_url: str, on_log: Optional[Callable[[str], None]] = None) -> bool:
+async def ensure_lora(character_name: str, filename: str, download_url: str, on_log: Optional[Callable[[str], None]] = None) -> tuple[bool, str]:
     """
     Asegura que el archivo LoRA exista en disco. Si no existe, lo descarga usando cloudscraper en un hilo dedicado con progreso por chunks.
     - Ubicación de destino: LORA_PATH (prioridad) o fallback REFORGE_PATH/../../models/Lora
@@ -19,15 +19,18 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
     - Timeout: conexión 15s, lectura 1800s (30 min).
     - Usa autenticación con CIVITAI_API_KEY (Authorization y/o token en la URL) para evitar HTML de login.
     - Valida integridad: si el archivo final es <1MB, se borra y se considera error de descarga.
+    
+    Returns: (success, message)
     """
     lora_env = os.getenv("LORA_PATH")
     base_env = os.getenv("REFORGE_PATH")
     api_key = os.getenv("CIVITAI_API_KEY")
 
     if not lora_env and not base_env:
+        msg = "REFORGE_PATH/LORA_PATH no configurados en .env; no se puede ubicar carpeta de LoRAs."
         if on_log:
-            on_log("REFORGE_PATH/LORA_PATH no configurados en .env; no se puede ubicar carpeta de LoRAs.")
-        return False
+            on_log(msg)
+        return False, msg
 
     try:
         # Resolver carpeta destino
@@ -37,8 +40,7 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
             base = Path(base_env).resolve()
             lora_dir = base.parents[3] / "models" / "Lora"
         lora_dir.mkdir(parents=True, exist_ok=True)
-        if on_log:
-            on_log(f"[CONFIG] Guardando LoRAs en: {str(lora_dir.resolve())}")
+        
         try:
             print(f"[CONFIG] Guardando LoRAs en: {str(lora_dir.resolve())}")
         except Exception:
@@ -49,9 +51,12 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
         sanitized_url = raw_url.strip().replace("`", "").strip('"').strip("'")
         # Validación previa del URL
         if not sanitized_url or ("civitai.com" not in sanitized_url):
+            msg = f"URL de descarga inválida o vacía: {sanitized_url}"
             if on_log:
-                on_log(f"⚠️ Salteando {filename}: URL de descarga inválida o vacía.")
-            return False
+                on_log(f"⚠️ Salteando {filename}: {msg}")
+            print(f"[ERROR] {msg}")
+            return False, msg
+
         # Inyectar token en URL si no presente
         if api_key and ("token=" not in sanitized_url):
             sep = "&" if "?" in sanitized_url else "?"
@@ -76,15 +81,16 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
 
         # Prevención path traversal
         if lora_dir.resolve() not in target.parents:
+            msg = "Ruta de LoRA inválida (Path Traversal attempt)."
             if on_log:
-                on_log("Ruta de LoRA inválida; prevención activada.")
-            return False
+                on_log(msg)
+            return False, msg
 
         # Pre-check: si existe, omite descarga
         if target.exists():
             if on_log:
                 on_log(f"LoRA ya existe para {character_name}: {target.name}")
-            return True
+            return True, "File exists"
 
         loop = asyncio.get_running_loop()
 
@@ -95,7 +101,7 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
                 except Exception:
                     on_log(msg)
 
-        def download_task() -> bool:
+        def download_task() -> tuple[bool, str]:
             try:
                 scraper = cloudscraper.create_scraper()
                 headers = {}
@@ -147,25 +153,27 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
                         pass
                     raise DownloadError("Archivo descargado demasiado pequeño (<1MB). Posible HTML de login o error.")
                 log_safe(f"[INFO] Descarga completada: {target.name}")
-                return True
+                return True, "Downloaded"
             except DownloadError as e:
-                log_safe(f"❌ Error crítico descargando {safe}: {str(e)}")
+                msg = str(e)
+                log_safe(f"❌ Error crítico descargando {safe}: {msg}")
                 try:
                     target.unlink(missing_ok=True)
                 except Exception:
                     pass
-                return False
+                return False, msg
             except Exception as e:
-                log_safe(f"❌ Error crítico descargando {safe}: {str(e)}")
+                msg = str(e)
+                log_safe(f"❌ Error crítico descargando {safe}: {msg}")
                 try:
                     target.unlink(missing_ok=True)
                 except Exception:
                     pass
-                return False
+                return False, msg
 
-        ok = await asyncio.to_thread(download_task)
+        ok, reason = await asyncio.to_thread(download_task)
         if not ok or not target.exists():
-            return False
+            return False, reason
 
         try:
             info_path = target.with_suffix(".civitai.info")
@@ -233,8 +241,9 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
         except Exception as e:
             if on_log:
                 on_log(f"⚠️ No se pudo obtener metadatos Civitai: {str(e)}")
-        return True
+        return True, "OK"
     except Exception as e:
+        msg = f"Excepción general: {str(e)}"
         if on_log:
-            on_log(f"❌ Error crítico descargando {filename}: {str(e)}")
-        return False
+            on_log(f"❌ Error crítico descargando {filename}: {msg}")
+        return False, msg
