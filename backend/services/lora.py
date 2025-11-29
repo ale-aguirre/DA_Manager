@@ -107,12 +107,28 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
                 headers = {}
                 if api_key:
                     headers["Authorization"] = f"Bearer {api_key}"
+                # Add Referer to mimic browser better
+                headers["Referer"] = "https://civitai.com/"
+
                 log_safe(f"[INFO] Conectando a Civitai para {safe}...")
                 with scraper.get(sanitized_url, headers=headers, stream=True, timeout=(15, 1800)) as r:
                     r.raise_for_status()
                     ctype = (r.headers.get("Content-Type", "") or "").lower()
                     if "text/html" in ctype or "text/plain" in ctype:
-                        raise DownloadError(f"Respuesta inesperada (Content-Type={ctype}).")
+                        # Try to read a bit of the content to guess the error
+                        try:
+                            preview = ""
+                            for chunk in r.iter_content(chunk_size=4096):
+                                preview = chunk.decode("utf-8", errors="ignore")
+                                break
+                            title_match = re.search(r"<title>(.*?)</title>", preview, re.IGNORECASE)
+                            title = title_match.group(1).strip() if title_match else "Unknown Title"
+                            if "Cloudflare" in title:
+                                title = "Cloudflare Challenge (Try updating cloudscraper)"
+                        except Exception:
+                            title = "No preview"
+                        
+                        raise DownloadError(f"Respuesta inesperada (Content-Type={ctype}). Page Title: {title}")
                     total = int(r.headers.get("Content-Length", "0"))
                     total_mb = total // (1024 * 1024) if total else None
                     size_msg = f"Tamaño estimado: {total_mb}MB" if total_mb is not None else "Tamaño estimado: desconocido"

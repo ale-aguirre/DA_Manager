@@ -57,6 +57,21 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [loaderOpen, setLoaderOpen] = React.useState(false);
   const [infoStates, setInfoStates] = React.useState<Record<number, "ok" | "missing" | "unknown">>({});
 
+  // Infinite Scroll State
+  const [allItems, setAllItems] = React.useState<CivitaiModel[]>([]);
+
+  // Sync items to allItems (Append Logic)
+  React.useEffect(() => {
+    if (page === 1) {
+      setAllItems(items);
+    } else {
+      setAllItems((prev) => {
+        const newItems = items.filter((i) => !prev.some((p) => p.id === i.id));
+        return [...prev, ...newItems];
+      });
+    }
+  }, [items, page]);
+
   // Verification state
   const [loraStatuses, setLoraStatuses] = React.useState<Record<string, LoraState>>({});
   const [isVerifying, setIsVerifying] = React.useState(false);
@@ -119,10 +134,10 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       }
     };
     precheck();
-  }, [items, selectedItems]);
+  }, [allItems, selectedItems]);
 
   // Auto-verify hook
-  const selectedModels = React.useMemo(() => items.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [items, selectedItems]);
+  const selectedModels = React.useMemo(() => allItems.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [allItems, selectedItems]);
   useAutoVerify(confirmOpen, selectedModels, getLoraVerify, setLoraStatuses);
 
   React.useEffect(() => {
@@ -177,7 +192,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   }, [query, onScan, period, sort]);
 
   const toggleSelect = (id: number) => {
-    const m = items.find((x) => x.id === id);
+    const m = allItems.find((x) => x.id === id);
     if (!m) return;
     const findDownloadUrl = (): string | undefined => {
       const versions = m.modelVersions || [];
@@ -211,7 +226,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
   const filtered = React.useMemo(() => {
     const byTab = (() => {
-      if (tab === "Todo") return items;
+      if (tab === "Todo") return allItems;
       const matchers: Record<string, (m: CivitaiModel) => boolean> = {
         "Personajes": (m) => m.ai_category === "Character",
         "Poses/Ropa": (m) => m.ai_category === "Pose" || m.ai_category === "Clothing",
@@ -222,7 +237,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           return c === "Concept" || !c || !known;
         },
       };
-      return items.filter((m) => matchers[tab](m));
+      return allItems.filter((m) => matchers[tab](m));
     })();
     if (blacklist.length === 0) return byTab;
     const rules = blacklist.map((entry) => {
@@ -241,7 +256,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       return false;
     };
     return byTab.filter((m) => !isBlocked(m));
-  }, [items, tab, blacklist]);
+  }, [allItems, tab, blacklist]);
 
   const deriveTriggerWords = (m: CivitaiModel): string[] => {
     // Prioridad: trainedWords oficiales
@@ -259,62 +274,87 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return [...base, ...tags];
   };
 
-const handleSendToPlanning = async () => {
+  const handleSendToPlanning = async () => {
     if (selectedItems.length === 0) return;
-    
+
     // Mostramos estado de carga (reusamos isDownloading o creamos uno local si prefieres)
-    setIsDownloading(true); 
-    
+    setIsDownloading(true);
+
     try {
       // 1. Identificar modelos seleccionados
-      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
-      
+      const selectedModels = allItems.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+
       // 2. ENRIQUECIMIENTO REAL (La clave del éxito)
       // Iteramos uno por uno para buscar su "Frase Sagrada" en el backend
-      const payload = await Promise.all(selectedModels.map(async (m) => {
+      const enrichedAll = await Promise.all(selectedModels.map(async (m) => {
         let finalTriggers = deriveTriggerWords(m); // Fallback por defecto (tags simples)
-        
+
         try {
           // Intentamos buscar el archivo local usando el nombre sanitizado
           // Nota: La sanitización debe coincidir con la del backend
           const safeName = m.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
-          
+
           // Llamada a la API local
           const info = await getLocalLoraInfo(safeName);
-          
+
           if (info && Array.isArray(info.trainedWords) && info.trainedWords.length > 0) {
             // ¡ENCONTRADO! Usamos la primera frase COMPLETA.
             // Ejemplo: "M1tsur1, 1girl, solo..."
             console.log(`🎯 [Radar] Trigger real encontrado para ${m.name}:`, info.trainedWords[0]);
-            finalTriggers = [info.trainedWords[0]]; 
+            finalTriggers = [info.trainedWords[0]];
           } else {
-             console.log(`⚠️ [Radar] Sin trigger local para ${m.name}, usando tags.`);
+            console.log(`⚠️ [Radar] Sin trigger local para ${m.name}, usando tags.`);
           }
         } catch (e) {
           console.warn(`❌ [Radar] Error consultando info local para ${m.name}:`, e);
         }
 
         return {
-          character_name: m.name,
-          trigger_words: finalTriggers,
+          ...m,
+          _enrichedTriggers: finalTriggers,
         };
       }));
 
-      // 3. Configuración de Batch (Forzado a 1)
-      const jobCount = 1; 
+      // 3. SMART DISPATCH: Separar Personajes vs Recursos
+      const isCharacter = (m: CivitaiModel) => {
+        const cat = (m.ai_category || "").toLowerCase();
+        if (cat === "character") return true;
+        const tags = (m.tags || []).map(t => t.toLowerCase());
+        return tags.some(t => ["character", "girl", "boy", "1girl", "woman", "man"].includes(t));
+      };
 
-      // 4. Enviar Borrador al Backend
-      console.log("🚀 [Radar] Enviando Payload:", payload);
-      const res = await postPlannerDraft(payload, jobCount);
-      
+      const characters = enrichedAll.filter(isCharacter);
+      const resources = enrichedAll.filter(m => !isCharacter(m));
+
+      console.log(`🧠 [Smart Dispatch] Characters: ${characters.length}, Resources: ${resources.length}`);
+
+      // 4. Enviar Borrador al Backend (SOLO PERSONAJES)
+      let jobsResponse: any = { jobs: [], drafts: [] };
+
+      if (characters.length > 0) {
+        const payload = characters.map(c => ({
+          character_name: c.name,
+          trigger_words: c._enrichedTriggers
+        }));
+
+        const jobCount = 1;
+        console.log("🚀 [Radar] Enviando Payload (Characters Only):", payload);
+        jobsResponse = await postPlannerDraft(payload, jobCount);
+      } else {
+        console.log("ℹ️ [Radar] No characters selected, skipping draft generation.");
+      }
+
       // 5. Guardar en LocalStorage (Crucial para que PlannerView lo lea)
-      localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
-      
-      // Guardar Meta enriquecida
-      const meta = selectedModels.map((m, i) => {
+      // Si ya había jobs, ¿los sobrescribimos o añadimos? Por ahora sobrescribimos como antes.
+      // Si no hubo characters, jobsResponse.jobs estará vacío.
+      localStorage.setItem("planner_jobs", JSON.stringify(jobsResponse.jobs));
+
+      // Guardar Meta enriquecida (TODOS: Characters + Resources)
+      // Esto asegura que los estilos/ropa se descarguen en el panel técnico
+      const meta = enrichedAll.map((m) => {
         // Usamos los triggers enriquecidos que acabamos de calcular
-        const richTriggers = payload[i].trigger_words;
-        
+        const richTriggers = m._enrichedTriggers;
+
         const versions = m.modelVersions || [];
         let url: string | undefined;
         for (const v of versions) {
@@ -324,29 +364,29 @@ const handleSendToPlanning = async () => {
           if (url) break;
         }
         const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
-        
-        return { 
-            modelId: m.id, 
-            downloadUrl: url, 
-            character_name: m.name, 
-            image_url: firstImage, 
-            trigger_words: richTriggers // <-- AQUÍ ESTÁ LA MAGIA
+
+        return {
+          modelId: m.id,
+          downloadUrl: url,
+          character_name: m.name,
+          image_url: firstImage,
+          trigger_words: richTriggers
         };
       });
       localStorage.setItem("planner_meta", JSON.stringify(meta));
 
-      // Contexto enriquecido (Prompts base)
+      // Contexto enriquecido (Prompts base) - Solo de lo que generó drafts
       try {
         const contextByCharacter: Record<string, unknown> = {};
-        for (const d of res.drafts || []) {
+        for (const d of jobsResponse.drafts || []) {
           contextByCharacter[d.character] = {
-            base_prompt: d.base_prompt, // El backend ya debe enviarlo limpio
+            base_prompt: d.base_prompt,
             recommended_params: d.recommended_params,
             reference_images: d.reference_images,
           };
         }
         localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
-      } catch {}
+      } catch { }
 
       router.push("/planner");
 
@@ -424,33 +464,7 @@ const handleSendToPlanning = async () => {
         </div>
       </div>
       {/* Paginación */}
-      <div className="mt-3 flex items-center justify-end gap-2">
-        <button
-          onClick={() => {
-            const next = Math.max(1, page - 1);
-            setPage(next);
-            const qArg = query.trim().length >= 3 ? query.trim() : undefined;
-            onScan(period, sort, qArg, next);
-          }}
-          disabled={loading || page <= 1}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-slate-800 disabled:opacity-60"
-        >
-          ← Anterior
-        </button>
-        <span className="text-xs text-zinc-400">Página {page}</span>
-        <button
-          onClick={() => {
-            const next = page + 1;
-            setPage(next);
-            const qArg = query.trim().length >= 3 ? query.trim() : undefined;
-            onScan(period, sort, qArg, next);
-          }}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-slate-800 disabled:opacity-60"
-        >
-          Siguiente →
-        </button>
-      </div>
+
       {error && <p className="-mt-4 mb-4 text-xs text-red-400">{error}</p>}
 
       {/* Modal Blacklist */}
@@ -509,7 +523,7 @@ const handleSendToPlanning = async () => {
       </div>
 
       {/* Estado vacío si no hay datos y no está cargando */}
-      {!loading && items.length === 0 ? (
+      {!loading && allItems.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-sm text-zinc-300">
           {query.trim().length >= 3 ? `No se encontraron resultados para '${query.trim()}'` : "Sin datos. Pulsa Escanear."}
         </div>
@@ -528,6 +542,23 @@ const handleSendToPlanning = async () => {
             ))}
         </div>
       )}
+
+      {/* Paginación "Load More" */}
+      <div className="mt-6 flex items-center justify-center pb-20">
+        <button
+          onClick={() => {
+            const next = page + 1;
+            setPage(next);
+            const qArg = query.trim().length >= 3 ? query.trim() : undefined;
+            onScan(period, sort, qArg, next);
+          }}
+          disabled={loading}
+          className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 px-6 py-3 text-sm font-medium text-zinc-300 hover:bg-slate-800 hover:text-white disabled:opacity-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {loading ? "Cargando..." : "Cargar Más Resultados"}
+        </button>
+      </div>
 
       {/* Barra de acción flotante inferior */}
       <div className={`fixed inset-x-0 bottom-0 z-50 transition-transform duration-300 ${selectedCount > 0 ? "translate-y-0 opacity-100" : "translate-y-full opacity-0 pointer-events-none"}`}>
