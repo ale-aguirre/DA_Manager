@@ -259,227 +259,103 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return [...base, ...tags];
   };
 
-  const handleSendToPlanning = async () => {
+const handleSendToPlanning = async () => {
     if (selectedItems.length === 0) return;
-    setLoaderOpen(true);
+    
+    // Mostramos estado de carga (reusamos isDownloading o creamos uno local si prefieres)
+    setIsDownloading(true); 
+    
     try {
-
-
-      // 1. Preparar metadatos básicos (con fetch de info fresca)
+      // 1. Identificar modelos seleccionados
+      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+      
+      // 2. ENRIQUECIMIENTO REAL (La clave del éxito)
+      // Iteramos uno por uno para buscar su "Frase Sagrada" en el backend
       const payload = await Promise.all(selectedModels.map(async (m) => {
-        let triggers = deriveTriggerWords(m);
+        let finalTriggers = deriveTriggerWords(m); // Fallback por defecto (tags simples)
+        
         try {
-          // Intentar obtener info fresca del backend (por si se acaba de descargar)
-          const filename = getBestFilename(m);
-          // Quitamos extensión para buscar por nombre (el backend espera nombre sin extensión a veces, o con)
-          // Probemos con el nombre del modelo limpio o el filename
-          const info = await getLocalLoraInfo(filename);
+          // Intentamos buscar el archivo local usando el nombre sanitizado
+          // Nota: La sanitización debe coincidir con la del backend
+          const safeName = m.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
+          
+          // Llamada a la API local
+          const info = await getLocalLoraInfo(safeName);
+          
           if (info && Array.isArray(info.trainedWords) && info.trainedWords.length > 0) {
-            console.log(`[Radar] Fresh triggers for ${m.name}:`, info.trainedWords);
-            triggers = info.trainedWords;
+            // ¡ENCONTRADO! Usamos la primera frase COMPLETA.
+            // Ejemplo: "M1tsur1, 1girl, solo..."
+            console.log(`🎯 [Radar] Trigger real encontrado para ${m.name}:`, info.trainedWords[0]);
+            finalTriggers = [info.trainedWords[0]]; 
+          } else {
+             console.log(`⚠️ [Radar] Sin trigger local para ${m.name}, usando tags.`);
           }
         } catch (e) {
-          console.warn(`[Radar] Could not fetch fresh info for ${m.name}, using fallback.`, e);
+          console.warn(`❌ [Radar] Error consultando info local para ${m.name}:`, e);
         }
 
         return {
           character_name: m.name,
-          trigger_words: triggers,
+          trigger_words: finalTriggers,
         };
       }));
 
-      // 2. Leer preset global
-      let jobCount = 1;
-      let preset: Record<string, unknown> | null = null;
-      try {
-        const raw = localStorage.getItem("planner_preset_global");
-        if (raw) {
-          preset = JSON.parse(raw) as Record<string, unknown>;
-          if (typeof preset.batch_count === "number" && (preset.batch_count as number) > 0) {
-            jobCount = preset.batch_count as number;
-          }
-        }
-      } catch { }
+      // 3. Configuración de Batch (Forzado a 1)
+      const jobCount = 1; 
 
-      // 3. Generar Drafts iniciales (estructura base)
+      // 4. Enviar Borrador al Backend
+      console.log("🚀 [Radar] Enviando Payload:", payload);
       const res = await postPlannerDraft(payload, jobCount);
-
-      // 4. PRE-GENERACIÓN: Llamar a analyzeLore para cada personaje
-      let enrichedJobs = [...res.jobs];
-      const loreMap: Record<string, string> = {};
-      const reasoningMap: Record<string, string> = {};
-
-      // Cargamos lo que ya exista para no sobrescribir si no es necesario
-      try {
-        const oldLore = JSON.parse(localStorage.getItem("planner_lore") || "{}");
-        Object.assign(loreMap, oldLore);
-      } catch { }
-
-      // Iteramos secuencialmente o en paralelo
-      const analysisResults = await Promise.all(selectedModels.map(async (m) => {
-        try {
-          console.log("📡 [Radar] Iniciando envío para:", m.name);
-          const triggers = deriveTriggerWords(m);
-          console.log("📡 [Radar] Triggers detectados:", triggers);
-
-          // Llamada al backend para generar escenarios
-          console.log("📡 [Radar] Solicitando análisis al backend...");
-          const analysis = await postPlannerAnalyze(m.name, triggers, jobCount);
-          console.log("📡 [Radar] Respuesta Backend:", analysis);
-
-          return { modelName: m.name, analysis, success: true };
-        } catch (e) {
-          console.warn(`Fallo pre-generación para ${m.name}`, e);
-          return { modelName: m.name, error: e, success: false };
+      
+      // 5. Guardar en LocalStorage (Crucial para que PlannerView lo lea)
+      localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
+      
+      // Guardar Meta enriquecida
+      const meta = selectedModels.map((m, i) => {
+        // Usamos los triggers enriquecidos que acabamos de calcular
+        const richTriggers = payload[i].trigger_words;
+        
+        const versions = m.modelVersions || [];
+        let url: string | undefined;
+        for (const v of versions) {
+          if (v.downloadUrl) { url = v.downloadUrl; break; }
+          const files = v.files || [];
+          for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
+          if (url) break;
         }
-      }));
-
-      // Procesar resultados secuencialmente para evitar race conditions
-      analysisResults.forEach((result) => {
-        if (result.success && result.analysis) {
-          const { modelName, analysis } = result;
-
-          if (analysis.jobs && analysis.jobs.length > 0) {
-            // Reemplazamos los jobs "vacíos" del draft con los jobs "inteligentes" del analyze
-            const others = enrichedJobs.filter(j => j.character_name !== modelName);
-
-            // Map backend fields to ai_meta AND keep them at root level
-            const mappedJobs = analysis.jobs.map((j) => ({
-              ...j,
-              // Keep fields at root level for JobCard to read
-              outfit: j.outfit,
-              pose: j.pose,
-              location: j.location,
-              lighting: j.lighting,
-              camera: j.camera,
-              expression: j.expression,
-              intensity: j.intensity,
-              extra_loras: j.extra_loras,
-              // Also store in ai_meta for backwards compatibility
-              ai_meta: {
-                outfit: j.outfit,
-                pose: j.pose,
-                location: j.location,
-                lighting: j.lighting,
-                camera: j.camera,
-                expression: j.expression,
-                intensity: j.intensity,
-                extra_loras: j.extra_loras
-              }
-            }));
-
-            // Reconstruimos el array
-            enrichedJobs = [...others, ...mappedJobs];
-          }
-
-          if (analysis.lore) {
-            loreMap[modelName] = analysis.lore;
-          }
-          if (analysis.ai_reasoning) {
-            reasoningMap[modelName] = analysis.ai_reasoning;
-          }
-        } else {
-          // Fallback Manual: Inyectar escena básica si falla la IA
-          const draftJob = enrichedJobs.find(j => j.character_name === result.modelName);
-          if (draftJob) {
-            const FALLBACK_SCENES = [
-              "standing, casual outfit, simple background",
-              "sitting, cozy sweater, indoor lighting",
-              "portrait, smiling, soft lighting",
-              "walking, street fashion, city background"
-            ];
-            const randomScene = FALLBACK_SCENES[Math.floor(Math.random() * FALLBACK_SCENES.length)];
-            // Aseguramos que no se duplique si ya tenía algo
-            if (!draftJob.prompt.includes(randomScene)) {
-              draftJob.prompt = `${draftJob.prompt}, ${randomScene}`;
-            }
-          }
-        }
-      });
-
-      // 5. Guardar Jobs enriquecidos
-      console.log("📡 [Radar] Guardando planner_jobs en localStorage:", enrichedJobs);
-      localStorage.setItem("planner_jobs", JSON.stringify(enrichedJobs));
-      localStorage.setItem("planner_lore", JSON.stringify(loreMap));
-      localStorage.setItem("planner_reasoning", JSON.stringify(reasoningMap));
-
-      const stripLora = (s: string): string => (s || "").split(",").map((t) => t.trim()).filter((t) => t.length > 0 && !/^<lora:[^>]+>$/i.test(t)).join(", ");
-      const contextByCharacter: Record<string, unknown> = JSON.parse(localStorage.getItem("planner_context") || "{}");
-
-      for (const d of res.drafts || []) {
-        const pos = typeof preset?.positivePrompt === "string" && (preset!.positivePrompt as string).trim().length > 0
-          ? (preset!.positivePrompt as string)
-          : stripLora(d.base_prompt || "");
-
-        contextByCharacter[d.character] = {
-          base_prompt: pos,
-          recommended_params: d.recommended_params,
-          reference_images: d.reference_images,
+        const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
+        
+        return { 
+            modelId: m.id, 
+            downloadUrl: url, 
+            character_name: m.name, 
+            image_url: firstImage, 
+            trigger_words: richTriggers // <-- AQUÍ ESTÁ LA MAGIA
         };
-      }
-      localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
+      });
+      localStorage.setItem("planner_meta", JSON.stringify(meta));
 
-      // 6.5 Forzar Configuración Técnica (Batch Count = 1)
+      // Contexto enriquecido (Prompts base)
       try {
-        const techByCharacter: Record<string, unknown> = JSON.parse(localStorage.getItem("planner_tech") || "{}");
-
-        selectedModels.forEach(m => {
-          const current = (techByCharacter[m.name] as Record<string, unknown>) || {};
-          techByCharacter[m.name] = {
-            ...current,
-            batch_count: 1
+        const contextByCharacter: Record<string, unknown> = {};
+        for (const d of res.drafts || []) {
+          contextByCharacter[d.character] = {
+            base_prompt: d.base_prompt, // El backend ya debe enviarlo limpio
+            recommended_params: d.recommended_params,
+            reference_images: d.reference_images,
           };
-        });
-        localStorage.setItem("planner_tech", JSON.stringify(techByCharacter));
-      } catch { }
-
-      // 7. Guardar Metadatos (Download URLs, images)
-      try {
-
-        const rawMeta = JSON.parse(localStorage.getItem("planner_meta") || "{}");
-        let metaObj: Record<string, unknown> = {};
-
-        if (Array.isArray(rawMeta)) {
-          rawMeta.forEach((m: unknown) => {
-            if (m && typeof m === "object" && "character_name" in m) {
-              metaObj[(m as { character_name: string }).character_name] = m;
-            }
-          });
-        } else if (typeof rawMeta === "object" && rawMeta !== null) {
-          metaObj = rawMeta as Record<string, unknown>;
         }
+        localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
+      } catch {}
 
-        const newMeta = selectedModels.map((m) => {
-          const versions = m.modelVersions || [];
-          let url: string | undefined;
-          for (const v of versions) {
-            if (v.downloadUrl) { url = v.downloadUrl; break; }
-            const files = v.files || [];
-            for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
-            if (url) break;
-          }
-          const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
-          return { modelId: m.id, downloadUrl: url, character_name: m.name, image_url: firstImage, trigger_words: deriveTriggerWords(m) };
-        });
-
-        // Fusionar meta
-        newMeta.forEach(x => {
-          metaObj[x.character_name] = x;
-        });
-
-        localStorage.setItem("planner_meta", JSON.stringify(metaObj));
-
-        router.push("/planner");
-      } catch (e: unknown) {
-        throw e;
-      }
+      router.push("/planner");
 
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to draft planner", msg);
       alert("Error al generar plan: " + msg);
     } finally {
-      setLoaderOpen(false);
+      setIsDownloading(false);
     }
   };
 

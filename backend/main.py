@@ -101,44 +101,6 @@ async def canonicalize_character_name(name: str) -> str:
     except Exception:
         return sanitize_filename(name)
 
-def _find_best_match_info(lora_dir: Path, char_name: str) -> Path | None:
-    """
-    Búsqueda robusta de archivo .civitai.info.
-    Itera sobre todos los archivos y busca si el nombre del personaje (sanitizado)
-    está contenido en el nombre del archivo (sanitizado).
-    """
-    if not lora_dir or not lora_dir.exists():
-        return None
-    
-    # Sanitizar nombre del personaje: "Mitsuri Kanroji (Demon Slayer)" -> "mitsurikanrojidemonslayer"
-    # Eliminamos todo lo que no sea alfanumérico para maximizar coincidencia
-    clean_char = re.sub(r"[^a-z0-9]", "", char_name.lower())
-    
-    best_match = None
-    best_len = float("inf") # Preferimos el nombre más corto que contenga el match (menos basura)
-    
-    try:
-        for f in lora_dir.glob("*.civitai.info"):
-            # Sanitizar nombre de archivo: "Mitsuri_Kanroji_..." -> "mitsurikanrojidemonslayer..."
-            clean_file = re.sub(r"[^a-z0-9]", "", f.stem.lower())
-            
-            if clean_char in clean_file:
-                # Encontramos un candidato
-                # Si hay varios, podríamos usar heurísticas. Por ahora, el más corto suele ser el más exacto?
-                # O el que empiece igual?
-                # Vamos a preferir el que sea más corto, asumiendo que "Mitsuri Kanroji" es mejor que "Mitsuri Kanroji XL Turbo" si buscamos solo el primero.
-                # Pero cuidado, "Mitsuri" match "Mitsuri Kanroji".
-                # Aquí buscamos "Mitsuri Kanroji (Demon Slayer)".
-                
-                if len(clean_file) < best_len:
-                    best_len = len(clean_file)
-                    best_match = f
-    except Exception as e:
-        print(f"Error en búsqueda robusta: {e}")
-    
-    return best_match
-
-
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
     id: Optional[int] = None
@@ -1295,13 +1257,27 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 return Path(le).resolve()
             return Path(re).resolve().parents[3] / "models" / "Lora"
         
-        # Búsqueda robusta de .civitai.info usando el helper
+        # Búsqueda robusta de .civitai.info (igual que en local_lora_info)
         lora_dir = _lora_dir()
-        info_path = _find_best_match_info(lora_dir, char.character_name)
+        base_name = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
+        candidates_to_check = [
+            lora_dir / f"{base_name}.civitai.info",
+            lora_dir / f"{char.character_name}.civitai.info",
+            lora_dir / f"{char.character_name.replace(' ', '_')}.civitai.info",
+            lora_dir / f"{base_name.replace(' ', '_')}.civitai.info",
+        ]
+        # Añadir búsqueda sanitizada
+        safe_name = re.sub(r"[^a-zA-Z0-9_\-.]", "_", str(char.character_name))
+        candidates_to_check.append(lora_dir / f"{safe_name}.civitai.info")
+
+        info_path = None
+        for cand in candidates_to_check:
+            if cand.exists():
+                info_path = cand
+                break
         
         if not info_path:
-             # Fallback a búsqueda flexible antigua si falla la robusta (aunque la robusta es muy amplia)
-             base_name = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
+             # Fallback a búsqueda flexible
              candidates = list(lora_dir.glob(f"*{base_name}*.civitai.info"))
              if candidates:
                  info_path = candidates[0]
@@ -3084,11 +3060,26 @@ async def local_lora_info(name: str):
     # Intentar encontrar el archivo .safetensors primero para asegurar el nombre base correcto
     base_name = Path(name).stem
     
-    # Búsqueda robusta usando el helper
-    info_path = _find_best_match_info(lora_dir, name)
+    # Estrategia de búsqueda robusta
+    candidates_to_check = [
+        lora_dir / f"{base_name}.civitai.info",
+        lora_dir / f"{name}.civitai.info",
+        lora_dir / f"{name.replace(' ', '_')}.civitai.info",
+        lora_dir / f"{base_name.replace(' ', '_')}.civitai.info",
+    ]
+    
+    # Añadir búsqueda sanitizada
+    safe_name = re.sub(r"[^a-zA-Z0-9_\-.]", "_", str(name))
+    candidates_to_check.append(lora_dir / f"{safe_name}.civitai.info")
+
+    info_path = None
+    for cand in candidates_to_check:
+        if cand.exists():
+            info_path = cand
+            break
     
     if not info_path:
-        # Intentar búsqueda flexible antigua
+        # Intentar búsqueda flexible
         candidates = list(lora_dir.glob(f"*{base_name}*.civitai.info"))
         if candidates:
             info_path = candidates[0]
