@@ -135,6 +135,22 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(STORAGE_KEYS.TECH, JSON.stringify(techConfig));
     }, [techConfig, isLoaded]);
 
+    // Auto-cleanup: Remove techConfig for characters that no longer have jobs
+    useEffect(() => {
+        if (!isLoaded) return;
+        const activeCharacters = new Set(jobs.map(j => j.character_name));
+        const configCharacters = Object.keys(techConfig);
+
+        // Find orphaned configs (configs for characters no longer in jobs)
+        const orphaned = configCharacters.filter(char => !activeCharacters.has(char));
+
+        if (orphaned.length > 0) {
+            const cleaned = { ...techConfig };
+            orphaned.forEach(char => delete cleaned[char]);
+            setTechConfigState(cleaned);
+        }
+    }, [jobs, techConfig, isLoaded]);
+
     useEffect(() => {
         if (!isLoaded) return;
         localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(globalConfig));

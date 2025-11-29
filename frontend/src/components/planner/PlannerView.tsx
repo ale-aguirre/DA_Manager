@@ -161,10 +161,17 @@ export default function PlannerView() {
     setIsRegenerating(true);
     try {
       const resourcesMeta: ResourceMeta[] = [];
-      const groupConfig = Object.entries(techConfig).map(([char, cfg]) => ({
-        character_name: char,
-        ...cfg
-      }));
+
+      // Get unique character names from current jobs
+      const activeCharacters = new Set(jobs.map(j => j.character_name));
+
+      // Only include config for characters that have active jobs
+      const groupConfig = Object.entries(techConfig)
+        .filter(([char]) => activeCharacters.has(char))
+        .map(([char, cfg]) => ({
+          character_name: char,
+          ...cfg
+        }));
 
       await postPlannerExecuteV2(jobs, resourcesMeta, groupConfig);
       setUiState({ toast: { message: "Generación iniciada", type: "success" } });
