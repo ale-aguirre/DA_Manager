@@ -5,6 +5,7 @@ export interface CivitaiImage {
 }
 
 export interface CivitaiFile {
+  name?: string;
   downloadUrl?: string;
   sizeKB?: number;
   type?: string;

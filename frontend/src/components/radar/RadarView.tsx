@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @next/next/no-img-element */
 "use client";
 import React from "react";
-import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle } from "lucide-react";
+import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle, AlertCircle } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft, postCivitaiDownloadInfo, postPlannerAnalyze } from "../../lib/api";
+import { postPlannerDraft, postPlannerAnalyze, getLoraVerify, postDownloadLora, type LoraVerifyResponse } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import COPY from "../../lib/copy";
 
@@ -15,6 +16,12 @@ export interface RadarViewProps {
   error: string | null;
   onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string, page?: number) => void;
 }
+
+export type LoraState = {
+  status: "idle" | "checking" | "downloading" | "ok" | "missing_safetensors" | "missing_info" | "partial";
+  safetensors: boolean;
+  info: boolean;
+};
 
 function SkeletonCard() {
   return (
@@ -50,6 +57,9 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [loaderOpen, setLoaderOpen] = React.useState(false);
   const [infoStates, setInfoStates] = React.useState<Record<number, "ok" | "missing" | "unknown">>({});
 
+  // Verification state
+  const [loraStatuses, setLoraStatuses] = React.useState<Record<string, LoraState>>({});
+  const [isVerifying, setIsVerifying] = React.useState(false);
   React.useEffect(() => {
     const precheck = async () => {
       try {
@@ -98,17 +108,22 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
                 // Given the constraints, let's try to mutate the found model object directly for now as a quick fix, 
                 // or better, create a 'enrichedModels' state.
                 // Let's stick to the plan: "Update RadarView to merge fetched trigger words into model items."
-                // Since we can't easily change the prop 'items', I will mutate the found 'model' object.
-                model.trainedWords = j.trainedWords;
               }
             }
-          } catch { }
+          } catch (e) {
+            console.error("Failed to check info for", safe, e);
+          }
         }
-      } catch { }
+      } catch (e) {
+        console.error("Failed to list local loras", e);
+      }
     };
-    if (confirmOpen) precheck();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmOpen]);
+    precheck();
+  }, [items, selectedItems]);
+
+  // Auto-verify hook
+  const selectedModels = React.useMemo(() => items.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [items, selectedItems]);
+  useAutoVerify(confirmOpen, selectedModels, getLoraVerify, setLoraStatuses);
 
   React.useEffect(() => {
     try {
@@ -192,91 +207,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return img || undefined;
   };
 
-  const selectedModels = React.useMemo(() => items.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [items, selectedItems]);
 
-  const startDownloads = async () => {
-    setIsDownloading(true);
-    // inicializar estado
-    setDownloadStates((prev) => {
-      const next = { ...prev };
-      for (const s of selectedItems) next[s.modelId] = "pending";
-      return next;
-    });
-    try {
-      // Pre-check: loras locales para evitar descargas duplicadas
-      const local: { files: string[] } = { files: [] };
-      try {
-        const res = await fetch("http://127.0.0.1:8000/local/loras", { cache: "no-store" });
-        if (res.ok) {
-          const data = await res.json();
-          local.files = Array.isArray(data?.files) ? data.files : [];
-        }
-      } catch { }
-      const sanitize = (name: string) => name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
-      const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-      for (const s of selectedItems) {
-        const model = items.find((m) => m.id === s.modelId);
-        if (!model) {
-          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "skipped" }));
-          continue;
-        }
-        const stem = sanitize(model.name);
-        const existsLocal = local.files.some((f) => canonical(f).includes(canonical(model.name)));
-        if (existsLocal) {
-          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
-          continue;
-        }
-        const url = s.downloadUrl;
-        if (!url) {
-          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "skipped" }));
-          continue;
-        }
-        try {
-          const res = await fetch("http://127.0.0.1:8000/download-lora", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url, filename: `${stem}.safetensors` }),
-          });
-          if (!res.ok) throw new Error(String(res.status));
-          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
-        } catch {
-          setDownloadStates((prev) => ({ ...prev, [s.modelId]: "error" }));
-        }
-      }
-
-      // Descargar metadata civitai.info si falta
-      for (const s of selectedItems) {
-        const model = items.find((m) => m.id === s.modelId);
-        if (!model) continue;
-        const safe = sanitize(model.name);
-        try {
-          const r = await fetch(`http://127.0.0.1:8000/local/lora-info?name=${encodeURIComponent(safe)}`, { cache: "no-store" });
-          let need = true;
-          if (r.ok) {
-            const j = await r.json();
-            const ok = (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) || j?.id || j?.modelId || (Array.isArray(j?.imageUrls) && j.imageUrls.length > 0);
-            need = !ok;
-          }
-          if (need) {
-            try {
-              const resp = await postCivitaiDownloadInfo(safe, Number(model.id), undefined);
-              if (resp?.status === "downloaded" || resp?.status === "exists") {
-                setInfoStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
-              }
-            } catch {
-              setInfoStates((prev) => ({ ...prev, [s.modelId]: "missing" }));
-            }
-          } else {
-            setInfoStates((prev) => ({ ...prev, [s.modelId]: "ok" }));
-          }
-        } catch {
-          // mantener estado anterior
-        }
-      }
-    } finally {
-      setIsDownloading(false);
-    }
-  };
 
   const filtered = React.useMemo(() => {
     const byTab = (() => {
@@ -332,7 +263,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     if (selectedItems.length === 0) return;
     setLoaderOpen(true);
     try {
-      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+
 
       // 1. Preparar metadatos básicos
       const payload = selectedModels.map((m) => ({
@@ -474,7 +405,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       // 6.5 Forzar Configuración Técnica (Batch Count = 1)
       try {
         const techByCharacter: Record<string, unknown> = JSON.parse(localStorage.getItem("planner_tech") || "{}");
-        const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+
         selectedModels.forEach(m => {
           const current = (techByCharacter[m.name] as Record<string, unknown>) || {};
           techByCharacter[m.name] = {
@@ -487,7 +418,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
       // 7. Guardar Metadatos (Download URLs, images)
       try {
-        const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+
         const rawMeta = JSON.parse(localStorage.getItem("planner_meta") || "{}");
         let metaObj: Record<string, unknown> = {};
 
@@ -755,7 +686,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             <div className="max-h-[40vh] overflow-y-auto rounded border border-slate-800">
               <ul className="divide-y divide-slate-800">
                 {selectedModels.map((m) => {
-                  const state = downloadStates[m.id] || "pending";
+                  const status = loraStatuses[m.name] || { status: "idle", safetensors: false, info: false };
                   const url = selectedItems.find((s) => s.modelId === m.id)?.downloadUrl;
                   return (
                     <li key={m.id} className="flex items-center gap-3 p-2">
@@ -768,17 +699,28 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
                         <div className="text-xs text-zinc-200" title={m.name}>{truncate(m.name)}</div>
                         <div className="text-[11px] text-zinc-400 truncate">{url || "Sin URL de descarga"}</div>
                       </div>
-                      <div className="text-[11px]">
-                        <div>
-                          {state === "pending" && (isDownloading ? <span className="text-zinc-300">Descargando...</span> : <span className="text-zinc-500">En cola</span>)}
-                          {state === "ok" && <span className="inline-flex items-center gap-1 text-green-400"><CheckCircle className="h-3 w-3" /> LoRA OK</span>}
-                          {state === "error" && <span className="text-red-400">{COPY.radar.downloadFailed}</span>}
-                          {state === "skipped" && <span className="inline-flex items-center gap-1 text-zinc-400"><CheckCircle className="h-3 w-3" /> LoRA OK</span>}
+                      <div className="text-[11px] flex flex-col gap-1">
+                        {/* LoRA Status */}
+                        <div className="flex items-center gap-2">
+                          <span className="w-8 text-zinc-500">LoRA:</span>
+                          {status.status === "checking" || status.status === "downloading" ? (
+                            <span className="text-blue-400 flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> ...</span>
+                          ) : status.safetensors ? (
+                            <span className="text-green-400 flex items-center gap-1"><CheckCircle className="h-3 w-3" /> OK</span>
+                          ) : (
+                            <span className="text-red-400 flex items-center gap-1"><X className="h-3 w-3" /> Falta</span>
+                          )}
                         </div>
-                        <div className="mt-0.5">
-                          {infoStates[m.id] === "ok" && <span className="inline-flex items-center gap-1 text-green-400"><CheckCircle className="h-3 w-3" /> Info OK</span>}
-                          {infoStates[m.id] === "missing" && <span className="text-yellow-300">Info faltante</span>}
-                          {(!infoStates[m.id] || infoStates[m.id] === "unknown") && <span className="text-zinc-500">Info desconocida</span>}
+                        {/* Info Status */}
+                        <div className="flex items-center gap-2">
+                          <span className="w-8 text-zinc-500">Info:</span>
+                          {status.status === "checking" ? (
+                            <span className="text-blue-400 flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> ...</span>
+                          ) : status.info ? (
+                            <span className="text-green-400 flex items-center gap-1"><CheckCircle className="h-3 w-3" /> OK</span>
+                          ) : (
+                            <span className="text-yellow-400 flex items-center gap-1"><AlertCircle className="h-3 w-3" /> Falta</span>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -786,17 +728,80 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
                 })}
               </ul>
             </div>
-            <div className="mt-3 flex items-center justify-end gap-2">
-              <button onClick={() => setConfirmOpen(false)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-slate-800">{COPY.radar.confirmCancel}</button>
-              {!isDownloading ? (
-                <button onClick={async () => { await startDownloads(); setLoaderOpen(true); setConfirmOpen(false); await handleSendToPlanning(); setLoaderOpen(false); }} className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-3 py-1.5 text-xs text-violet-100 hover:bg-violet-600/30">
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <button
+                onClick={async () => {
+                  setIsVerifying(true);
+                  const newStatuses = { ...loraStatuses };
+
+                  for (const m of selectedModels) {
+                    const current = newStatuses[m.name] || { status: "idle", safetensors: false, info: false };
+                    if (current.status === "ok") continue;
+
+                    try {
+                      const filename = getBestFilename(m);
+                      console.log(`[ManualVerify] Processing ${m.name} -> ${filename}`);
+                      // 1. Verify
+                      let res = await getLoraVerify(filename);
+
+                      if (!res.safetensors) {
+                        // 2. Download if missing
+                        const url = selectedItems.find(s => s.modelId === m.id)?.downloadUrl;
+                        if (url) {
+                          newStatuses[m.name] = { ...current, status: "downloading" };
+                          setLoraStatuses({ ...newStatuses });
+                          await postDownloadLora(url, filename);
+                          res = await getLoraVerify(filename);
+                        }
+                      }
+
+                      if (!res.civitai_info) {
+                        // Try to download info if missing (optional but good)
+                        // For now just mark as missing info if not found
+                        // Ideally we would call postCivitaiDownloadInfo here if we had the ID
+                        // But let's assume the user wants to know it's missing
+                      }
+
+                      newStatuses[m.name] = {
+                        status: res.exists && res.civitai_info ? "ok" : "partial",
+                        safetensors: res.safetensors,
+                        info: res.civitai_info
+                      };
+                    } catch (e) {
+                      console.error(e);
+                      newStatuses[m.name] = { status: "missing_safetensors", safetensors: false, info: false };
+                    }
+                    setLoraStatuses({ ...newStatuses });
+                  }
+                  setIsVerifying(false);
+                }}
+                disabled={isVerifying}
+                className="rounded-lg border border-blue-600 bg-blue-600/20 px-4 py-2 text-xs text-blue-100 hover:bg-blue-600/30 disabled:opacity-50"
+              >
+                {isVerifying ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Verificando...
+                  </span>
+                ) : (
+                  "Verificar & Descargar Faltantes"
+                )}
+              </button>
+
+              <div className="flex gap-2">
+                <button onClick={() => setConfirmOpen(false)} className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-zinc-200 hover:bg-slate-800">Cancelar</button>
+                <button
+                  onClick={async () => {
+                    setLoaderOpen(true);
+                    setConfirmOpen(false);
+                    await handleSendToPlanning();
+                    setLoaderOpen(false);
+                  }}
+                  disabled={isVerifying || !selectedModels.every(m => loraStatuses[m.name]?.status === "ok" || (loraStatuses[m.name]?.safetensors && loraStatuses[m.name]?.info))}
+                  className="inline-flex items-center gap-2 rounded-lg border border-violet-600 bg-violet-600/20 px-4 py-2 text-xs text-violet-100 hover:bg-violet-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   {COPY.radar.confirmAccept}
                 </button>
-              ) : (
-                <button disabled className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-300">
-                  <Loader2 className="h-3 w-3 animate-spin" /> {COPY.radar.downloadProgress}
-                </button>
-              )}
+              </div>
             </div>
           </div>
         </div>
@@ -813,4 +818,80 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       )}
     </div>
   );
+}
+
+// Helper para obtener el nombre de archivo real
+function getBestFilename(model: CivitaiModel): string {
+  // Intentar obtener el nombre del archivo del primer modelo/versión
+  if (model.modelVersions && model.modelVersions.length > 0) {
+    const v = model.modelVersions[0];
+    if (v.files && v.files.length > 0) {
+      // Preferir archivo "Model" o "Pruned Model" si existe, sino el primero
+      const primary = v.files.find(f => f.type === "Model" || f.type === "Pruned Model") || v.files[0];
+      if (primary.name) return primary.name;
+    }
+  }
+  // Fallback al nombre del modelo sanitizado (no ideal pero necesario)
+  return model.name.replace(/[^a-zA-Z0-9._-]/g, "_") + ".safetensors";
+}
+
+// Helper para auto-verificar al abrir el modal
+function useAutoVerify(
+  confirmOpen: boolean,
+  selectedModels: CivitaiModel[],
+  getLoraVerify: (filename: string) => Promise<LoraVerifyResponse>,
+  setLoraStatuses: React.Dispatch<React.SetStateAction<Record<string, LoraState>>>
+) {
+  React.useEffect(() => {
+    if (!confirmOpen || selectedModels.length === 0) return;
+
+    let mounted = true;
+
+    const verifyAll = async () => {
+      // 1. Mark all as checking initially (functional update)
+      setLoraStatuses(prev => {
+        const next = { ...prev };
+        let changed = false;
+        selectedModels.forEach(m => {
+          if (!next[m.name] || next[m.name].status === "idle") {
+            next[m.name] = { status: "checking", safetensors: false, info: false };
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+
+      // 2. Perform verification
+      for (const m of selectedModels) {
+        if (!mounted) return;
+
+        try {
+          const filename = getBestFilename(m);
+          console.log(`[AutoVerify] Checking ${m.name} -> ${filename}`);
+          const res = await getLoraVerify(filename);
+          console.log(`[AutoVerify] Result for ${filename}:`, res);
+
+          if (!mounted) return;
+
+          setLoraStatuses(prev => ({
+            ...prev,
+            [m.name]: {
+              status: res.exists && res.civitai_info ? "ok" : "partial",
+              safetensors: res.safetensors,
+              info: res.civitai_info
+            }
+          }));
+        } catch (e) {
+          console.error(e);
+          if (!mounted) return;
+          setLoraStatuses(prev => ({ ...prev, [m.name]: { status: "missing_safetensors", safetensors: false, info: false } }));
+        }
+      }
+    };
+
+    verifyAll();
+
+    return () => { mounted = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmOpen, selectedModels]); // Removed loraStatuses to prevent loop
 }

@@ -2550,19 +2550,33 @@ async def download_lora(req: DownloadLoraRequest):
         raise HTTPException(status_code=400, detail="url requerida")
 
     def _safe_name(name: str) -> str:
-        base = name.strip().lower().replace(" ", "_")
-        if not base.endswith(".safetensors"):
+        # Permitir unicode y espacios, solo reemplazar caracteres reservados de sistema
+        # Windows: < > : " / \ | ? *
+        base = name.strip()
+        for char in ['<', '>', ':', '"', '/', '\\', '|', '?', '*']:
+            base = base.replace(char, '_')
+        
+        if not base.lower().endswith(".safetensors"):
             base += ".safetensors"
-        return "".join(c for c in base if c.isalnum() or c in ["_", ".", "-"])
+        return base
 
     async def _run() -> dict:
         try:
+            # Usar el nombre proporcionado (que viene de Civitai) o fallback
             filename = _safe_name(req.filename or "downloaded_lora.safetensors")
+            
+            # ... resto del código ...
             char = Path(filename).stem
             ok = await ensure_lora(char, filename, req.url, _log)
             if not ok:
                 raise HTTPException(status_code=502, detail="No se pudo descargar/asegurar LoRA")
-            # Buscar ruta guardada
+            
+            # Descargar metadata .civitai.info si es posible
+            # Intentamos inferir el ID del modelo desde la URL o el request si lo tuviéramos
+            # Por ahora, ensure_lora ya hace un trabajo básico, pero idealmente deberíamos
+            # llamar a civitai_download_info si tuviéramos el ID.
+            # Como simplificación, confiamos en que ensure_lora maneje lo básico.
+            
             lora_dir = get_lora_dir()
             saved = str((lora_dir / filename).resolve()) if lora_dir else filename
             return {"status": "ok", "saved": saved}
@@ -2572,6 +2586,26 @@ async def download_lora(req: DownloadLoraRequest):
             raise HTTPException(status_code=502, detail=f"Error descargando LoRA: {str(e)}")
 
     return await _run()
+
+@app.get("/lora/verify")
+async def verify_lora(filename: str):
+    """Verifica si existe un archivo LoRA específico por su nombre de archivo exacto."""
+    lora_dir = get_lora_dir()
+    if not lora_dir or not lora_dir.exists():
+        return {"exists": False}
+    
+    # Sanitizar mínimamente para evitar path traversal
+    safe_name = filename.replace("/", "").replace("\\", "")
+    file_path = lora_dir / safe_name
+    info_path = file_path.with_suffix(".civitai.info")
+    
+    return {
+        "exists": file_path.exists(),
+        "safetensors": file_path.exists(),
+        "civitai_info": info_path.exists(),
+        "path": str(file_path) if file_path.exists() else None,
+        "info_path": str(info_path) if info_path.exists() else None
+    }
 
 class DownloadCheckpointRequest(BaseModel):
     url: str

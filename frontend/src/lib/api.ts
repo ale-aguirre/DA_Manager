@@ -456,3 +456,20 @@ export async function postPresetSave(name: string, content: string): Promise<{ s
   }
   return res.json();
 }
+
+export interface LoraVerifyResponse {
+  exists: boolean;
+  safetensors: boolean;
+  civitai_info: boolean;
+  path: string | null;
+  info_path?: string | null;
+}
+
+export async function getLoraVerify(filename: string): Promise<LoraVerifyResponse> {
+  const res = await fetch(`${BASE_URL}/lora/verify?filename=${encodeURIComponent(filename)}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to verify LoRA: ${text}`);
+  }
+  return res.json();
+}
