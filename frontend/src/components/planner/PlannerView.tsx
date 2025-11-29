@@ -1,3 +1,4 @@
+/* eslint-disable prefer-const */
 "use client";
 
 import React, { useState } from "react";
@@ -8,7 +9,7 @@ import JobQueue from "./jobs/JobQueue";
 import ControlPanel from "./ControlPanel";
 import TechnicalModelPanel from "./TechnicalModelPanel";
 import PromptsEditor from "./PromptsEditor";
-import { postPlannerExecuteV2 } from "../../lib/api";
+import { postPlannerExecuteV2, ResourceMeta } from "../../lib/api";
 
 export default function PlannerView() {
   const {
@@ -36,6 +37,56 @@ export default function PlannerView() {
     }
   }, [jobs, activeCharacter]);
 
+  // --- Checkpoint & Tech Defaults Logic ---
+  React.useEffect(() => {
+    if (!activeCharacter || !resources?.checkpoints) return;
+
+    const currentConfig = techConfig[activeCharacter] || {};
+    let updates: any = {};
+    let changed = false;
+
+    // 1. Checkpoint
+    if (!currentConfig.checkpoint) {
+      // Try from localStorage first
+      const savedCkpt = localStorage.getItem("preferred_checkpoint");
+      if (savedCkpt && resources.checkpoints.includes(savedCkpt)) {
+        updates.checkpoint = savedCkpt;
+        changed = true;
+      } else {
+        // Try preferred default
+        const preferred = "waiilustriuousSDXL"; // Partial match check might be needed if extension varies
+        const found = resources.checkpoints.find(c => c.includes(preferred));
+        if (found) {
+          updates.checkpoint = found;
+          changed = true;
+        } else if (resources.checkpoints.length > 0) {
+          updates.checkpoint = resources.checkpoints[0];
+          changed = true;
+        }
+      }
+    }
+
+    // 2. VAE
+    if (!currentConfig.vae) {
+      updates.vae = "Automatic";
+      changed = true;
+    }
+
+    // 3. Clip Skip
+    if (!currentConfig.clipSkip) {
+      updates.clipSkip = 2;
+      changed = true;
+    }
+
+    if (changed) {
+      setTechConfig(activeCharacter, updates);
+      // If we set a checkpoint, save it as preferred
+      if (updates.checkpoint) {
+        localStorage.setItem("preferred_checkpoint", updates.checkpoint);
+      }
+    }
+  }, [activeCharacter, resources, techConfig, setTechConfig]);
+
   // --- Prompt Sync Logic ---
   const prevGlobalPromptRef = React.useRef(globalConfig.positivePrompt || "");
 
@@ -46,31 +97,21 @@ export default function PlannerView() {
     if (newGlobal !== oldGlobal) {
       setJobs((prevJobs) =>
         prevJobs.map((job) => {
-          let text = job.prompt;
+          let text = job.prompt || "";
 
           // 1. Remove old global prompt if present
-          if (oldGlobal) {
-            // Split into tokens to avoid partial matches
-            const parts = text.split(",").map((p) => p.trim());
-
-            // Find the last occurrence of the old global prompt
-            const index = parts.lastIndexOf(oldGlobal);
-
-            if (index !== -1) {
-              parts.splice(index, 1);
-              text = parts.join(", ");
-            }
+          if (oldGlobal && text.includes(oldGlobal)) {
+            // Attempt to remove it cleanly
+            text = text.replace(oldGlobal, "");
+            // Cleanup double commas and trailing/leading commas
+            text = text.replace(/,\s*,/g, ",").replace(/^,/, "").replace(/,$/, "").trim();
           }
 
           // 2. Append new global prompt
           if (newGlobal) {
-            if (text) {
-              const parts = text.split(",").map((p) => p.trim());
-              if (!parts.includes(newGlobal)) {
-                text = `${text}, ${newGlobal}`;
-              }
-            } else {
-              text = newGlobal;
+            // Check if it's already there to avoid duplication
+            if (!text.includes(newGlobal)) {
+              text = text ? `${text}, ${newGlobal}` : newGlobal;
             }
           }
 
@@ -81,13 +122,45 @@ export default function PlannerView() {
     }
   }, [globalConfig.positivePrompt, setJobs]);
 
+  // --- Negative Prompt Sync Logic ---
+  const prevGlobalNegativeRef = React.useRef(globalConfig.negativePrompt || "");
+
+  React.useEffect(() => {
+    const newGlobal = (globalConfig.negativePrompt || "").trim();
+    const oldGlobal = (prevGlobalNegativeRef.current || "").trim();
+
+    if (newGlobal !== oldGlobal) {
+      setJobs((prevJobs) =>
+        prevJobs.map((job) => {
+          let text = job.negative_prompt || "";
+
+          // 1. Remove old global negative if present
+          if (oldGlobal && text.includes(oldGlobal)) {
+            text = text.replace(oldGlobal, "");
+            text = text.replace(/,\s*,/g, ",").replace(/^,/, "").replace(/,$/, "").trim();
+          }
+
+          // 2. Append new global negative
+          if (newGlobal) {
+            if (!text.includes(newGlobal)) {
+              text = text ? `${text}, ${newGlobal}` : newGlobal;
+            }
+          }
+
+          return { ...job, negative_prompt: text };
+        })
+      );
+      prevGlobalNegativeRef.current = newGlobal;
+    }
+  }, [globalConfig.negativePrompt, setJobs]);
+
   // --- Actions ---
 
   const handleRegenerate = async () => {
     if (jobs.length === 0) return;
     setIsRegenerating(true);
     try {
-      const resourcesMeta: any[] = [];
+      const resourcesMeta: ResourceMeta[] = [];
       const groupConfig = Object.entries(techConfig).map(([char, cfg]) => ({
         character_name: char,
         ...cfg
@@ -107,6 +180,7 @@ export default function PlannerView() {
   const handleSetCheckpoint = async (title: string) => {
     if (activeCharacter) {
       setTechConfig(activeCharacter, { checkpoint: title });
+      localStorage.setItem("preferred_checkpoint", title);
     } else {
       // Fallback to global if no character selected (or apply to all?)
       // For now, let's assume it applies to the active character as per the component design

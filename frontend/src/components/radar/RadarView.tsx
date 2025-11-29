@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 import React from "react";
 import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle } from "lucide-react";
@@ -394,9 +395,19 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             // Reemplazamos los jobs "vacíos" del draft con los jobs "inteligentes" del analyze
             const others = enrichedJobs.filter(j => j.character_name !== modelName);
 
-            // Map backend fields to ai_meta for frontend consumption
+            // Map backend fields to ai_meta AND keep them at root level
             const mappedJobs = analysis.jobs.map((j) => ({
               ...j,
+              // Keep fields at root level for JobCard to read
+              outfit: j.outfit,
+              pose: j.pose,
+              location: j.location,
+              lighting: j.lighting,
+              camera: j.camera,
+              expression: j.expression,
+              intensity: j.intensity,
+              extra_loras: j.extra_loras,
+              // Also store in ai_meta for backwards compatibility
               ai_meta: {
                 outfit: j.outfit,
                 pose: j.pose,

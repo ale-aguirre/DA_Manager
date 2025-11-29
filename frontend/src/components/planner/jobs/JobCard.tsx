@@ -154,6 +154,10 @@ export default function JobCard({ job, index }: JobCardProps) {
                                 onChange={(e) => updateJob(index, { lighting: e.target.value } as any)}
                             >
                                 <option value="">(Empty)</option>
+                                {/* Show current value if not in list */}
+                                {getValue("lighting") && !resources?.lighting?.includes(getValue("lighting")) && (
+                                    <option value={getValue("lighting")}>{getValue("lighting")} (Custom)</option>
+                                )}
                                 {resources?.lighting?.map((opt) => (
                                     <option key={opt} value={opt}>{opt}</option>
                                 ))}
@@ -171,6 +175,9 @@ export default function JobCard({ job, index }: JobCardProps) {
                                 onChange={(e) => updateJob(index, { camera: e.target.value } as any)}
                             >
                                 <option value="">(Empty)</option>
+                                {getValue("camera") && !resources?.camera?.includes(getValue("camera")) && (
+                                    <option value={getValue("camera")}>{getValue("camera")} (Custom)</option>
+                                )}
                                 {resources?.camera?.map((opt) => (
                                     <option key={opt} value={opt}>{opt}</option>
                                 ))}
@@ -180,7 +187,7 @@ export default function JobCard({ job, index }: JobCardProps) {
                         {/* Expression */}
                         <div>
                             <label className="mb-1 flex items-center gap-1 text-xs text-slate-400">
-                                <Bot className="h-3 w-3" /> Expression
+                                <User className="h-3 w-3" /> Expression
                             </label>
                             <select
                                 className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200"
@@ -188,6 +195,9 @@ export default function JobCard({ job, index }: JobCardProps) {
                                 onChange={(e) => updateJob(index, { expression: e.target.value } as any)}
                             >
                                 <option value="">(Empty)</option>
+                                {getValue("expression") && !resources?.expressions?.includes(getValue("expression")) && (
+                                    <option value={getValue("expression")}>{getValue("expression")} (Custom)</option>
+                                )}
                                 {resources?.expressions?.map((opt) => (
                                     <option key={opt} value={opt}>{opt}</option>
                                 ))}

@@ -16,6 +16,7 @@ interface CharacterMeta {
     image_url?: string;
     download_url?: string;
     trigger_words?: string[];
+    modelId?: number;
 }
 
 export default function JobQueue() {
@@ -70,7 +71,8 @@ export default function JobQueue() {
                 return;
             }
 
-            const url = metaByCharacter[character]?.download_url || "";
+            const meta = metaByCharacter[character] as CharacterMeta | undefined;
+            const url = meta?.download_url || "";
             if (!url) {
                 setOpStatus((prev) => ({ ...prev, [character]: "Sin URL de descarga" }));
                 setLoraBusy((prev) => ({ ...prev, [character]: false }));
@@ -98,7 +100,7 @@ export default function JobQueue() {
     const openCivitai = async (character: string) => {
         try {
             setCivitaiBusy((prev) => ({ ...prev, [character]: true }));
-            const meta = metaByCharacter[character];
+            const meta = metaByCharacter[character] as CharacterMeta | undefined;
             let url = meta?.download_url;
 
             if (!url && meta?.modelId) {
@@ -133,8 +135,9 @@ export default function JobQueue() {
                 const info = await getLocalLoraInfo(character);
                 triggers = Array.isArray(info?.trainedWords) ? info.trainedWords : [];
             } catch {
-                triggers = Array.isArray(metaByCharacter[character]?.trigger_words)
-                    ? (metaByCharacter[character]!.trigger_words as string[])
+                const meta = metaByCharacter[character] as CharacterMeta | undefined;
+                triggers = Array.isArray(meta?.trigger_words)
+                    ? (meta!.trigger_words as string[])
                     : [];
             }
 
@@ -223,7 +226,7 @@ export default function JobQueue() {
     }
 
     const findMeta = (charName: string): CharacterMeta | undefined => {
-        if (metaByCharacter[charName]) return metaByCharacter[charName];
+        if (metaByCharacter[charName]) return metaByCharacter[charName] as CharacterMeta;
         const lower = charName.toLowerCase().trim();
         return Object.values(metaByCharacter).find((m) => (m as CharacterMeta).character_name?.toLowerCase().trim() === lower) as CharacterMeta | undefined;
     };

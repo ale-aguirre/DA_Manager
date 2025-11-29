@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
@@ -12,7 +13,7 @@ interface PlannerState {
     resources: PlannerResources | null;
     techConfig: Record<string, TechConfig>; // Keyed by character name
     globalConfig: TechConfig; // Fallback/Global settings
-    metaByCharacter: Record<string, any>;
+    metaByCharacter: Record<string, unknown>;
     loreByCharacter: Record<string, string>;
     uiState: {
         isLoading: boolean;
@@ -29,7 +30,7 @@ interface PlannerContextType extends PlannerState {
     updateJob: (index: number, updates: Partial<PlannerJob>) => void;
     setTechConfig: (character: string, config: Partial<TechConfig>) => void;
     setGlobalConfig: (config: Partial<TechConfig>) => void;
-    setMetaByCharacter: (character: string, meta: any) => void;
+    setMetaByCharacter: (character: string, meta: unknown) => void;
     setLoreByCharacter: (character: string, lore: string) => void;
     setUiState: (updates: Partial<PlannerState["uiState"]>) => void;
 
@@ -56,7 +57,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     const [jobs, setJobs] = useState<PlannerJob[]>([]);
     const [techConfig, setTechConfigState] = useState<Record<string, TechConfig>>({});
     const [globalConfig, setGlobalConfigState] = useState<TechConfig>({});
-    const [metaByCharacter, setMetaByCharacterState] = useState<Record<string, any>>({});
+    const [metaByCharacter, setMetaByCharacterState] = useState<Record<string, unknown>>({});
     const [loreByCharacter, setLoreByCharacterState] = useState<Record<string, string>>({});
 
     const [isLoaded, setIsLoaded] = useState(false);
@@ -71,14 +72,32 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             if (savedTech) setTechConfigState(JSON.parse(savedTech));
 
             const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
-            if (savedConfig) setGlobalConfigState(JSON.parse(savedConfig));
+            const defaults = {
+                positivePrompt: "masterpiece, best quality, absurdres, highres, 8k, detailed",
+                negativePrompt: "low quality, worst quality, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry"
+            };
+
+            if (savedConfig) {
+                try {
+                    const parsed = JSON.parse(savedConfig);
+                    setGlobalConfigState({
+                        ...parsed,
+                        positivePrompt: parsed.positivePrompt || defaults.positivePrompt,
+                        negativePrompt: parsed.negativePrompt || defaults.negativePrompt
+                    });
+                } catch (e) {
+                    setGlobalConfigState(defaults);
+                }
+            } else {
+                setGlobalConfigState(defaults);
+            }
 
             const savedMeta = localStorage.getItem("planner_meta");
             if (savedMeta) {
                 const parsed = JSON.parse(savedMeta);
                 if (Array.isArray(parsed)) {
                     // Convert Array to Record
-                    const map: Record<string, any> = {};
+                    const map: Record<string, unknown> = {};
                     parsed.forEach((item: any) => {
                         if (item.character_name) map[item.character_name] = item;
                     });

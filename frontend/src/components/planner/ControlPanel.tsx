@@ -185,7 +185,15 @@ export default function ControlPanel(props: ControlPanelProps) {
                 <div>
                   <label className="text-xs text-slate-300">Batch count</label>
                   <div className="mt-2 flex items-center gap-2">
-                    <input type="range" min={1} max={20} value={currentConfig.batch_count || 1} onChange={(e) => handleConfigChange({ batch_count: Number(e.target.value) })} className="flex-1" />
+                    <div className="flex-1">
+                      <SliderBar
+                        value={currentConfig.batch_count || 1}
+                        min={1}
+                        max={20}
+                        step={1}
+                        onChange={(v) => handleConfigChange({ batch_count: v })}
+                      />
+                    </div>
                     <input
                       type="number"
                       min={1}
@@ -199,7 +207,15 @@ export default function ControlPanel(props: ControlPanelProps) {
                 <div>
                   <label className="text-xs text-slate-300">Batch size</label>
                   <div className="mt-2 flex items-center gap-2">
-                    <input type="range" min={1} max={8} value={currentConfig.batch_size || 1} onChange={(e) => handleConfigChange({ batch_size: Number(e.target.value) })} className="flex-1" />
+                    <div className="flex-1">
+                      <SliderBar
+                        value={currentConfig.batch_size || 1}
+                        min={1}
+                        max={8}
+                        step={1}
+                        onChange={(v) => handleConfigChange({ batch_size: v })}
+                      />
+                    </div>
                     <input
                       type="number"
                       min={1}
