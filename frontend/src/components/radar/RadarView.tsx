@@ -41,7 +41,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [tab, setTab] = React.useState<"Todo" | "Personajes" | "Poses/Ropa" | "Estilo" | "Conceptos/Otros">("Personajes");
   type SelectedItem = { modelId: number; downloadUrl?: string };
   const [selectedItems, setSelectedItems] = React.useState<SelectedItem[]>([]);
-  const [period, setPeriod] = React.useState<"Day" | "Week" | "Month">("Week");
+  const [period, setPeriod] = React.useState<"Day" | "Week" | "Month">("Month");
   const [sort, setSort] = React.useState<"Rating" | "Downloads">("Rating");
   const router = useRouter();
   // Blacklist state
@@ -58,16 +58,21 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [infoStates, setInfoStates] = React.useState<Record<number, "ok" | "missing" | "unknown">>({});
 
   // Infinite Scroll State
-  const [allItems, setAllItems] = React.useState<CivitaiModel[]>([]);
+  const [allModels, setAllModels] = React.useState<CivitaiModel[]>([]);
 
-  // Sync items to allItems (Append Logic)
+  // Sync items to allModels (Append Logic)
   React.useEffect(() => {
+    console.log(`[RadarDebug] Effect Triggered. Page: ${page}, Incoming Items: ${items.length}, Current AllModels: ${allModels.length}`);
+
     if (page === 1) {
-      setAllItems(items);
+      console.log("[RadarDebug] Page 1 detected. Resetting allModels.");
+      setAllModels(items);
     } else {
-      setAllItems((prev) => {
-        const newItems = items.filter((i) => !prev.some((p) => p.id === i.id));
-        return [...prev, ...newItems];
+      setAllModels((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const newUnique = items.filter((m) => !existingIds.has(m.id));
+        console.log(`[RadarDebug] Appending ${newUnique.length} new items to ${prev.length} existing.`);
+        return [...prev, ...newUnique];
       });
     }
   }, [items, page]);
@@ -108,22 +113,6 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
               const j = await r.json();
               const ok = (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) || j?.id || j?.modelId || (Array.isArray(j?.imageUrls) && j.imageUrls.length > 0);
               setInfoStates((prev) => ({ ...prev, [s.modelId]: ok ? "ok" : "missing" }));
-
-              // CRITICAL: Update the item in the list with the fetched trainedWords
-              if (Array.isArray(j?.trainedWords) && j.trainedWords.length > 0) {
-                // We need to update the 'items' state, but 'items' is a prop. 
-                // However, we can't mutate props. We should probably have a local state or a way to store this enrichment.
-                // Actually, 'deriveTriggerWords' takes a CivitaiModel.
-                // Let's mutate the object in place if possible (not ideal but works for this reference) 
-                // OR better, store it in a map and use it in deriveTriggerWords.
-                // But deriveTriggerWords is used in handleSendToPlanning which iterates 'items'.
-                // Let's try to update the item in the 'items' array if it's a reference, or use a ref/map.
-                // Since 'items' comes from parent, let's use a side-effect map or just mutate the object found in 'items' 
-                // assuming it's a shallow copy or mutable reference from the parent. 
-                // Given the constraints, let's try to mutate the found model object directly for now as a quick fix, 
-                // or better, create a 'enrichedModels' state.
-                // Let's stick to the plan: "Update RadarView to merge fetched trigger words into model items."
-              }
             }
           } catch (e) {
             console.error("Failed to check info for", safe, e);
@@ -134,10 +123,10 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       }
     };
     precheck();
-  }, [allItems, selectedItems]);
+  }, [items, selectedItems]);
 
   // Auto-verify hook
-  const selectedModels = React.useMemo(() => allItems.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [allItems, selectedItems]);
+  const selectedModels = React.useMemo(() => allModels.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [allModels, selectedItems]);
   useAutoVerify(confirmOpen, selectedModels, getLoraVerify, setLoraStatuses);
 
   React.useEffect(() => {
@@ -192,7 +181,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   }, [query, onScan, period, sort]);
 
   const toggleSelect = (id: number) => {
-    const m = allItems.find((x) => x.id === id);
+    const m = allModels.find((x) => x.id === id);
     if (!m) return;
     const findDownloadUrl = (): string | undefined => {
       const versions = m.modelVersions || [];
@@ -226,7 +215,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
   const filtered = React.useMemo(() => {
     const byTab = (() => {
-      if (tab === "Todo") return allItems;
+      if (tab === "Todo") return allModels;
       const matchers: Record<string, (m: CivitaiModel) => boolean> = {
         "Personajes": (m) => m.ai_category === "Character",
         "Poses/Ropa": (m) => m.ai_category === "Pose" || m.ai_category === "Clothing",
@@ -237,7 +226,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           return c === "Concept" || !c || !known;
         },
       };
-      return allItems.filter((m) => matchers[tab](m));
+      return allModels.filter((m) => matchers[tab](m));
     })();
     if (blacklist.length === 0) return byTab;
     const rules = blacklist.map((entry) => {
@@ -256,7 +245,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       return false;
     };
     return byTab.filter((m) => !isBlocked(m));
-  }, [allItems, tab, blacklist]);
+  }, [allModels, tab, blacklist]);
 
   const deriveTriggerWords = (m: CivitaiModel): string[] => {
     // Prioridad: trainedWords oficiales
@@ -282,7 +271,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
     try {
       // 1. Identificar modelos seleccionados
-      const selectedModels = allItems.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+      const selectedModels = allModels.filter((m) => selectedItems.some((s) => s.modelId === m.id));
 
       // 2. ENRIQUECIMIENTO REAL (La clave del éxito)
       // Iteramos uno por uno para buscar su "Frase Sagrada" en el backend
@@ -523,7 +512,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       </div>
 
       {/* Estado vacío si no hay datos y no está cargando */}
-      {!loading && allItems.length === 0 ? (
+      {!loading && allModels.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-sm text-zinc-300">
           {query.trim().length >= 3 ? `No se encontraron resultados para '${query.trim()}'` : "Sin datos. Pulsa Escanear."}
         </div>

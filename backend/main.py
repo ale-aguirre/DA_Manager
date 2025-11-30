@@ -600,7 +600,11 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         try:
             def do_req():
                 p = params_search if use_query else params_trend
-                resp = scraper.get(url, params=p, timeout=20)
+                # Usamos requests directo porque cloudscraper rompe la paginacion
+                # Civitai API v1 es publica y suele aceptar requests con UA de navegador
+                import requests
+                print(f"[DEBUG] Civitai Request (requests): URL={url} Params={p}")
+                resp = requests.get(url, params=p, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}, timeout=20)
                 if getattr(resp, "status_code", 0) != 200:
                     raise RuntimeError(f"HTTP {getattr(resp, 'status_code', None)}")
                 return resp.json()
