@@ -599,15 +599,18 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         data = None
         try:
             def do_req():
-                p = params_search if use_query else params_trend
-                # Usamos requests directo porque cloudscraper rompe la paginacion
-                # Civitai API v1 es publica y suele aceptar requests con UA de navegador
                 import requests
-                print(f"[DEBUG] Civitai Request (requests): URL={url} Params={p}")
+                # Reverting to simple proxy as requested
+                p = params_search if use_query else params_trend
+                
+                print(f"[DEBUG] Civitai Request: URL={url} Params={p}")
+                
                 resp = requests.get(url, params=p, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}, timeout=20)
-                if getattr(resp, "status_code", 0) != 200:
-                    raise RuntimeError(f"HTTP {getattr(resp, 'status_code', None)}")
+                if resp.status_code != 200:
+                    print(f"[ERROR] Civitai API returned {resp.status_code}")
+                    return {"items": []}
                 return resp.json()
+            
             data = await asyncio.to_thread(do_req)
         except Exception as e:
             code = None
@@ -1943,6 +1946,13 @@ async def reforge_progress():
     except Exception as e:
         # Si falla, devolver estructura vacÃ­a para no romper frontend
         return {"progress": 0, "eta_relative": 0, "state": {"job": "", "job_no": 0, "job_count": 0}}
+
+def _parse_lora_names(prompt: str) -> List[str]:
+    if not prompt:
+        return []
+    import re
+    # Captura el nombre del LoRA en <lora:NOMBRE:PESO> o <lora:NOMBRE>
+    return re.findall(r"<lora:([^:>]+)(?::[^>]+)?>", prompt)
 
 async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[GroupConfigItem]] = None):
     FACTORY_STATE.update({

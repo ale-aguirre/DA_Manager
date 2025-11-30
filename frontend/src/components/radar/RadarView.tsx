@@ -9,12 +9,11 @@ import { postPlannerDraft, postPlannerAnalyze, getLoraVerify, postDownloadLora, 
 import { useRouter } from "next/navigation";
 import COPY from "../../lib/copy";
 
-
 export interface RadarViewProps {
   items: CivitaiModel[];
   loading: boolean;
   error: string | null;
-  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string, page?: number) => void;
+  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string) => void;
 }
 
 export type LoraState = {
@@ -44,42 +43,24 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [period, setPeriod] = React.useState<"Day" | "Week" | "Month">("Month");
   const [sort, setSort] = React.useState<"Rating" | "Downloads">("Rating");
   const router = useRouter();
+
   // Blacklist state
   const [showBlacklist, setShowBlacklist] = React.useState(false);
   const [blacklist, setBlacklist] = React.useState<string[]>([]);
   const [blacklistInput, setBlacklistInput] = React.useState("");
   const [query, setQuery] = React.useState("");
   const lastFiredRef = React.useRef<string>("");
-  const [page, setPage] = React.useState<number>(1);
+
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [isDownloading, setIsDownloading] = React.useState(false);
   const [downloadStates, setDownloadStates] = React.useState<Record<number, "pending" | "ok" | "error" | "skipped">>({});
   const [loaderOpen, setLoaderOpen] = React.useState(false);
   const [infoStates, setInfoStates] = React.useState<Record<number, "ok" | "missing" | "unknown">>({});
 
-  // Infinite Scroll State
-  const [allModels, setAllModels] = React.useState<CivitaiModel[]>([]);
-
-  // Sync items to allModels (Append Logic)
-  React.useEffect(() => {
-    console.log(`[RadarDebug] Effect Triggered. Page: ${page}, Incoming Items: ${items.length}, Current AllModels: ${allModels.length}`);
-
-    if (page === 1) {
-      console.log("[RadarDebug] Page 1 detected. Resetting allModels.");
-      setAllModels(items);
-    } else {
-      setAllModels((prev) => {
-        const existingIds = new Set(prev.map((m) => m.id));
-        const newUnique = items.filter((m) => !existingIds.has(m.id));
-        console.log(`[RadarDebug] Appending ${newUnique.length} new items to ${prev.length} existing.`);
-        return [...prev, ...newUnique];
-      });
-    }
-  }, [items, page]);
-
   // Verification state
   const [loraStatuses, setLoraStatuses] = React.useState<Record<string, LoraState>>({});
   const [isVerifying, setIsVerifying] = React.useState(false);
+
   React.useEffect(() => {
     const precheck = async () => {
       try {
@@ -126,7 +107,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   }, [items, selectedItems]);
 
   // Auto-verify hook
-  const selectedModels = React.useMemo(() => allModels.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [allModels, selectedItems]);
+  const selectedModels = React.useMemo(() => items.filter((m) => selectedItems.some((s) => s.modelId === m.id)), [items, selectedItems]);
   useAutoVerify(confirmOpen, selectedModels, getLoraVerify, setLoraStatuses);
 
   React.useEffect(() => {
@@ -172,8 +153,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     const h = setTimeout(() => {
       const q = query.trim();
       if (q.length >= 3 && q !== lastFiredRef.current) {
-        setPage(1);
-        onScan(period, sort, q, 1);
+        onScan(period, sort, q);
         lastFiredRef.current = q;
       }
     }, 800);
@@ -181,7 +161,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   }, [query, onScan, period, sort]);
 
   const toggleSelect = (id: number) => {
-    const m = allModels.find((x) => x.id === id);
+    const m = items.find((x) => x.id === id);
     if (!m) return;
     const findDownloadUrl = (): string | undefined => {
       const versions = m.modelVersions || [];
@@ -211,11 +191,9 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return img || undefined;
   };
 
-
-
   const filtered = React.useMemo(() => {
     const byTab = (() => {
-      if (tab === "Todo") return allModels;
+      if (tab === "Todo") return items;
       const matchers: Record<string, (m: CivitaiModel) => boolean> = {
         "Personajes": (m) => m.ai_category === "Character",
         "Poses/Ropa": (m) => m.ai_category === "Pose" || m.ai_category === "Clothing",
@@ -226,7 +204,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           return c === "Concept" || !c || !known;
         },
       };
-      return allModels.filter((m) => matchers[tab](m));
+      return items.filter((m) => matchers[tab](m));
     })();
     if (blacklist.length === 0) return byTab;
     const rules = blacklist.map((entry) => {
@@ -245,7 +223,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       return false;
     };
     return byTab.filter((m) => !isBlocked(m));
-  }, [allModels, tab, blacklist]);
+  }, [items, tab, blacklist]);
 
   const deriveTriggerWords = (m: CivitaiModel): string[] => {
     // Prioridad: trainedWords oficiales
@@ -271,7 +249,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
     try {
       // 1. Identificar modelos seleccionados
-      const selectedModels = allModels.filter((m) => selectedItems.some((s) => s.modelId === m.id));
+      const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
 
       // 2. ENRIQUECIMIENTO REAL (La clave del éxito)
       // Iteramos uno por uno para buscar su "Frase Sagrada" en el backend
@@ -430,7 +408,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             onClick={() => {
               const q = query.trim();
               const qArg = q.length >= 3 ? q : undefined;
-              onScan(period, sort, qArg, page);
+              onScan(period, sort, qArg);
               if (qArg) lastFiredRef.current = qArg;
             }}
             disabled={loading}
@@ -452,7 +430,6 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
           </button>
         </div>
       </div>
-      {/* Paginación */}
 
       {error && <p className="-mt-4 mb-4 text-xs text-red-400">{error}</p>}
 
@@ -512,7 +489,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       </div>
 
       {/* Estado vacío si no hay datos y no está cargando */}
-      {!loading && allModels.length === 0 ? (
+      {!loading && items.length === 0 ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-sm text-zinc-300">
           {query.trim().length >= 3 ? `No se encontraron resultados para '${query.trim()}'` : "Sin datos. Pulsa Escanear."}
         </div>
@@ -531,23 +508,6 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             ))}
         </div>
       )}
-
-      {/* Paginación "Load More" */}
-      <div className="mt-6 flex items-center justify-center pb-20">
-        <button
-          onClick={() => {
-            const next = page + 1;
-            setPage(next);
-            const qArg = query.trim().length >= 3 ? query.trim() : undefined;
-            onScan(period, sort, qArg, next);
-          }}
-          disabled={loading}
-          className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 px-6 py-3 text-sm font-medium text-zinc-300 hover:bg-slate-800 hover:text-white disabled:opacity-50 transition-all active:scale-95 flex items-center justify-center gap-2"
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {loading ? "Cargando..." : "Cargar Más Resultados"}
-        </button>
-      </div>
 
       {/* Barra de acción flotante inferior */}
       <div className={`fixed inset-x-0 bottom-0 z-50 transition-transform duration-300 ${selectedCount > 0 ? "translate-y-0 opacity-100" : "translate-y-full opacity-0 pointer-events-none"}`}>
@@ -748,45 +708,32 @@ function getBestFilename(model: CivitaiModel): string {
   return model.name.replace(/[^a-zA-Z0-9._-]/g, "_") + ".safetensors";
 }
 
-// Helper para auto-verificar al abrir el modal
 function useAutoVerify(
-  confirmOpen: boolean,
-  selectedModels: CivitaiModel[],
-  getLoraVerify: (filename: string) => Promise<LoraVerifyResponse>,
-  setLoraStatuses: React.Dispatch<React.SetStateAction<Record<string, LoraState>>>
+  enabled: boolean,
+  models: CivitaiModel[],
+  verifyFn: (filename: string) => Promise<LoraVerifyResponse>,
+  setStatuses: React.Dispatch<React.SetStateAction<Record<string, LoraState>>>
 ) {
   React.useEffect(() => {
-    if (!confirmOpen || selectedModels.length === 0) return;
+    if (!enabled || models.length === 0) return;
 
-    let mounted = true;
-
-    const verifyAll = async () => {
-      // 1. Mark all as checking initially (functional update)
-      setLoraStatuses(prev => {
-        const next = { ...prev };
-        let changed = false;
-        selectedModels.forEach(m => {
-          if (!next[m.name] || next[m.name].status === "idle") {
-            next[m.name] = { status: "checking", safetensors: false, info: false };
-            changed = true;
-          }
-        });
-        return changed ? next : prev;
-      });
-
-      // 2. Perform verification
-      for (const m of selectedModels) {
-        if (!mounted) return;
+    let active = true;
+    const run = async () => {
+      for (const m of models) {
+        if (!active) break;
 
         try {
           const filename = getBestFilename(m);
-          console.log(`[AutoVerify] Checking ${m.name} -> ${filename}`);
-          const res = await getLoraVerify(filename);
-          console.log(`[AutoVerify] Result for ${filename}:`, res);
+          // Mark as checking
+          setStatuses(prev => ({
+            ...prev,
+            [m.name]: { ...(prev[m.name] || { safetensors: false, info: false }), status: "checking" }
+          }));
 
-          if (!mounted) return;
+          const res = await verifyFn(filename);
+          if (!active) break;
 
-          setLoraStatuses(prev => ({
+          setStatuses(prev => ({
             ...prev,
             [m.name]: {
               status: res.exists && res.civitai_info ? "ok" : "partial",
@@ -795,16 +742,16 @@ function useAutoVerify(
             }
           }));
         } catch (e) {
-          console.error(e);
-          if (!mounted) return;
-          setLoraStatuses(prev => ({ ...prev, [m.name]: { status: "missing_safetensors", safetensors: false, info: false } }));
+          if (!active) break;
+          setStatuses(prev => ({
+            ...prev,
+            [m.name]: { status: "missing_safetensors", safetensors: false, info: false }
+          }));
         }
       }
     };
 
-    verifyAll();
-
-    return () => { mounted = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmOpen, selectedModels]); // Removed loraStatuses to prevent loop
+    run();
+    return () => { active = false; };
+  }, [enabled, models]);
 }

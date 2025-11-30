@@ -11,8 +11,7 @@ export default function RadarPage() {
   const onScan = async (
     period: "Day" | "Week" | "Month" = "Month",
     sort: "Rating" | "Downloads" = "Rating",
-    query?: string,
-    page: number = 1
+    query?: string
   ) => {
     setLoading(true);
     setError(null);
@@ -26,7 +25,7 @@ export default function RadarPage() {
       if (query && query.trim().length > 0) {
         u.searchParams.set("query", query.trim());
       }
-      u.searchParams.set("page", String(Math.max(1, page)));
+      u.searchParams.set("page", "1");
       const res = await fetch(u.toString(), { cache: 'no-store' });
       if (!res.ok) throw new Error(`Backend error: ${res.status}`);
       const data = await res.json();
