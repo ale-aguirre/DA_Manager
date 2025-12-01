@@ -172,6 +172,7 @@ class PlannerExecutionRequest(BaseModel):
 
 class MagicFixRequest(BaseModel):
     prompt: str
+    intensity: Optional[str] = None
 
 # Advertencias y configuraciÃ³n de entorno (inicio)
 print(f"\033[33m[ENV] REFORGE_PATH: {REFORGE_PATH}\033[0m")
@@ -1204,6 +1205,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 "Use these STYLE EXAMPLES as a reference for quality tags and sentence structure. Mimic this level of detail. "
                 f"STYLE EXAMPLES: {styles_examples} "
                 + ("When allowed, you may suggest extra LoRAs from the provided list. Return them in an optional 'extra_loras' array with up to 2 names." if allow_extra_loras else "Do not suggest any extra LoRAs; strictly use the character LoRA only.")
+                + " CRITICAL: DO NOT use natural language sentences like 'a girl standing'. USE ONLY Danbooru tags separated by commas: '1girl, solo, standing'. USE specific tags: 'plaid skirt' instead of 'skirt'."
                 + " Return ONLY JSON array with format: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\",\"lighting\":\"...\",\"camera\":\"...\"}] with up to 10 elements."
             )
             user_prompt = (
@@ -1427,17 +1429,25 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             # quality_end removed
             # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
             # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
+            
+            # SANITIZATION: Ensure no ghost tags or forbidden text labels
+            def sanitize_tag(text: str) -> str:
+                if not text: return ""
+                s = str(text).strip()
+                if s.lower() in ["(none)", "none", "null", "undefined", "sfw", "ecchi", "nsfw"]: return ""
+                return s
+
             parts = [
                 lora_tag,
                 trigger,
-                cam_choice,
-                expression_choice,
+                sanitize_tag(cam_choice),
+                sanitize_tag(expression_choice),
                 # hairstyle_choice removed
-                (lighting_choice or atmo_choice or "soft lighting"),
-                rating,
-                base["outfit"],
-                base["pose"],
-                base["location"],
+                sanitize_tag(lighting_choice or atmo_choice or "soft lighting"),
+                rating, # This is safe because it's set programmatically above
+                sanitize_tag(base["outfit"]),
+                sanitize_tag(base["pose"]),
+                sanitize_tag(base["location"]),
                 # quality_end removed
             ]
             if allow_extra_loras:
@@ -1547,9 +1557,21 @@ async def planner_magicfix(req: MagicFixRequest):
     # Con Groq: sugerir combinación coherente basada en el prompt y recursos
     try:
         client = Groq(api_key=GROQ_API_KEY)
+        
+        # Contexto de Intensidad
+        intensity_context = ""
+        if req.intensity:
+            if req.intensity == "SFW":
+                intensity_context = "Create a SAFE (SFW) scene. Avoid explicit poses or nudity. Use wholesome or cool outfits."
+            elif req.intensity == "ECCHI":
+                intensity_context = "Create a SUGGESTIVE (Ecchi) scene. Use slightly revealing outfits or playful poses, but NOT fully explicit."
+            elif req.intensity == "NSFW":
+                intensity_context = "Create a NSFW/EXPLICIT scene. Use daring poses and revealing outfits appropriate for mature content."
+
         system_prompt = (
             "You are an Anime Art Director. Create a UNIQUE, VIVID scene. "
             "Select: Outfit, Pose, Location, Lighting, Camera Angle, Expression AND Artist Style. "
+            f"{intensity_context} "
             "Use the provided resources as a guide, but you can be creative if needed. "
             f"Available Outfits: {', '.join(outfits[:20])}... "
             f"Available Poses: {', '.join(poses[:20])}... "
@@ -1558,7 +1580,7 @@ async def planner_magicfix(req: MagicFixRequest):
             "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\", \"artist\": \"...\"}"
         )
         noise = random.randint(0, 999999)
-        user_prompt = f"Current Tags: {req.prompt}\nSeed: {noise}\nTask: Remix this scene completely."
+        user_prompt = f"Current Tags: {req.prompt}\nTarget Intensity: {req.intensity or 'Unchanged'}\nSeed: {noise}\nTask: Remix this scene completely."
 
         completion = await groq_chat_with_fallbacks(
             client,

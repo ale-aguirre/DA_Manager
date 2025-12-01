@@ -28,3 +28,7 @@ trigger: always_on
 ## 4. VERIFICATION
 - Before submitting code, ask yourself: "Did I break the Intensity Selector? Did I break the Trigger Word injection?"
 - Check for regression bugs.
+## 5. PROTECTED FUNCTIONS (DO NOT TOUCH)
+- **RadarView.tsx -> handleSendToPlanning**: This function contains critical logic for extracting trigger words using the *exact* downloaded filename (stripped of extension).
+- **RULE:** Do NOT modify or delete this function without explicit user authorization.
+- **REASON:** Modifying this breaks the link between Civitai models and local .civitai.info files, causing "missing trainedWords" errors.

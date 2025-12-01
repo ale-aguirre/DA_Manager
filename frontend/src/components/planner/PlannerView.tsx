@@ -179,7 +179,7 @@ export default function PlannerView() {
           // Direct mapping
           adetailer: cfg.adetailer ?? true,
           adetailer_model: cfg.adetailerModel || "face_yolov8n.pt",
-          upscaler: cfg.upscaler || "4x-UltraSharp",
+          upscaler: cfg.upscaler || (resources?.upscalers?.[0] || "R-ESRGAN 4x+"),
           steps: cfg.steps ?? 28,
           cfg_scale: cfg.cfg ?? 7,
           width: cfg.width ?? 832,

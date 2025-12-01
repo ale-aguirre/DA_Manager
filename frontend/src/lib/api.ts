@@ -167,7 +167,7 @@ export async function postCivitaiDownloadInfo(name: string, modelId?: number, ve
   return res.json();
 }
 
-export async function magicFixPrompt(prompt: string): Promise<{
+export async function magicFixPrompt(prompt: string, intensity?: string): Promise<{
   outfit: string;
   pose: string;
   location: string;
@@ -181,7 +181,7 @@ export async function magicFixPrompt(prompt: string): Promise<{
   const res = await fetch(`${BASE_URL}/planner/magicfix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, intensity }),
   });
   if (!res.ok) {
     const text = await res.text();

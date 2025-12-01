@@ -402,3 +402,34 @@ export function getIntensity(prompt: string): { label: "SFW" | "ECCHI" | "NSFW" 
   }
   return { label: "SFW" };
 }
+
+export function updateIntensityTags(prompt: string, newIntensity: "SFW" | "ECCHI" | "NSFW"): string {
+  let tokens = splitPrompt(prompt);
+
+  // 1. Define Tag Sets
+  const sfwTags = ["rating_safe", "safe"];
+  const ecchiTags = ["rating_questionable", "questionable", "suggestive", "cleavage"];
+  const nsfwTags = ["rating_explicit", "explicit", "nsfw"];
+
+  // Also remove literal labels if they exist (Sanitization)
+  const labels = ["sfw", "ecchi", "nsfw"];
+
+  // 2. Remove ALL intensity tags first to start clean
+  const allIntensity = new Set([...sfwTags, ...ecchiTags, ...nsfwTags, ...labels]);
+  tokens = tokens.filter(t => !allIntensity.has(t.toLowerCase()));
+
+  // 3. Inject correct tags based on new mode
+  if (newIntensity === "SFW") {
+    // Inject rating_safe at start (after LoRA/Trigger usually, but start of tags)
+    // We append to ensure it's present.
+    tokens.push("rating_safe");
+  } else if (newIntensity === "ECCHI") {
+    tokens.push("rating_questionable");
+    tokens.push("cleavage");
+  } else if (newIntensity === "NSFW") {
+    tokens.push("rating_explicit");
+    tokens.push("nsfw");
+  }
+
+  return tokens.join(", ");
+}

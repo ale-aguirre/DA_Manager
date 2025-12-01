@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { usePlannerContext } from "../../../context/PlannerContext";
 import { PlannerJob } from "../../../types/planner";
-import { rebuildPromptWithTriplet, rebuildPromptWithExtras, extractTriplet, extractExtras } from "../../../helpers/planner";
+import { rebuildPromptWithTriplet, rebuildPromptWithExtras, extractTriplet, extractExtras, updateIntensityTags } from "../../../helpers/planner";
 
 interface JobCardProps {
     job: PlannerJob;
@@ -124,6 +124,11 @@ export default function JobCard({ job, index }: JobCardProps) {
                     { [field]: job[field as keyof PlannerJob] as string }
                 );
             }
+            // Intensity is now handled via Magic Fix (Remix), but we still update the tag locally
+            // to ensure immediate feedback if the user doesn't wait for Remix.
+            else if (field === "intensity") {
+                newPrompt = updateIntensityTags(newPrompt, value as "SFW" | "ECCHI" | "NSFW");
+            }
             updates.prompt = newPrompt;
         }
 
@@ -183,6 +188,42 @@ export default function JobCard({ job, index }: JobCardProps) {
                     )}
                 </div>
 
+                {/* Intensity Selector (Header) */}
+                <div className="flex-1 px-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-center gap-2">
+                        <span className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Intensity</span>
+                        <div className="flex bg-slate-950 rounded border border-slate-800 p-0.5">
+                            {["SFW", "ECCHI", "NSFW"].map((opt) => {
+                                const current = getValue("intensity") || "SFW";
+                                const isActive = current === opt;
+                                let colorClass = "text-slate-400 hover:text-slate-200";
+                                if (isActive) {
+                                    if (opt === "SFW") colorClass = "bg-emerald-900/50 text-emerald-300 shadow-sm";
+                                    if (opt === "ECCHI") colorClass = "bg-amber-900/50 text-amber-300 shadow-sm";
+                                    if (opt === "NSFW") colorClass = "bg-rose-900/50 text-rose-300 shadow-sm";
+                                }
+                                return (
+                                    <button
+                                        key={opt}
+                                        onClick={async () => {
+                                            // 1. Update local state immediately for UI feedback
+                                            handleFieldChange("intensity", opt);
+                                            // 2. Trigger Magic Fix with new intensity context
+                                            setLocalLoading(true);
+                                            await magicFixJob(index, opt);
+                                            setLocalLoading(false);
+                                        }}
+                                        disabled={uiState.isLoading || localLoading}
+                                        className={`px-2 py-0.5 text-[10px] font-medium rounded transition-all ${colorClass} disabled:opacity-50`}
+                                    >
+                                        {opt}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+
                 <div className="flex items-center gap-2">
                     <button
                         onClick={(e) => {
@@ -217,7 +258,6 @@ export default function JobCard({ job, index }: JobCardProps) {
                         {renderSelect("Expression", <User className="h-3 w-3" />, "expression", resources?.expressions)}
                         {renderSelect("Hairstyle", <Sparkles className="h-3 w-3" />, "hairstyle", resources?.hairstyles)}
                         {renderSelect("Artist / Style", <Brush className="h-3 w-3" />, "artist", resources?.artists)}
-                        {renderSelect("Intensity", <Zap className="h-3 w-3" />, "intensity", ["SFW", "ECCHI", "NSFW"])}
                     </div>
 
                     {/* Actions Bar */}

@@ -3,7 +3,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { PlannerJob, TechConfig, PlannerResources } from "../types/planner";
-import { getPlannerResources, magicFixPrompt, getReforgeCheckpoints, getReforgeVAEs, getLocalLoras } from "../lib/api";
+import { getPlannerResources, magicFixPrompt, getReforgeCheckpoints, getReforgeVAEs, getLocalLoras, getReforgeUpscalers } from "../lib/api";
 import { rebuildPromptWithTriplet } from "../helpers/planner";
 
 // --- Types ---
@@ -36,7 +36,7 @@ interface PlannerContextType extends PlannerState {
 
     // Async Actions
     loadResources: () => Promise<void>;
-    magicFixJob: (index: number) => Promise<void>;
+    magicFixJob: (index: number, intensityOverride?: string) => Promise<void>;
     clearAll: () => void;
 }
 
@@ -115,6 +115,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                     if (typeof parsed === 'object' && parsed !== null) {
                         Object.keys(parsed).forEach(k => {
                             const val = parsed[k];
+                            // Fix: Ensure we only load strings, preventing [object Object]
                             clean[k] = typeof val === 'string' ? val : "";
                         });
                     }
@@ -259,17 +260,19 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     // 4. Async Actions
     const loadResources = useCallback(async () => {
         try {
-            const [res, ckpts, vaes, loras] = await Promise.all([
+            const [res, ckpts, vaes, loras, upscalers] = await Promise.all([
                 getPlannerResources(),
                 getReforgeCheckpoints(),
                 getReforgeVAEs(),
-                getLocalLoras()
+                getLocalLoras(),
+                getReforgeUpscalers()
             ]);
             setResources({
                 ...res,
                 checkpoints: ckpts,
                 vaes: vaes,
-                loras: loras.files
+                loras: loras.files,
+                upscalers: upscalers.length > 0 ? upscalers : res.upscalers // Prefer real API list
             });
         } catch (e) {
             console.error("Failed to load resources", e);
@@ -277,13 +280,13 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         }
     }, [setUiState]);
 
-    const magicFixJob = useCallback(async (index: number) => {
+    const magicFixJob = useCallback(async (index: number, intensityOverride?: string) => {
         const job = jobs[index];
         if (!job) return;
 
         setUiState({ isLoading: true });
         try {
-            const fixed = await magicFixPrompt(job.prompt);
+            const fixed = await magicFixPrompt(job.prompt, intensityOverride);
 
             // Check locks
             const locked = new Set(job.locked_fields || []);
