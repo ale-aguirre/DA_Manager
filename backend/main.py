@@ -1983,13 +1983,13 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         FACTORY_STATE["current_job_index"] = idx
         FACTORY_STATE["current_character"] = job.character_name
         _log(f"Procesando {idx}/{len(jobs)}: {job.character_name}")
-        loras = _parse_lora_names(job.prompt)
-        for name in loras:
-            if not _lora_exists(name):
-                _log(f"LoRA faltante: {name}. Intentando descarga...")
-                ok = await _maybe_download_lora(name)
-                if not ok:
-                    _log(f"Descarga omitida: no hay metadata disponible para '{name}'.")
+        # loras = _parse_lora_names(job.prompt)
+        # for name in loras:
+        #     if not _lora_exists(name):
+        #         _log(f"LoRA faltante: {name}. Intentando descarga...")
+        #         ok = await _maybe_download_lora(name)
+        #         if not ok:
+        #             _log(f"Descarga omitida: no hay metadata disponible para '{name}'.")
         gc = cfg_map.get(job.character_name)
         steps_override = gc.steps if gc and isinstance(gc.steps, int) else None
         cfg_override = gc.cfg_scale if gc and isinstance(gc.cfg_scale, (int, float)) else None
@@ -2240,79 +2240,8 @@ async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[Reso
         "current_prompt": None,
         "current_config": None,
     })
-    _log("Iniciando aprovisionamiento de LoRAs...")
-    # NormalizaciÃ³n robusta de resources_meta (dicts/objetos) y filtrado por URL vÃ¡lida
-    normalized = []
-    try:
-        raw_list = resources or []
-        for rm in raw_list:
-            if rm is None:
-                continue
-            d = None
-            try:
-                if isinstance(rm, dict):
-                    d = rm
-                elif hasattr(rm, "model_dump"):
-                    d = rm.model_dump()
-                elif hasattr(rm, "dict"):
-                    d = rm.dict()
-                else:
-                    d = {
-                        "character_name": getattr(rm, "character_name", None),
-                        "download_url": getattr(rm, "download_url", None),
-                        "filename": getattr(rm, "filename", None),
-                    }
-            except Exception:
-                d = {}
-            char_name = (d.get("character_name") or d.get("characterName") or d.get("name") or "").strip()
-            url_raw = (d.get("download_url") or d.get("downloadUrl") or d.get("url") or "")
-            url = url_raw.strip().replace("`", "").strip('"').strip("'")
-            fname = d.get("filename") or (char_name.lower().replace(" ", "_") if char_name else None)
-            if not char_name or not url:
-                continue
-            normalized.append({"character_name": char_name, "download_url": url, "filename": fname})
-        _log(f"Recibido Meta: {json.dumps(normalized, indent=2)}")
-    except Exception as e:
-        _log(f"Recibido Meta: (error normalizando) {e}")
-    meta_map = { (d.get("character_name") or "").strip(): d for d in normalized if (d.get("character_name") or "").strip() }
-    unique_chars = sorted(set(j.character_name for j in jobs))
-    succeeded = set()
-    failed = set()
-    for char in unique_chars:
-        rm = meta_map.get(char)
-        filename = sanitize_filename(char)
-        # Feedback de inicio: verificar existencia en disco antes de descargar
-        safe_fname = filename if filename.lower().endswith(".safetensors") else filename + ".safetensors"
-        d = get_lora_dir()
-        if d and d.exists():
-            _log(f"[INFO] Verificando existencia de {safe_fname} en disco...")
-            target = (d / safe_fname)
-            if target.exists():
-                _log("[INFO] Archivo encontrado. Omitiendo descarga.")
-                succeeded.add(char)
-                continue
-        download_url = (rm.get("download_url") if rm else "")
-        try:
-            ok = await ensure_lora(char, filename, download_url, _log)
-        except Exception as e:
-            _log(f"âŒ Error de conexiÃ³n con Civitai para {safe_fname}: {e}")
-            ok = False
-        if not ok:
-            _log(f"âŒ Error descargando {char}. Saltando sus trabajos.")
-            failed.add(char)
-        else:
-            succeeded.add(char)
-    filtered_jobs = [j for j in jobs if j.character_name in succeeded]
-    activos = len(filtered_jobs)
-    omitidos = len(failed)
-    FACTORY_STATE["total_jobs"] = activos
-    _log(f"Producción ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
-    if activos == 0:
-        FACTORY_STATE["is_active"] = False
-        _log("No hay trabajos ejecutables tras aprovisionamiento.")
-        return
-    _log("Aprovisionamiento completado. Iniciando generaciÃ³n...")
-    await produce_jobs(filtered_jobs, group_config)
+    _log("Iniciando generaciÃ³n directa (sin aprovisionamiento)...")
+    await produce_jobs(jobs, group_config)
 
 @app.post("/planner/execute")
 async def execute_plan(payload: ExecuteRequest, background_tasks: BackgroundTasks):
