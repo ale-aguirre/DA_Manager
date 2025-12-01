@@ -1234,26 +1234,13 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     drafts: List[dict] = []
 
     def _compute_distribution(n: int) -> tuple[int, int, int]:
-        """Devuelve (safe_count, ecchi_count, nsfw_count) proporcional al total n.
-        Para n < 9 usa 20/40/40 con al menos 1 SAFE.
-        Para n >= 9 usa 30/40/30.
+        """Devuelve (safe_count, ecchi_count, nsfw_count).
+        Por defecto: TODO SAFE (n, 0, 0) para que el usuario elija cambiarlo después.
         """
-        if n <= 0:
-            return (0, 0, 0)
-        if n < 9:
-            safe = max(1, int(n * 0.2))
-            ecchi = int(n * 0.4)
-            nsfw = n - safe - ecchi
-        else:
-            safe = int(round(n * 0.3))
-            ecchi = int(round(n * 0.4))
-            nsfw = n - safe - ecchi
-        # Ajustes por redondeo
-        if safe + ecchi + nsfw != n:
-            nsfw = n - safe - ecchi
-        return (safe, ecchi, nsfw)
+        return (n, 0, 0)
 
     for char in payload:
+        # ... (lines 1257-1319 omitted for brevity in thought, but included in context) ...
         real_stem = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
         lora_tag = f"<lora:{real_stem}:0.8>"
         # Triggers oficiales desde .civitai.info si existe
@@ -1317,8 +1304,15 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
              trigger = official_triggers[0]
         else:
              trigger = sanitize_filename(char.character_name)
+        
         # Determinar cantidad de jobs solicitada
-        requested_n = job_count if (isinstance(job_count, int) and job_count > 0) else (char.batch_count if (hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count and char.batch_count > 0) else 10)
+        # Prioridad: 1. char.batch_count (específico), 2. job_count (global/query), 3. Default 10
+        if hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count > 0:
+            requested_n = char.batch_count
+        elif isinstance(job_count, int) and job_count > 0:
+            requested_n = job_count
+        else:
+            requested_n = 10
 
         # 1) Intentar combos con IA
         combos = await groq_suggest_combos(char.character_name, official_triggers or (char.trigger_words or []), None, requested_n)

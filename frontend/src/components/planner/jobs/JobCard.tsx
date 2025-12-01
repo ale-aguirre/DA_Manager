@@ -12,9 +12,10 @@ import { rebuildPromptWithTriplet, rebuildPromptWithExtras, extractTriplet, extr
 interface JobCardProps {
     job: PlannerJob;
     index: number;
+    displayIndex?: number;
 }
 
-export default function JobCard({ job, index }: JobCardProps) {
+export default function JobCard({ job, index, displayIndex }: JobCardProps) {
     const {
         resources,
         updateJob,
@@ -180,7 +181,7 @@ export default function JobCard({ job, index }: JobCardProps) {
                 onClick={() => setIsExpanded(!isExpanded)}
             >
                 <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-200">Job #{index + 1}</span>
+                    <span className="text-sm font-medium text-slate-200">Job #{displayIndex !== undefined ? displayIndex + 1 : index + 1}</span>
                     {job.ai_meta && (
                         <span className="rounded bg-violet-900/30 px-1.5 py-0.5 text-[10px] text-violet-300">
                             AI Enhanced

@@ -347,6 +347,7 @@ export default function JobQueue() {
                                         key={`${character}-${i}`}
                                         job={job}
                                         index={indices[i]}
+                                        displayIndex={i}
                                     />
                                 ))}
                             </div>
