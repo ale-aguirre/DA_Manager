@@ -175,6 +175,7 @@ export async function magicFixPrompt(prompt: string): Promise<{
   camera: string;
   expression: string;
   hairstyle: string;
+  artist?: string;
   ai_reasoning?: string;
 }> {
   const res = await fetch(`${BASE_URL}/planner/magicfix`, {
@@ -297,18 +298,7 @@ export async function postFactoryClearLogs(): Promise<{ status: string }> {
   return res.json();
 }
 
-export interface PlannerResources {
-  outfits: string[];
-  poses: string[];
-  locations: string[];
-  lighting?: string[];
-  camera?: string[];
-  styles?: string[];
-  concepts?: string[];
-  expressions?: string[];
-  hairstyles?: string[];
-  upscalers?: string[];
-}
+import { PlannerResources } from "../types/planner";
 
 export async function getPlannerResources(): Promise<PlannerResources> {
   const res = await fetch(`${BASE_URL}/planner/resources`, { cache: "no-store" });

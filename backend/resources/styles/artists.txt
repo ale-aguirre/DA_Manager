@@ -1,11 +1,14 @@
-(wlop:1.2), (greg rutkowski:0.8), ethereal lighting, digital art
+(wlop:1.2), (greg rutkowski:0.8), ethereal lighting
 (modare:0.8), (asanagi:0.7), vibrant colors, dynamic anatomy
 (krenz cushart:0.6), (alphonse mucha:0.5), art nouveau, intricate details
-(art by saitom and kantoku), soft shading, detailed skin
-(art by hiten and kawacy), atmospheric, dramatic lighting
-(art by sakimichan and redjuice), semi-realistic, detailed face
-ask (askzy), minimalist, flat color, clean lines, modern anime
-egawa akira, sharp focus, fashion, distinct style
-yu hydra, clean lines, modern character design
-keinesandayoooo, vibrant landscapes, complex background
+(makoto shinkai:0.8), cinematic scenery, detailed clouds
+(james jean:0.4), (takato yamamoto:0.3), surreal, intricate lines
+ask (askzy), minimalist, flat color, clean lines
+egawa akira, sharp focus, high fashion
+yu hydra, clean lines, modern design
+keinesandayoooo, vibrant landscapes
 1990s style, retro artstyle, cel shading, grain
+anime coloring, standard anime style
+thick line, bold line, pop art style
+sketch, monochrome, manga style
+oil painting, heavy strokes, textured

@@ -9,7 +9,7 @@ import JobQueue from "./jobs/JobQueue";
 import ControlPanel from "./ControlPanel";
 import TechnicalModelPanel from "./TechnicalModelPanel";
 import PromptsEditor from "./PromptsEditor";
-import { postPlannerExecuteV2, ResourceMeta } from "../../lib/api";
+import { postPlannerExecuteV2, ResourceMeta, postPlannerDraft, PlannerDraftItem } from "../../lib/api";
 
 export default function PlannerView() {
   const {
@@ -22,7 +22,7 @@ export default function PlannerView() {
     resources,
     loadResources,
     setUiState,
-    clearAll
+    clearAll,
   } = usePlannerContext();
 
   const [activeCharacter, setActiveCharacter] = useState<string>("");
@@ -205,6 +205,60 @@ export default function PlannerView() {
     }
   };
 
+  const handleGenerateDrafts = async () => {
+    if (!activeCharacter) return;
+    setUiState({ isLoading: true });
+    try {
+      const cfg = techConfig[activeCharacter] || {};
+      const targetCount = cfg.batch_count || 1;
+
+      // Filter existing jobs for this character
+      const existingJobs = jobs.filter(j => j.character_name === activeCharacter);
+      const currentCount = existingJobs.length;
+
+      if (currentCount < targetCount) {
+        // Add needed jobs
+        const needed = targetCount - currentCount;
+        const item: PlannerDraftItem = {
+          character_name: activeCharacter,
+          trigger_words: [],
+          batch_count: needed
+        };
+        const res = await postPlannerDraft([item], undefined, true);
+        if (res.jobs && res.jobs.length > 0) {
+          setJobs(prev => [...prev, ...res.jobs]);
+          setUiState({ toast: { message: `Agregados ${res.jobs.length} jobs`, type: "success" } });
+        }
+      } else if (currentCount > targetCount) {
+        // Remove excess jobs (from the end)
+        const toRemove = currentCount - targetCount;
+        // We need to identify WHICH jobs to remove. 
+        // Strategy: Remove the last 'toRemove' jobs that belong to this character.
+        setJobs(prev => {
+          let removedCount = 0;
+          const newJobs = [...prev];
+          // Iterate backwards
+          for (let i = newJobs.length - 1; i >= 0; i--) {
+            if (removedCount >= toRemove) break;
+            if (newJobs[i].character_name === activeCharacter) {
+              newJobs.splice(i, 1);
+              removedCount++;
+            }
+          }
+          return newJobs;
+        });
+        setUiState({ toast: { message: `Removidos ${toRemove} jobs excedentes`, type: "info" } });
+      } else {
+        setUiState({ toast: { message: "Cantidad de jobs correcta", type: "info" } });
+      }
+    } catch (e) {
+      console.error(e);
+      setUiState({ toast: { message: "Error generando drafts", type: "error" } });
+    } finally {
+      setUiState({ isLoading: false });
+    }
+  };
+
   // --- Technical Panel Handlers ---
   const handleSetCheckpoint = async (title: string) => {
     if (activeCharacter) {
@@ -308,7 +362,7 @@ export default function PlannerView() {
               paramTab={paramTab}
               setParamTab={setParamTab}
               isRegenerating={isRegenerating}
-              onRegenerateDrafts={handleRegenerate}
+              onRegenerateDrafts={handleGenerateDrafts}
               reforgeUpscalers={resources?.upscalers || []}
               refreshingUpscalers={false}
               upscalerVersion={0}
@@ -326,10 +380,16 @@ export default function PlannerView() {
             <h3 className="mb-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Debug Zone</h3>
             <div className="flex gap-2">
               <button
-                onClick={clearAll}
+                onClick={() => {
+                  if (confirm("¿Estás seguro de reiniciar todo? Se perderán los jobs actuales.")) {
+                    clearAll();
+                    // Force redirect to Radar
+                    window.location.href = "/radar";
+                  }
+                }}
                 className="flex items-center gap-2 rounded border border-red-900/30 bg-red-900/10 px-3 py-2 text-xs text-red-400 hover:bg-red-900/20"
               >
-                <Trash2 className="h-3 w-3" /> Reset Cache
+                <Trash2 className="h-3 w-3" /> Reset & Radar
               </button>
               <button
                 onClick={() => setShowPayloadModal(true)}

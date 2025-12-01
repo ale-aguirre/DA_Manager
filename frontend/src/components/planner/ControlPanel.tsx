@@ -73,7 +73,7 @@ export default function ControlPanel(props: ControlPanelProps) {
             </>
           ) : (
             <>
-              <RefreshCw className="h-3 w-3" /> Generar
+              <RefreshCw className="h-3 w-3" /> Update
             </>
           )}
         </button>

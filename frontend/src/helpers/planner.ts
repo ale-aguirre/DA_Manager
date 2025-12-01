@@ -8,7 +8,7 @@ export function splitPrompt(prompt: string): string[] {
   return prompt
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter((t) => t && t !== "(none)" && t !== "undefined" && t !== "null");
 }
 
 export function extractTriplet(
@@ -51,12 +51,14 @@ export function extractExtras(
     camera?: string[];
     expressions?: string[];
     hairstyles?: string[];
+    artists?: string[];
   }
 ): {
   lighting?: string;
   camera?: string;
   expression?: string;
   hairstyle?: string;
+  artist?: string;
 } {
   const tokens = splitPrompt(prompt);
   const result: {
@@ -64,6 +66,7 @@ export function extractExtras(
     camera?: string;
     expression?: string;
     hairstyle?: string;
+    artist?: string;
   } = {};
 
   if (!resources) return result;
@@ -82,6 +85,7 @@ export function extractExtras(
   if (resources.camera) result.camera = findMatch(resources.camera);
   if (resources.expressions) result.expression = findMatch(resources.expressions);
   if (resources.hairstyles) result.hairstyle = findMatch(resources.hairstyles);
+  if (resources.artists) result.artist = findMatch(resources.artists);
 
   return result;
 }
@@ -189,12 +193,69 @@ export function rebuildPromptWithTriplet(
 
 export function rebuildPromptWithExtras(
   prompt: string,
-  extras: Record<string, string | undefined>
+  newExtras: {
+    lighting?: string;
+    camera?: string;
+    expression?: string;
+    hairstyle?: string;
+    artist?: string;
+  },
+  resources?: {
+    lighting?: string[];
+    camera?: string[];
+    expressions?: string[];
+    hairstyles?: string[];
+    artists?: string[];
+  },
+  oldExtras?: {
+    lighting?: string;
+    camera?: string;
+    expression?: string;
+    hairstyle?: string;
+    artist?: string;
+  }
 ): string {
-  const tokens = splitPrompt(prompt);
-  Object.values(extras).forEach((v) => {
-    if (v && !tokens.includes(v)) tokens.push(v);
-  });
+  let tokens = splitPrompt(prompt);
+
+  const replaceOrAdd = (newValue: string | undefined, oldValue: string | undefined, resourceList: string[] | undefined) => {
+    if (!newValue) return;
+    const newValClean = newValue.trim();
+    if (!newValClean) return;
+
+    // 1. Remove Old Value
+    if (oldValue) {
+      const oldClean = oldValue.trim().toLowerCase();
+      if (oldClean) {
+        tokens = tokens.filter(t => {
+          const tLow = t.toLowerCase();
+          return tLow !== oldClean && !tLow.includes(oldClean) && !oldClean.includes(tLow);
+        });
+      }
+    }
+
+    // 2. Remove from Resource List (if provided) to ensure no duplicates/conflicts
+    if (resourceList && resourceList.length > 0) {
+      tokens = tokens.filter((t) => {
+        const lowToken = t.toLowerCase();
+        if (lowToken === newValClean.toLowerCase()) return true; // Keep if identical
+        const isResource = resourceList.some(r => {
+          const rLow = r.toLowerCase();
+          return (rLow.length > 2 && lowToken.includes(rLow)) || (lowToken.length > 2 && rLow.includes(lowToken));
+        });
+        return !isResource;
+      });
+    }
+
+    // 3. Add New Value
+    tokens.push(newValClean);
+  };
+
+  replaceOrAdd(newExtras.lighting, oldExtras?.lighting, resources?.lighting);
+  replaceOrAdd(newExtras.camera, oldExtras?.camera, resources?.camera);
+  replaceOrAdd(newExtras.expression, oldExtras?.expression, resources?.expressions);
+  replaceOrAdd(newExtras.hairstyle, oldExtras?.hairstyle, resources?.hairstyles);
+  replaceOrAdd(newExtras.artist, oldExtras?.artist, resources?.artists);
+
   return tokens.join(", ");
 }
 

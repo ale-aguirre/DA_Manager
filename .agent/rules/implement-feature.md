@@ -2,7 +2,7 @@
 trigger: always_on
 ---
 
-. CONTEXT & STRATEGY
+CONTEXT & STRATEGY
 Read docs/ORCHESTRATOR.md to align with the current Phase.
 
 CRITICAL: Review backend/.env.example. ALL external paths and URLs (Forge, Outputs, LoRAs) MUST come from Environment Variables.

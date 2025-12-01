@@ -3,10 +3,11 @@
 import React, { useState } from "react";
 import {
     Camera, ChevronDown, ChevronUp, Loader2, MapPin,
-    Shirt, Sparkles, Trash2, User, Zap, Lock, Unlock
+    Shirt, Sparkles, Trash2, User, Zap, Lock, Unlock, Brush
 } from "lucide-react";
 import { usePlannerContext } from "../../../context/PlannerContext";
 import { PlannerJob } from "../../../types/planner";
+import { rebuildPromptWithTriplet, rebuildPromptWithExtras, extractTriplet, extractExtras } from "../../../helpers/planner";
 
 interface JobCardProps {
     job: PlannerJob;
@@ -48,6 +49,87 @@ export default function JobCard({ job, index }: JobCardProps) {
 
     const isLocked = (field: string) => (job.locked_fields || []).includes(field);
 
+    // Sync Prompt -> Fields
+    React.useEffect(() => {
+        if (!resources) return;
+        // Parse prompt
+        const triplet = extractTriplet(job.prompt, {
+            outfits: resources.outfits,
+            poses: resources.poses,
+            locations: resources.locations
+        });
+        const extras = extractExtras(job.prompt, {
+            lighting: resources.lighting,
+            camera: resources.camera,
+            expressions: resources.expressions,
+            hairstyles: resources.hairstyles,
+            artists: resources.artists
+        });
+
+        const updates: Partial<PlannerJob> = {};
+        let hasUpdates = false;
+
+        // Helper to check and update if not locked and different
+        const check = (field: keyof PlannerJob, val: string | undefined) => {
+            if (!isLocked(field as string) && val && val !== job[field]) {
+                updates[field] = val as any;
+                hasUpdates = true;
+            }
+        };
+
+        check("outfit", triplet.outfit);
+        check("pose", triplet.pose);
+        check("location", triplet.location);
+        check("lighting", extras.lighting);
+        check("camera", extras.camera);
+        check("expression", extras.expression);
+        check("hairstyle", extras.hairstyle);
+        check("artist", extras.artist);
+
+        if (hasUpdates) {
+            updateJob(index, updates);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [job.prompt, resources, job.locked_fields, index, updateJob]); // Depend on prompt changes
+
+    const handleFieldChange = (field: keyof PlannerJob, value: string) => {
+        // 1. Update the field itself
+        const updates: any = { [field]: value };
+
+        // 2. Rebuild prompt
+        if (resources) {
+            let newPrompt = job.prompt;
+
+            // Is it a triplet field?
+            if (["outfit", "pose", "location"].includes(field as string)) {
+                newPrompt = rebuildPromptWithTriplet(
+                    newPrompt,
+                    { [field]: value },
+                    { outfits: resources.outfits, poses: resources.poses, locations: resources.locations },
+                    { [field]: job[field as keyof PlannerJob] as string }
+                );
+            }
+            // Is it an extra field?
+            else if (["lighting", "camera", "expression", "hairstyle", "artist"].includes(field as string)) {
+                newPrompt = rebuildPromptWithExtras(
+                    newPrompt,
+                    { [field]: value },
+                    {
+                        lighting: resources.lighting,
+                        camera: resources.camera,
+                        expressions: resources.expressions,
+                        hairstyles: resources.hairstyles,
+                        artists: resources.artists
+                    },
+                    { [field]: job[field as keyof PlannerJob] as string }
+                );
+            }
+            updates.prompt = newPrompt;
+        }
+
+        updateJob(index, updates);
+    };
+
     const renderSelect = (label: string, icon: React.ReactNode, field: keyof PlannerJob, options: string[] = []) => {
         const locked = isLocked(field as string);
         return (
@@ -68,7 +150,7 @@ export default function JobCard({ job, index }: JobCardProps) {
                     className={`w-full rounded border px-2 py-1 text-xs text-slate-200 ${locked ? "border-amber-900/50 bg-amber-950/20 text-amber-200/70" : "border-slate-700 bg-slate-950"
                         }`}
                     value={getValue(field)}
-                    onChange={(e) => updateJob(index, { [field]: e.target.value } as any)}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
                     disabled={locked}
                 >
                     <option value="">(Empty)</option>
@@ -134,6 +216,8 @@ export default function JobCard({ job, index }: JobCardProps) {
                         {renderSelect("Camera", <Camera className="h-3 w-3" />, "camera", resources?.camera)}
                         {renderSelect("Expression", <User className="h-3 w-3" />, "expression", resources?.expressions)}
                         {renderSelect("Hairstyle", <Sparkles className="h-3 w-3" />, "hairstyle", resources?.hairstyles)}
+                        {renderSelect("Artist / Style", <Brush className="h-3 w-3" />, "artist", resources?.artists)}
+                        {renderSelect("Intensity", <Zap className="h-3 w-3" />, "intensity", ["SFW", "ECCHI", "NSFW"])}
                     </div>
 
                     {/* Actions Bar */}
@@ -144,7 +228,7 @@ export default function JobCard({ job, index }: JobCardProps) {
                             className="flex items-center gap-1.5 rounded border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs text-violet-300 transition-colors hover:bg-violet-500/20 disabled:opacity-50"
                         >
                             <Sparkles className="h-3.5 w-3.5" />
-                            Alter Fate
+                            Remix
                         </button>
                     </div>
 

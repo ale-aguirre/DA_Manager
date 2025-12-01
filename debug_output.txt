@@ -1,0 +1,11 @@
+Querying API for: leslie__demon_deals__ponyxl__sd_1.5__illustrious
+Status Code: 200
+Response JSON:
+{
+  "trainedWords": [],
+  "baseModel": "",
+  "name": null,
+  "id": null,
+  "modelId": null
+}
+FAILURE: trainedWords is empty or missing.

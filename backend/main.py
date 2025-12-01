@@ -294,6 +294,16 @@ async def local_lora_info(name: str):
         return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None}
     try:
         j = json.loads(p.read_text(encoding="utf-8"))
+        # DEBUG: Log keys found
+        print(f"[DEBUG] Info file {p.name} keys: {list(j.keys())}")
+        
+        # Check for various trigger keys
+        triggers = j.get("trainedWords") or j.get("triggers") or j.get("trained_words") or []
+        if triggers:
+             print(f"[DEBUG] Triggers found: {triggers}")
+        else:
+             print(f"[DEBUG] No triggers found in {p.name}. Content sample: {str(j)[:100]}")
+
         imgs = j.get("images") or []
         image_urls = []
         try:
@@ -305,14 +315,16 @@ async def local_lora_info(name: str):
         except Exception:
             image_urls = []
         return {
-            "trainedWords": j.get("trainedWords") or j.get("triggers") or [],
+            "trainedWords": triggers,
             "baseModel": j.get("baseModel") or "",
             "name": j.get("name"),
             "id": j.get("id"),
             "modelId": j.get("modelId"),
             "imageUrls": image_urls,
         }
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] Error parsing {p.name}: {e}")
+        return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None, "imageUrls": []}
         return {"trainedWords": [], "baseModel": "", "name": None, "id": None, "modelId": None, "imageUrls": []}
 
 @app.get("/civitai/model-info")
@@ -891,10 +903,10 @@ QUALITY_TAGS = (
 
 @app.get("/planner/resources")
 async def planner_resources():
-    """Devuelve listas de recursos para planificaciÃ³n.
-    Incluye: outfits, poses, locations y ademÃ¡s lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (visuals/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). TambiÃ©n styles y concepts legacy.
+    """Devuelve listas de recursos para planificación.
+    Incluye: outfits, poses, locations y además lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (visuals/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). También styles y concepts legacy.
     """
-    # Lectura desde ambas rutas para mÃ¡xima compatibilidad
+    # Lectura desde ambas rutas para máxima compatibilidad
     outfits_top = _read_lines("outfits.txt")
     outfits_casual = _read_lines("wardrobe/casual.txt")
     outfits_lingerie = _read_lines("wardrobe/lingerie.txt")
@@ -910,13 +922,18 @@ async def planner_resources():
     expressions = _read_lines("visuals/expressions.txt")
     hairstyles = _read_lines("visuals/hairstyles.txt")
     upscalers = _read_lines("tech/upscalers.txt")
+    artists = _read_lines("styles/artists.txt")
 
     # Unificar y deduplicar
-    outfits = list(dict.fromkeys([x for x in (outfits_top + outfits_casual + outfits_lingerie + outfits_cosplay) if x and x.strip()]))
-    poses = list(dict.fromkeys([x for x in (poses_top + poses_concepts) if x and x.strip()]))
-    locations = list(dict.fromkeys([x for x in (locations_top + locations_concepts) if x and x.strip()]))
+    def _clean_res(lst: List[str]) -> List[str]:
+        banned = {"safe", "sfw", "ecchi", "nsfw", "rating_safe", "rating_questionable", "rating_explicit"}
+        return list(dict.fromkeys([x for x in lst if x and x.strip() and x.strip().lower() not in banned]))
 
-    # Fallback de emergencia para evitar vacÃ­os
+    outfits = _clean_res(outfits_top + outfits_casual + outfits_lingerie + outfits_cosplay)
+    poses = _clean_res(poses_top + poses_concepts)
+    locations = _clean_res(locations_top + locations_concepts)
+
+    # Fallback de emergencia para evitar vacíos
     if not outfits:
         outfits = FALLBACK_OUTFITS
     if not poses:
@@ -935,6 +952,7 @@ async def planner_resources():
         "expressions": expressions,
         "hairstyles": hairstyles,
         "upscalers": upscalers,
+        "artists": artists,
     }
 
 @app.get("/resources/expressions")
@@ -1206,7 +1224,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                     {"role": "system", "content": system_prompt.replace("{name}", character_name).replace("{location}", preferred_location or "(none)")},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.8,
+                temperature=0.9,
             )
             content = completion.choices[0].message.content.strip()
             start = content.find("[")
@@ -1318,12 +1336,14 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             return [t for t in (tags or []) if (t and str(t).strip() and str(t).strip().lower() not in banned)]
         
         # Si tenemos triggers oficiales, usarlos tal cual (especialmente el primero que suele ser el principal)
-        if official_triggers:
-             # Usamos EXACTAMENTE el primer elemento completo, que suele ser la frase de activación completa.
-             # El usuario ha especificado explícitamente que NO quiere nada más.
+        # Prioridad: Payload del frontend (ya enriquecido por Radar)
+        if char.trigger_words and len(char.trigger_words) > 0:
+             # Asumimos que el frontend envía el trigger correcto como primer elemento
+             trigger = char.trigger_words[0]
+        elif official_triggers:
              trigger = official_triggers[0]
         else:
-             trigger = ", ".join(_clean_tags(char.trigger_words or [])) or sanitize_filename(char.character_name)
+             trigger = sanitize_filename(char.character_name)
         # Determinar cantidad de jobs solicitada
         requested_n = job_count if (isinstance(job_count, int) and job_count > 0) else (char.batch_count if (hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count and char.batch_count > 0) else 10)
 
@@ -1363,6 +1383,11 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             o = o or "casual clothes"
             p = p or "standing pose"
             l = l or "studio"
+            # Sanitization: Remove (none) ghost tags
+            o = re.sub(r'\(none\),?', '', o, flags=re.IGNORECASE).strip()
+            p = re.sub(r'\(none\),?', '', p, flags=re.IGNORECASE).strip()
+            l = re.sub(r'\(none\),?', '', l, flags=re.IGNORECASE).strip()
+            
             validated.append({"outfit": o, "pose": p, "location": l, "lighting": li, "camera": ca})
 
         per_char_jobs: List[PlannerJob] = []
@@ -1398,7 +1423,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             atmo_choice = random.choice(atmospheres) if atmospheres else ""
             cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot"))
             expression_choice = random.choice(expressions) if expressions else "smile"
-            hairstyle_choice = random.choice(hairstyles) if hairstyles else "ponytail"
+            # hairstyle_choice removed
             # quality_end removed
             # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
             # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
@@ -1407,7 +1432,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 trigger,
                 cam_choice,
                 expression_choice,
-                hairstyle_choice,
+                # hairstyle_choice removed
                 (lighting_choice or atmo_choice or "soft lighting"),
                 rating,
                 base["outfit"],
@@ -1448,7 +1473,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 "lighting": lighting_choice or atmo_choice,
                 "camera": cam_choice,
                 "expression": expression_choice,
-                "hairstyle": hairstyle_choice,
+                # "hairstyle": hairstyle_choice,
                 "ai_meta": ai_meta,
             })
 
@@ -1474,9 +1499,9 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
 
 @app.post("/planner/magicfix")
 async def planner_magicfix(req: MagicFixRequest):
-    """Sugiere SOLO una nueva combinaciÃ³n coherente de Outfit+Pose+Location.
-    No reescribe el prompt; mantiene la estructura tÃ©cnica intacta en el cliente.
-    Devuelve JSON: {"outfit": str, "pose": str, "location": str}
+    """Sugiere SOLO una nueva combinación coherente de Outfit+Pose+Location+Artist.
+    No reescribe el prompt; mantiene la estructura técnica intacta en el cliente.
+    Devuelve JSON: {"outfit": str, "pose": str, "location": str, "artist": str, ...}
     """
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt requerido")
@@ -1486,23 +1511,24 @@ async def planner_magicfix(req: MagicFixRequest):
     lighting = _read_lines("styles/lighting.txt")
     camera = _read_lines("styles/camera.txt")
     expressions = _read_lines("visuals/expressions.txt")
-    
-    print(f"[MagicFix] Resources loaded: Outfits={len(outfits)}, Poses={len(poses)}, Locations={len(locations)}")
+    artists = _read_lines("styles/artists.txt")
+
+    print(f"[Remix] Resources loaded: Outfits={len(outfits)}, Poses={len(poses)}, Locations={len(locations)}, Artists={len(artists)}")
 
     if not outfits or not poses or not locations:
-        print("[MagicFix] ERROR: Resources empty!")
-        raise HTTPException(status_code=500, detail="Recursos insuficientes: outfits/poses/locations vacÃ­os.")
+        print("[Remix] ERROR: Resources empty!")
+        raise HTTPException(status_code=500, detail="Recursos insuficientes: outfits/poses/locations vacíos.")
 
-    # Fallback sin Groq: sugerir combinaciÃ³n aleatoria vÃ¡lida
-    if not GROQ_API_KEY or Groq is None:
-        print("[MagicFix] No Groq API Key. Using Fallback.")
-        o = random.choice(outfits)
-        p = random.choice(poses)
-        l = random.choice(locations)
+    # Fallback sin Groq: sugerir combinación aleatoria válida
+    def get_random():
+        o = random.choice(outfits) if outfits else "casual clothes"
+        p = random.choice(poses) if poses else "standing"
+        l = random.choice(locations) if locations else "simple background"
         li = random.choice(lighting) if lighting else "soft lighting"
-        cam = random.choice(camera) if camera else "front view"
+        cam = random.choice(camera) if camera else "cowboy shot"
         exp = random.choice(expressions) if expressions else "smile"
-        print(f"[MagicFix] Fallback selected: {o} / {p} / {l}")
+        art = random.choice(artists) if artists else ""
+        print(f"[Remix] Fallback selected: {o} / {p} / {l} / {art}")
         return {
             "outfit": o,
             "pose": p,
@@ -1510,76 +1536,58 @@ async def planner_magicfix(req: MagicFixRequest):
             "lighting": li,
             "camera": cam,
             "expression": exp,
-            "ai_reasoning": f"âœ¨ IA: Fallback aplicado con combinaciÃ³n aleatoria coherente ({o} / {p} / {l}).",
+            "artist": art,
+            "ai_reasoning": f"🎲 Remix Aleatorio (IA no disponible): {o} / {p} / {l}",
         }
 
-    # Con Groq: sugerir combinaciÃ³n coherente basada en el prompt y recursos
+    if not GROQ_API_KEY or Groq is None:
+        print("[Remix] No Groq API Key. Using Fallback.")
+        return get_random()
+
+    # Con Groq: sugerir combinación coherente basada en el prompt y recursos
     try:
         client = Groq(api_key=GROQ_API_KEY)
         system_prompt = (
-            "Eres un asistente de planificaciÃ³n para Stable Diffusion. "
-            "Lee el prompt/tags existente y sugiere EXACTAMENTE UNA combinaciÃ³n coherente y estÃ©ticamente agradable de Outfit+Pose+Location+Lighting+Camera+Expression que encaje con el personaje. "
-            "NO reescribas el prompt completo y NO incluyas explicaciones. "
-            'Devuelve SOLO JSON con formato EXACTO: {"outfit":"...","pose":"...","location":"...","lighting":"...","camera":"...","expression":"..."}.'
+            "You are an Anime Art Director. Create a UNIQUE, VIVID scene. "
+            "Select: Outfit, Pose, Location, Lighting, Camera Angle, Expression AND Artist Style. "
+            "Use the provided resources as a guide, but you can be creative if needed. "
+            f"Available Outfits: {', '.join(outfits[:20])}... "
+            f"Available Poses: {', '.join(poses[:20])}... "
+            f"Available Locations: {', '.join(locations[:20])}... "
+            f"Available Artists: {', '.join(artists[:20])}... "
+            "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\", \"artist\": \"...\"}"
         )
-        example_outfits = ", ".join(outfits[:10])
-        example_poses = ", ".join(poses[:10])
-        example_locations = ", ".join(locations[:10])
-        user_prompt = (
-            f"Prompt existente (tags): {req.prompt}\n"
-            f"Outfits disponibles (ejemplos): {example_outfits}\n"
-            f"Poses disponibles (ejemplos): {example_poses}\n"
-            f"Locations disponibles (ejemplos): {example_locations}\n"
-            "Responde con SOLO JSON del sexteto."
-        )
+        noise = random.randint(0, 999999)
+        user_prompt = f"Current Tags: {req.prompt}\nSeed: {noise}\nTask: Remix this scene completely."
+
         completion = await groq_chat_with_fallbacks(
             client,
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.8,
+            temperature=0.95,
         )
         content = completion.choices[0].message.content.strip()
         start = content.find("{")
         end = content.rfind("}")
-        json_str = content[start:end+1] if start != -1 and end != -1 else content
-        try:
-            data = json.loads(json_str)
-            if isinstance(data, dict) and data.get("outfit") and data.get("pose") and data.get("location"):
-                o = str(data["outfit"]) ; p = str(data["pose"]) ; l = str(data["location"])
-                li = str(data.get("lighting") or "") ; cam = str(data.get("camera") or "") ; exp = str(data.get("expression") or "")
-                return {
-                    "outfit": o,
-                    "pose": p,
-                    "location": l,
-                    "lighting": li,
-                    "camera": cam,
-                    "expression": exp,
-                    "ai_reasoning": f"âœ¨ IA: CombinaciÃ³n sugerida por contexto del prompt ({o} / {p} / {l}).",
-                }
-        except Exception:
-            pass
+        json_str = content[start:end+1] if start != -1 and end != -1 else "{}"
         
-        print("[MagicFix] Groq failed or returned invalid JSON. Using Fallback.")
-        o = random.choice(outfits)
-        p = random.choice(poses)
-        l = random.choice(locations)
-        li = random.choice(lighting) if lighting else "soft lighting"
-        cam = random.choice(camera) if camera else "front view"
-        exp = random.choice(expressions) if expressions else "smile"
-        print(f"[MagicFix] Fallback selected: {o} / {p} / {l}")
+        data = json.loads(json_str)
+        
         return {
-            "outfit": o,
-            "pose": p,
-            "location": l,
-            "lighting": li,
-            "camera": cam,
-            "expression": exp,
-            "ai_reasoning": f"âœ¨ IA: Fallback aplicado con combinaciÃ³n aleatoria coherente ({o} / {p} / {l}).",
+            "outfit": data.get("outfit") or (random.choice(outfits) if outfits else "casual"),
+            "pose": data.get("pose") or (random.choice(poses) if poses else "standing"),
+            "location": data.get("location") or (random.choice(locations) if locations else "simple background"),
+            "lighting": data.get("lighting") or (random.choice(lighting) if lighting else "soft lighting"),
+            "camera": data.get("camera") or (random.choice(camera) if camera else "cowboy shot"),
+            "expression": data.get("expression") or (random.choice(expressions) if expressions else "smile"),
+            "artist": data.get("artist") or (random.choice(artists) if artists else ""),
+            "ai_reasoning": "✨ Remix Aplicado"
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error en Groq: {str(e)}")
+        print(f"[Remix] Error en Groq: {str(e)}")
+        return get_random()
 
 class PlannerAnalyzeRequest(BaseModel):
     character_name: str

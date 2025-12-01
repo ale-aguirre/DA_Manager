@@ -19,6 +19,8 @@ export interface PlannerJob {
   camera?: string;
   expression?: string;
   hairstyle?: string;
+  artist?: string;
+  intensity?: string;
 }
 
 export interface RecommendedParams {
@@ -89,6 +91,7 @@ export interface PlannerResources {
   concepts?: string[];
   expressions?: string[];
   hairstyles?: string[];
+  artists?: string[];
   upscalers?: string[];
   checkpoints?: string[];
   vaes?: string[];

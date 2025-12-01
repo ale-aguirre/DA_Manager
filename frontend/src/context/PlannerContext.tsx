@@ -108,7 +108,37 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             }
 
             const savedLore = localStorage.getItem("planner_lore");
-            if (savedLore) setLoreByCharacterState(JSON.parse(savedLore));
+            if (savedLore) {
+                try {
+                    const parsed = JSON.parse(savedLore);
+                    const clean: Record<string, string> = {};
+                    if (typeof parsed === 'object' && parsed !== null) {
+                        Object.keys(parsed).forEach(k => {
+                            const val = parsed[k];
+                            clean[k] = typeof val === 'string' ? val : "";
+                        });
+                    }
+                    setLoreByCharacterState(clean);
+                } catch { setLoreByCharacterState({}); }
+            }
+
+            const savedContext = localStorage.getItem("planner_context");
+            if (savedContext) {
+                try {
+                    const parsedCtx = JSON.parse(savedContext);
+                    setMetaByCharacterState(prev => {
+                        const next = { ...prev };
+                        Object.keys(parsedCtx).forEach(k => {
+                            // Merge context (base_prompt, params) into meta
+                            next[k] = { ...(next[k] as object || {}), ...parsedCtx[k] };
+                        });
+                        return next;
+                    });
+                    // Removed incorrect setLoreByCharacterState(parsedCtx)
+                } catch (e) {
+                    console.error("Failed to parse planner_context", e);
+                }
+            }
         } catch (e) {
             console.error("Failed to load from storage", e);
         } finally {
@@ -270,6 +300,12 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             const applyLocation = locked.has("location") ? undefined : fixed.location;
             const removeLocation = locked.has("location") ? undefined : job.location;
 
+            // Note: We don't have removeArtist logic in rebuildPromptWithTriplet, 
+            // but we can pass it to rebuildPromptWithExtras if we update it, 
+            // or just rely on appending for now as artist styles are usually additive.
+            // Actually, if we want to replace, we might need to handle it.
+            // For now, let's just append.
+
             // Rebuild the prompt string using the new values
             // We need the resources to know what to replace, but they are in state.
             // Since we are inside the provider, we have access to 'resources'.
@@ -296,28 +332,47 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             const applyCamera = locked.has("camera") ? undefined : fixed.camera;
             const applyExpression = locked.has("expression") ? undefined : fixed.expression;
             const applyHairstyle = locked.has("hairstyle") ? undefined : fixed.hairstyle;
+            const applyArtistExtra = locked.has("artist") ? undefined : fixed.artist;
 
             // Note: rebuildPromptWithExtras currently only adds, doesn't remove/replace intelligently.
             // If we want to support locking properly for extras, we might need a better helper.
             // For now, we just don't add the new one if locked.
-            newPrompt = rebuildPromptWithExtras(newPrompt, {
-                lighting: applyLighting,
-                camera: applyCamera,
-                expression: applyExpression,
-                hairstyle: applyHairstyle
-            });
+            newPrompt = rebuildPromptWithExtras(
+                newPrompt,
+                {
+                    lighting: applyLighting,
+                    camera: applyCamera,
+                    expression: applyExpression,
+                    hairstyle: applyHairstyle,
+                    artist: applyArtistExtra
+                },
+                resources ? {
+                    lighting: resources.lighting,
+                    camera: resources.camera,
+                    expressions: resources.expressions,
+                    hairstyles: resources.hairstyles,
+                    artists: resources.artists
+                } : undefined,
+                {
+                    lighting: job.lighting,
+                    camera: job.camera,
+                    expression: job.expression,
+                    hairstyle: job.hairstyle,
+                    artist: job.artist
+                }
+            );
 
             updateJob(index, {
                 prompt: newPrompt,
                 // Apply fixed values to the job fields so they are visible in UI
                 // If locked, keep the old value
                 outfit: locked.has("outfit") ? job.outfit : fixed.outfit,
-                pose: locked.has("pose") ? job.pose : fixed.pose,
                 location: locked.has("location") ? job.location : fixed.location,
                 lighting: locked.has("lighting") ? job.lighting : fixed.lighting,
                 camera: locked.has("camera") ? job.camera : fixed.camera,
                 expression: locked.has("expression") ? job.expression : fixed.expression,
                 hairstyle: locked.has("hairstyle") ? job.hairstyle : fixed.hairstyle,
+                artist: locked.has("artist") ? job.artist : fixed.artist,
                 // Also store in ai_meta for reference
                 ai_meta: {
                     ...job.ai_meta,

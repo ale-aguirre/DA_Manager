@@ -14,7 +14,8 @@ import {
   RefreshCw,
   Download,
   ExternalLink,
-  Camera
+  Camera,
+  Brush
 } from "lucide-react";
 import {
   extractTriplet,
@@ -40,6 +41,7 @@ export default function ProductionQueue(props: {
     expressions?: string[];
     hairstyles?: string[];
     upscalers?: string[];
+    artists?: string[];
   } | null;
   metaByCharacter: Record<
     string,
@@ -57,7 +59,7 @@ export default function ProductionQueue(props: {
   ) => void;
   applyExtrasEdit: (
     row: number,
-    field: "lighting" | "camera" | "expression" | "hairstyle",
+    field: "lighting" | "camera" | "expression" | "hairstyle" | "artist",
     value: string
   ) => void;
   updatePrompt: (idx: number, value: string) => void;
@@ -530,6 +532,7 @@ export default function ProductionQueue(props: {
                     const cameraVal = j.camera || meta?.camera || extras.camera || "";
                     const expressionVal = j.expression || meta?.expression || extras.expression || "";
                     const hairstyleVal = j.hairstyle || meta?.hairstyle || extras.hairstyle || "";
+                    const artistVal = j.artist || meta?.artist || extras.artist || "";
 
                     const loraStem = character
                       .toLowerCase()
@@ -783,6 +786,32 @@ export default function ProductionQueue(props: {
                                   ))}
                                 </select>
                               </div>
+                              <div>
+                                <label className="text-xs text-slate-400 flex items-center gap-1">
+                                  <Brush className="h-3 w-3 text-slate-400" />
+                                  <span>Artist / Style</span>
+                                </label>
+                                <select
+                                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 p-2 text-sm text-slate-200"
+                                  value={artistVal}
+                                  onChange={(e) =>
+                                    applyExtrasEdit(
+                                      idx,
+                                      "artist",
+                                      e.target.value
+                                    )
+                                  }
+                                >
+                                  <option value="">(vacío)</option>
+                                  {(
+                                    (resources?.artists || []) as string[]
+                                  ).map((o) => (
+                                    <option key={o} value={o}>
+                                      {o}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                             <div className="mt-3 flex items-center justify-end gap-2">
                               {/* Botón Alter Fate (Reemplazo de Magic Fix) */}
@@ -792,7 +821,7 @@ export default function ProductionQueue(props: {
                                 className="inline-flex items-center gap-2 rounded-md border border-violet-600/50 bg-violet-900/20 px-3 py-1.5 text-xs text-violet-200 hover:bg-violet-800/40 disabled:opacity-60 transition-colors"
                               >
                                 <Sparkles className="h-4 w-4 text-violet-400" />
-                                <span>Alter Fate</span>
+                                <span>Remix</span>
                               </button>
                             </div>
                             <div className="mt-3 rounded-md border border-slate-700 bg-slate-800/40 p-2 text-sm text-slate-200">

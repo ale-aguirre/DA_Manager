@@ -5,7 +5,7 @@ import React from "react";
 import { Scan, Loader2, Send, Trash2, ListX, X, Save, Search, CheckCircle, AlertCircle } from "lucide-react";
 import CivitaiCard from "./CivitaiCard";
 import type { CivitaiModel } from "../../types/civitai";
-import { postPlannerDraft, postPlannerAnalyze, getLoraVerify, postDownloadLora, type LoraVerifyResponse, getLocalLoraInfo } from "../../lib/api";
+import { postPlannerDraft, postPlannerAnalyze, getLoraVerify, postDownloadLora, type LoraVerifyResponse, getLocalLoraInfo, getLocalLoras } from "../../lib/api";
 import { useRouter } from "next/navigation";
 import COPY from "../../lib/copy";
 
@@ -34,6 +34,70 @@ function SkeletonCard() {
       </div>
     </div>
   );
+}
+
+
+// Helper para obtener el nombre de archivo real
+function getBestFilename(model: CivitaiModel): string {
+  // Intentar obtener el nombre del archivo del primer modelo/versión
+  if (model.modelVersions && model.modelVersions.length > 0) {
+    const v = model.modelVersions[0];
+    if (v.files && v.files.length > 0) {
+      // Preferir archivo "Model" o "Pruned Model" si existe, sino el primero
+      const primary = v.files.find(f => f.type === "Model" || f.type === "Pruned Model") || v.files[0];
+      if (primary.name) return primary.name;
+    }
+  }
+  // Fallback al nombre del modelo sanitizado (no ideal pero necesario)
+  return model.name.replace(/[^a-zA-Z0-9._-]/g, "_") + ".safetensors";
+}
+
+function useAutoVerify(
+  enabled: boolean,
+  models: CivitaiModel[],
+  verifyFn: (filename: string) => Promise<LoraVerifyResponse>,
+  setStatuses: React.Dispatch<React.SetStateAction<Record<string, LoraState>>>
+) {
+  React.useEffect(() => {
+    if (!enabled || models.length === 0) return;
+
+    let active = true;
+    const run = async () => {
+      for (const m of models) {
+        if (!active) break;
+
+        try {
+          const filename = getBestFilename(m);
+          // Mark as checking
+          setStatuses(prev => ({
+            ...prev,
+            [m.name]: { ...(prev[m.name] || { safetensors: false, info: false }), status: "checking" }
+          }));
+
+          const res = await verifyFn(filename);
+          if (!active) break;
+
+          setStatuses(prev => ({
+            ...prev,
+            [m.name]: {
+              status: res.exists && res.civitai_info ? "ok" : "partial",
+              safetensors: res.safetensors,
+              info: res.civitai_info
+            }
+          }));
+        } catch (e) {
+          if (!active) break;
+          setStatuses(prev => ({
+            ...prev,
+            [m.name]: { status: "missing_safetensors", safetensors: false, info: false }
+          }));
+        }
+      }
+    };
+
+    run();
+    return () => { active = false; };
+  }, [enabled, models]);
 }
 
 export default function RadarView({ items, loading, error, onScan }: RadarViewProps) {
@@ -241,127 +305,138 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     return [...base, ...tags];
   };
 
+
+
   const handleSendToPlanning = async () => {
     if (selectedItems.length === 0) return;
-
-    // Mostramos estado de carga (reusamos isDownloading o creamos uno local si prefieres)
     setIsDownloading(true);
 
     try {
-      // 1. Identificar modelos seleccionados
       const selectedModels = items.filter((m) => selectedItems.some((s) => s.modelId === m.id));
 
-      // 2. ENRIQUECIMIENTO REAL (La clave del éxito)
-      // Iteramos uno por uno para buscar su "Frase Sagrada" en el backend
-      const enrichedAll = await Promise.all(selectedModels.map(async (m) => {
-        let finalTriggers = deriveTriggerWords(m); // Fallback por defecto (tags simples)
+      // 1. Obtener la lista REAL de archivos en disco para hacer match preciso
+      let localFiles: string[] = [];
+      try {
+        const { files } = await getLocalLoras();
+        localFiles = files.map(f => f.toLowerCase());
+      } catch (e) { console.warn("No se pudo listar loras locales", e); }
+
+      // 2. Clasificación (Personajes vs Recursos)
+      const characters = selectedModels.filter(m => {
+        const cat = (m.ai_category || "").toLowerCase();
+        if (cat === "character") return true;
+        const tags = (m.tags || []).join(" ").toLowerCase();
+        return tags.includes("character") || tags.includes("girl") || tags.includes("boy") || tags.includes("1girl");
+      });
+
+      const resources = selectedModels.filter(m => !characters.includes(m));
+
+      // 3. Construcción del Payload con Búsqueda de Archivo Real
+      const payload = await Promise.all(characters.map(async (m) => {
+        let finalTriggers = deriveTriggerWords(m); // Fallback inicial
 
         try {
-          // Intentamos buscar el archivo local usando el nombre sanitizado
-          // Nota: La sanitización debe coincidir con la del backend
-          const safeName = m.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
+          // 1. Try to get the EXACT filename from Civitai metadata (the one we downloaded)
+          let targetName = m.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-.]/g, "");
 
-          // Llamada a la API local
-          const info = await getLocalLoraInfo(safeName);
+          const bestFile = getBestFilename(m);
+          if (bestFile) {
+            // Remove extension for the search (e.g. "foo.safetensors" -> "foo")
+            targetName = bestFile.replace(/\.[^/.]+$/, "");
+          }
+
+          // 2. Local fuzzy matching (just in case)
+          // Improved matching: Canonicalize both names (remove all separators)
+          const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const canonTarget = canonical(targetName);
+
+          const exactMatch = localFiles.find(f => f === targetName.toLowerCase());
+          const fuzzyMatch = localFiles.find(f => {
+            const canonF = canonical(f);
+            return canonF.includes(canonTarget) || canonTarget.includes(canonF);
+          });
+
+          const finalName = exactMatch || fuzzyMatch || targetName;
+
+          const info = await getLocalLoraInfo(finalName);
 
           if (info && Array.isArray(info.trainedWords) && info.trainedWords.length > 0) {
-            // ¡ENCONTRADO! Usamos la primera frase COMPLETA.
-            // Ejemplo: "M1tsur1, 1girl, solo..."
-            console.log(`🎯 [Radar] Trigger real encontrado para ${m.name}:`, info.trainedWords[0]);
             finalTriggers = [info.trainedWords[0]];
+            console.log(`🎯 [Radar] Trigger OFICIAL recuperado para ${m.name} (Archivo: ${finalName}):`, finalTriggers[0]);
           } else {
-            console.log(`⚠️ [Radar] Sin trigger local para ${m.name}, usando tags.`);
+            console.warn(`⚠️ [Radar] Archivo encontrado (${finalName}) pero sin trainedWords. Usando fallback:`, finalTriggers);
           }
         } catch (e) {
           console.warn(`❌ [Radar] Error consultando info local para ${m.name}:`, e);
         }
 
+        console.log(`✅ [Radar] Final Triggers para ${m.name}:`, finalTriggers);
+
         return {
-          ...m,
-          _enrichedTriggers: finalTriggers,
+          character_name: m.name,
+          trigger_words: finalTriggers,
         };
       }));
 
-      // 3. SMART DISPATCH: Separar Personajes vs Recursos
-      const isCharacter = (m: CivitaiModel) => {
-        const cat = (m.ai_category || "").toLowerCase();
-        if (cat === "character") return true;
-        const tags = (m.tags || []).map(t => t.toLowerCase());
-        return tags.some(t => ["character", "girl", "boy", "1girl", "woman", "man"].includes(t));
-      };
+      // 4. Envío al Backend (Solo Personajes)
+      if (payload.length > 0) {
+        const res = await postPlannerDraft(payload, 1); // Batch count 1
+        localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
 
-      const characters = enrichedAll.filter(isCharacter);
-      const resources = enrichedAll.filter(m => !isCharacter(m));
-
-      console.log(`🧠 [Smart Dispatch] Characters: ${characters.length}, Resources: ${resources.length}`);
-
-      // 4. Enviar Borrador al Backend (SOLO PERSONAJES)
-      let jobsResponse: any = { jobs: [], drafts: [] };
-
-      if (characters.length > 0) {
-        const payload = characters.map(c => ({
-          character_name: c.name,
-          trigger_words: c._enrichedTriggers
-        }));
-
-        const jobCount = 1;
-        console.log("🚀 [Radar] Enviando Payload (Characters Only):", payload);
-        jobsResponse = await postPlannerDraft(payload, jobCount);
-      } else {
-        console.log("ℹ️ [Radar] No characters selected, skipping draft generation.");
+        // Guardar Contexto
+        try {
+          const context: any = {};
+          res.drafts.forEach((d: any) => {
+            context[d.character] = {
+              base_prompt: d.base_prompt,
+              recommended_params: d.recommended_params,
+              reference_images: d.reference_images
+            };
+          });
+          localStorage.setItem("planner_context", JSON.stringify(context));
+        } catch { }
       }
 
-      // 5. Guardar en LocalStorage (Crucial para que PlannerView lo lea)
-      // Si ya había jobs, ¿los sobrescribimos o añadimos? Por ahora sobrescribimos como antes.
-      // Si no hubo characters, jobsResponse.jobs estará vacío.
-      localStorage.setItem("planner_jobs", JSON.stringify(jobsResponse.jobs));
+      // 5. Guardar Metadatos (Todos)
+      const meta = selectedModels.map((m) => {
+        const charData = payload.find(p => p.character_name === m.name);
+        const realTrigger = charData ? charData.trigger_words : deriveTriggerWords(m);
 
-      // Guardar Meta enriquecida (TODOS: Characters + Resources)
-      // Esto asegura que los estilos/ropa se descarguen en el panel técnico
-      const meta = enrichedAll.map((m) => {
-        // Usamos los triggers enriquecidos que acabamos de calcular
-        const richTriggers = m._enrichedTriggers;
+        let dUrl: string | undefined = undefined;
+        if (m.modelVersions?.[0]?.downloadUrl) dUrl = m.modelVersions[0].downloadUrl;
+        else if (m.modelVersions?.[0]?.files?.[0]?.downloadUrl) dUrl = m.modelVersions[0].files[0].downloadUrl;
 
-        const versions = m.modelVersions || [];
-        let url: string | undefined;
-        for (const v of versions) {
-          if (v.downloadUrl) { url = v.downloadUrl; break; }
-          const files = v.files || [];
-          for (const f of files) { if (f.downloadUrl) { url = f.downloadUrl; break; } }
-          if (url) break;
-        }
-        const firstImage = (m.images || []).find((it) => (it as { type?: string })?.type === "image")?.url || m.images?.[0]?.url || undefined;
+        const img = (m.images || []).find((it: any) => it.type === "image")?.url || m.images?.[0]?.url;
 
         return {
           modelId: m.id,
-          downloadUrl: url,
+          downloadUrl: dUrl,
           character_name: m.name,
-          image_url: firstImage,
-          trigger_words: richTriggers
+          image_url: img,
+          trigger_words: realTrigger,
+          type: characters.includes(m) ? "Character" : "Resource"
         };
       });
-      localStorage.setItem("planner_meta", JSON.stringify(meta));
 
-      // Contexto enriquecido (Prompts base) - Solo de lo que generó drafts
+      let existingMeta: any[] = [];
       try {
-        const contextByCharacter: Record<string, unknown> = {};
-        for (const d of jobsResponse.drafts || []) {
-          contextByCharacter[d.character] = {
-            base_prompt: d.base_prompt,
-            recommended_params: d.recommended_params,
-            reference_images: d.reference_images,
-          };
-        }
-        localStorage.setItem("planner_context", JSON.stringify(contextByCharacter));
-      } catch { }
+        const raw = JSON.parse(localStorage.getItem("planner_meta") || "[]");
+        existingMeta = Array.isArray(raw) ? raw : [];
+      } catch { existingMeta = []; }
 
-      router.push("/planner");
+      const newMeta = [...existingMeta.filter((e: any) => !meta.find(n => n.character_name === e.character_name)), ...meta];
+      localStorage.setItem("planner_meta", JSON.stringify(newMeta));
 
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("Failed to draft planner", msg);
-      alert("Error al generar plan: " + msg);
-    } finally {
+      if (payload.length > 0) {
+        router.push("/planner");
+      } else {
+        if (resources.length > 0) alert("Recursos guardados en librería. (Sin personajes seleccionados)");
+        setIsDownloading(false);
+        setSelectedItems([]);
+      }
+
+    } catch (e: any) {
+      alert("Error crítico en Radar: " + e.message);
       setIsDownloading(false);
     }
   };
@@ -694,64 +769,4 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 }
 
 // Helper para obtener el nombre de archivo real
-function getBestFilename(model: CivitaiModel): string {
-  // Intentar obtener el nombre del archivo del primer modelo/versión
-  if (model.modelVersions && model.modelVersions.length > 0) {
-    const v = model.modelVersions[0];
-    if (v.files && v.files.length > 0) {
-      // Preferir archivo "Model" o "Pruned Model" si existe, sino el primero
-      const primary = v.files.find(f => f.type === "Model" || f.type === "Pruned Model") || v.files[0];
-      if (primary.name) return primary.name;
-    }
-  }
-  // Fallback al nombre del modelo sanitizado (no ideal pero necesario)
-  return model.name.replace(/[^a-zA-Z0-9._-]/g, "_") + ".safetensors";
-}
 
-function useAutoVerify(
-  enabled: boolean,
-  models: CivitaiModel[],
-  verifyFn: (filename: string) => Promise<LoraVerifyResponse>,
-  setStatuses: React.Dispatch<React.SetStateAction<Record<string, LoraState>>>
-) {
-  React.useEffect(() => {
-    if (!enabled || models.length === 0) return;
-
-    let active = true;
-    const run = async () => {
-      for (const m of models) {
-        if (!active) break;
-
-        try {
-          const filename = getBestFilename(m);
-          // Mark as checking
-          setStatuses(prev => ({
-            ...prev,
-            [m.name]: { ...(prev[m.name] || { safetensors: false, info: false }), status: "checking" }
-          }));
-
-          const res = await verifyFn(filename);
-          if (!active) break;
-
-          setStatuses(prev => ({
-            ...prev,
-            [m.name]: {
-              status: res.exists && res.civitai_info ? "ok" : "partial",
-              safetensors: res.safetensors,
-              info: res.civitai_info
-            }
-          }));
-        } catch (e) {
-          if (!active) break;
-          setStatuses(prev => ({
-            ...prev,
-            [m.name]: { status: "missing_safetensors", safetensors: false, info: false }
-          }));
-        }
-      }
-    };
-
-    run();
-    return () => { active = false; };
-  }, [enabled, models]);
-}
