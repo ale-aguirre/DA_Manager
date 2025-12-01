@@ -170,11 +170,33 @@ export default function PlannerView() {
         .filter(([char]) => activeCharacters.has(char))
         .map(([char, cfg]) => ({
           character_name: char,
-          ...cfg
+          // Map camelCase to snake_case for backend
+          hires_fix: cfg.hiresFix ?? true,
+          denoising_strength: cfg.denoisingStrength ?? 0.35,
+          hires_steps: cfg.hiresSteps ?? 10,
+          clip_skip: cfg.clipSkip ?? 2,
+          upscale_by: cfg.upscaleBy ?? 1.5,
+          // Direct mapping
+          adetailer: cfg.adetailer ?? true,
+          adetailer_model: cfg.adetailerModel || "face_yolov8n.pt",
+          upscaler: cfg.upscaler || "4x-UltraSharp",
+          steps: cfg.steps ?? 28,
+          cfg_scale: cfg.cfg ?? 7,
+          width: cfg.width ?? 832,
+          height: cfg.height ?? 1216,
+          sampler: cfg.sampler,
+          scheduler: cfg.schedulerType,
+          checkpoint: cfg.checkpoint,
+          vae: cfg.vae,
+          extra_loras: cfg.extraLoras,
+          batch_size: cfg.batch_size,
+          batch_count: cfg.batch_count,
         }));
 
       await postPlannerExecuteV2(jobs, resourcesMeta, groupConfig);
       setUiState({ toast: { message: "Generación iniciada", type: "success" } });
+      // Redirect to Factory to see progress
+      window.location.href = "/factory";
     } catch (e) {
       console.error(e);
       setUiState({ toast: { message: "Error al iniciar generación", type: "error" } });
@@ -341,7 +363,25 @@ export default function PlannerView() {
                   resources_meta: [],
                   group_config: Object.entries(techConfig).map(([char, cfg]) => ({
                     character_name: char,
-                    ...cfg
+                    hires_fix: cfg.hiresFix ?? true,
+                    denoising_strength: cfg.denoisingStrength ?? 0.35,
+                    hires_steps: cfg.hiresSteps ?? 10,
+                    clip_skip: cfg.clipSkip ?? 2,
+                    upscale_by: cfg.upscaleBy ?? 1.5,
+                    adetailer: cfg.adetailer ?? true,
+                    adetailer_model: cfg.adetailerModel || "face_yolov8n.pt",
+                    upscaler: cfg.upscaler || "4x-UltraSharp",
+                    steps: cfg.steps ?? 28,
+                    cfg_scale: cfg.cfg ?? 7,
+                    width: cfg.width ?? 832,
+                    height: cfg.height ?? 1216,
+                    sampler: cfg.sampler,
+                    scheduler: cfg.schedulerType,
+                    checkpoint: cfg.checkpoint,
+                    vae: cfg.vae,
+                    extra_loras: cfg.extraLoras,
+                    batch_size: cfg.batch_size,
+                    batch_count: cfg.batch_count,
                   }))
                 }, null, 2)}
               </pre>

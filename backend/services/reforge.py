@@ -151,9 +151,13 @@ async def call_txt2img(prompt: Optional[str] = None,
         except Exception:
             pass
     async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
-        resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            print(f"[ERROR] ReForge returned {e.response.status_code}: {e.response.text}")
+            raise
 
 
 async def list_checkpoints() -> List[str]:

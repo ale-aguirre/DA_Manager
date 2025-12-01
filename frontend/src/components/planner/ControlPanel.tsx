@@ -32,11 +32,11 @@ export default function ControlPanel(props: ControlPanelProps) {
     refreshUpscalers,
   } = props;
 
-  const { techConfig, setTechConfig, globalConfig, setGlobalConfig } = usePlannerContext();
+  const { techConfig, setTechConfig } = usePlannerContext();
 
   // Helper to get current config for active character
   const currentConfig = techConfig[activeCharacter] || {};
-  const globalDefaults = globalConfig || {};
+  // const globalDefaults = globalConfig || {};
 
   const handleConfigChange = (updates: any) => {
     setTechConfig(activeCharacter, updates);
@@ -258,8 +258,8 @@ export default function ControlPanel(props: ControlPanelProps) {
             refreshUpscalers={refreshUpscalers}
             refreshing={refreshingUpscalers}
             upscalerVersion={upscalerVersion}
-            denoise={0.35} // TODO: Add denoise to TechConfig if needed or keep separate
-            onChangeDenoise={() => { }} // Placeholder
+            denoise={currentConfig.denoisingStrength ?? 0.35}
+            onChangeDenoise={(v) => handleConfigChange({ denoisingStrength: v })}
             upscaleBy={currentConfig.upscaleBy || 1.5}
             onChangeUpscaleBy={(v) => handleConfigChange({ upscaleBy: v })}
             hiresSteps={currentConfig.hiresSteps || 10}

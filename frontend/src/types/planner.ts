@@ -59,6 +59,7 @@ export interface TechConfig {
   extraLoras?: string[];
   extraLorasWeighted?: { name: string; weight: number }[];
   hiresSteps?: number;
+  denoisingStrength?: number;
   batch_size?: number;
   batch_count?: number;
   adetailer?: boolean;

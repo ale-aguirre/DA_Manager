@@ -57,6 +57,15 @@ FALLBACK_LOCATIONS = [
     "classroom",
 ]
 
+DEFAULT_NEGATIVE_PROMPT = (
+    "worst quality, low quality, average quality, lowres, jpeg artifacts, blurry, "
+    "bad anatomy, bad hands, missing fingers, extra digit, fewer digits, bad feet, "
+    "text, watermark, signature, artist name, username, logo, "
+    "realistic, photorealistic, 3d, render, source filmmaker, "
+    "(bad quality, worst quality:1.2), anatomical nonsense, "
+    "interlocked fingers, bad proportions, deformed anatomy"
+)
+
 # Utilidades
 def sanitize_filename(name: str) -> str:
     """Sanitiza nombres para uso en sistemas de archivos: minÃºsculas, '_' y '-'."""
@@ -1871,9 +1880,9 @@ async def _save_image(character_name: str, image_b64: str, override_dir: Optiona
         pass
     return str(target)
 
-# [DEPRECATED] produce_jobs (v1) eliminado. Usar produce_jobs para producciÃ³n asÃ­ncrona con aprovisionamiento.
+# [DEPRECATED] produce_jobs (v1) eliminado. Usar produce_jobs para Producción asÃ­ncrona con aprovisionamiento.
 
-# ===== FASE 4: Motor de ProducciÃ³n =====
+# ===== FASE 4: Motor de Producción =====
 from fastapi import BackgroundTasks
 import base64
 from datetime import datetime
@@ -1971,7 +1980,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
         name = (gc.character_name or "").strip()
         if name:
             cfg_map[name] = gc
-    _log(f"ProducciÃ³n iniciada: {len(jobs)} trabajos.")
+    _log(f"Producción iniciada: {len(jobs)} trabajos.")
     for idx, job in enumerate(jobs, start=1):
         if FACTORY_STATE.get("stop_requested"):
             _log("Parada de emergencia solicitada. Deteniendo cola.")
@@ -2056,8 +2065,10 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             bs = options.get("sd_batch_size") if isinstance(options, dict) else None
             bs = bs if isinstance(bs, int) else 1
             # Persistir prompt y configuraciÃ³n actual
+            raw_neg = getattr(job, "negative_prompt", None)
+            final_negative = raw_neg if raw_neg and raw_neg.strip() else DEFAULT_NEGATIVE_PROMPT
             FACTORY_STATE["current_prompt"] = final_prompt
-            FACTORY_STATE["current_negative_prompt"] = getattr(job, "negative_prompt", None)
+            FACTORY_STATE["current_negative_prompt"] = final_negative
             # Override de checkpoint por job si se especifica
             if gc and isinstance(gc.checkpoint, str) and gc.checkpoint.strip():
                 new_ckpt = gc.checkpoint.strip()
@@ -2134,11 +2145,18 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             # Por ahora solo logueamos, la implementaciÃ³n completa requerirÃ­a actualizar call_txt2img.
             
             # Overrides avanzados: VAE y Clip Skip (CLIP_stop_at_last_layers)
-            vae_override = (gc.vae if (gc and isinstance(gc.vae, str) and gc.vae.strip()) else None)
+            vae_override = (gc.vae if (gc and isinstance(gc.vae, str) and gc.vae.strip() and gc.vae != "Automatic") else None)
             cs_override = (gc.clip_skip if (gc and isinstance(gc.clip_skip, int) and 1 <= gc.clip_skip <= 12) else None)
             override_settings = {}
-            override_settings["sd_vae"] = (vae_override if vae_override else "Automatic")
-            _log(f"VAE override: {override_settings['sd_vae']}")
+            if vae_override:
+                override_settings["sd_vae"] = vae_override
+                _log(f"VAE override: {vae_override}")
+            else:
+                _log("VAE: Usando configuración del modelo/global (sin override)")
+            
+            # Fix para imágenes negras en SDXL/Pony (NaNs en attention)
+            override_settings["upcast_attn"] = True
+            
             if cs_override is not None:
                 override_settings["CLIP_stop_at_last_layers"] = cs_override
 
@@ -2149,7 +2167,7 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             try:
                 data = await call_txt2img(
                     prompt=final_prompt, 
-                    negative_prompt=getattr(job, "negative_prompt", None),
+                    negative_prompt=final_negative,
                     cfg_scale=cfg_override, 
                     steps=steps_override, 
                     enable_hr=hr_override, 
@@ -2197,11 +2215,16 @@ async def produce_jobs(jobs: List[PlannerJob], group_config: Optional[List[Group
             FACTORY_STATE["last_image_path"] = path
             FACTORY_STATE["last_image_b64"] = f"data:image/png;base64,{last_b64}"
             _log(f"[INFO] Imagen guardada en: {path}")
+            _log(f"[INFO] Imagen guardada en: {path}")
+        except httpx.HTTPStatusError as e:
+            err_msg = e.response.text if getattr(e, "response", None) else str(e)
+            _log(f"Error HTTP ReForge ({e.response.status_code}): {err_msg}")
+            continue
         except Exception as e:
-            _log(f"Error en generaciÃ³n: {e}")
+            _log(f"Error en generación: {e}")
             continue
     FACTORY_STATE["is_active"] = False
-    _log("ProducciÃ³n finalizada.")
+    _log("Producción finalizada.")
 
 def schedule_production(jobs: List[PlannerJob]):
     try:
@@ -2288,7 +2311,7 @@ async def execute_pipeline(jobs: List[PlannerJob], resources: Optional[List[Reso
     activos = len(filtered_jobs)
     omitidos = len(failed)
     FACTORY_STATE["total_jobs"] = activos
-    _log(f"ProducciÃ³n ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
+    _log(f"Producción ajustada: {activos} trabajos activos ({omitidos} omitidos por error de descarga).")
     if activos == 0:
         FACTORY_STATE["is_active"] = False
         _log("No hay trabajos ejecutables tras aprovisionamiento.")
@@ -2797,6 +2820,11 @@ async def factory_status(limit: int = 50):
         "last_image_b64": FACTORY_STATE.get("last_image_b64"),
         "logs": logs_slice,
     }
+
+@app.post("/factory/clear-logs")
+async def factory_clear_logs():
+    FACTORY_STATE["logs"] = []
+    return {"status": "ok"}
 
 @app.post("/factory/stop")
 async def factory_stop():

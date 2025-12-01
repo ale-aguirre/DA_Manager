@@ -84,7 +84,15 @@ export default function FactoryView() {
     }
   };
 
-  const clearLogs = () => { setLogs([]); };
+  const clearLogs = async () => {
+    try {
+      await postFactoryClearLogs();
+      setLogs([]);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || "Error al limpiar consola");
+    }
+  };
 
   const severityColor = (line: string) => {
     const s = (line || "").toLowerCase();

@@ -1,58 +1,11 @@
-Soft warm glow of sunset on character faces
-Gentle morning light peeking through blinds
-Dappled shade under trees on a summer day
-Warm golden tones of a crackling fireplace
-Softbox lighting in a serene indoor setting
-Pastel hues of dawn breaking over a cityscape
-Luminous moonlight casting an ethereal glow
-Rays of sunlight filtering through a misty forest
-Warm beige tones of a cozy library on a rainy day
-Soft focus of a lantern in a quiet village
-Bright vibrant colors of a bustling street festival
-Cool blue tones of a snowy winter morning
-Warm inviting light of a family dinner scene
-Soft pink hues of a romantic sunset on a beach
-Glowing embers of a dying fire on a cold night
-Luminous aurora borealis in a night sky
-Soft white light of a peaceful snowfall
-Warm sepia tones of a nostalgic flashback scene
-Gentle glow of string lights in a summer evening
-Bright harsh light of a desert sun at noon
-Cool gray tones of a rainy city street
-Soft lavender hues of a magical forest at dusk
-Warm golden light of a setting sun on a mountain
-Luminous glow of fireflies on a summer night
-Soft peach tones of a warm summer breeze
-Glowing soft light of a full moon in a clear sky
-Warm honey tones of a sunny afternoon in a field
-Soft mint hues of a refreshing spring morning
-Bright vibrant colors of a carnival at night
-Cool blue tones of a still ocean on a winter morning
-Soft coral hues of a sunset on a tropical island
-Glowing warm light of a bonfire on a cold winter night
-Luminous soft glow of a city skyline at dusk
-Warm caramel tones of a cozy autumn evening
-Soft sage hues of a misty forest at dawn
-Glowing embers of a fireplace on a cold winter morning
-Bright harsh light of a sunny day in a desert canyon
-Cool gray tones of a foggy city street at night
-Soft blush hues of a romantic evening in a garden
-Warm golden tones of a sunny afternoon in a park
-Luminous glow of a lighthouse on a rocky coast
-Soft turquoise hues of a tropical ocean at noon
-Glowing soft light of a lantern in a quiet alleyway
-Warm beige tones of a serene indoor setting at night
-Soft lemon hues of a bright and sunny morning
-Cool blue tones of a snowy forest at dawn
-Glowing warm light of a sunset on a mountain peak
-Luminous soft glow of a city street at night
-Soft powder hues of a gentle spring snowfall
-Warm honey tones of a cozy summer evening
-Glowing embers of a dying fire on a cold winter night
-Bright vibrant colors of a street festival at night
-Cool gray tones of a rainy city street at dusk
-Soft peach tones of a warm and cozy bedroom
-Glowing soft light of a full moon in a clear night sky
-Warm golden tones of a sunny afternoon in a field
-Soft lavender hues of a magical and mystical scene
-Luminous glow of fireflies on a warm summer evening
+cinematic lighting, volumetric lighting, god rays
+soft lighting, ambient occlusion, gentle
+neon lights, cyberpunk atmosphere, rim light, dark
+sunset, golden hour, warm lighting, lens flare
+night, moonlight, cold lighting, blue atmosphere
+dramatic shadows, chiaroscuro, contrast
+studio lighting, softbox, clean
+bioluminescence, glowing particles, fantasy
+underwater, caustic lighting, blue tint
+backlight, silhouette, strong rim light
+sunbeam, lens flare, natural light

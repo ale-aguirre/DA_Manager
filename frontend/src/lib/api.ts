@@ -291,6 +291,12 @@ export async function postFactoryStop(): Promise<{ status: string }> {
   return res.json();
 }
 
+export async function postFactoryClearLogs(): Promise<{ status: string }> {
+  const res = await fetch(`${BASE_URL}/factory/clear-logs`, { method: "POST" });
+  if (!res.ok) throw new Error("Error clearing logs");
+  return res.json();
+}
+
 export interface PlannerResources {
   outfits: string[];
   poses: string[];

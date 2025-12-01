@@ -1,70 +1,18 @@
-Short bob
-Pixie cut
-Long straight
-Curly ponytail
-Messy bangs
-Spiky hair
-Shaggy layers
-Blunt fringe
-Wavy locks
-Pigtail braids
-High pony
-Low bun
-Side swept
-Layered chop
-Feathered cut
-Choppy layers
-Asymmetrical
-Bob with bangs
-Long curly
-Straight with fringe
-Pinned back
-Half up
-Twintails
-Braided crown
-Fishtail braid
-Ponytail with bangs
-Short layers
-Emo style
-Scene hair
-Mullet
-Shaggy bob
-Layered bob
-Wavy bob
-Curly bob
-Straight pixie
-Bob with pony
-Long and straight
-Side pony
-High bun
-Low pony
-Layered pony
-Curly pony
-Wavy pony
-Braided pigtails
-Half braided
-Goddess braids
-Double buns
-Pinned back curls
-Loose waves
-Tousled hair
-Undone look
-Sleek and straight
-Polished bob
-Effortless waves
-Soft layers
-Romantic curls
-Vintage waves
-Retro bob
-Classic pony
-Elegant updo
-Whimsical braids
-Youthful pigtails
-Quirky layers
-Edgy chop
-Dramatic curls
-Feminine waves
-Androgynous style
-Boyish cut
-Girly braids
-Rebellious hair
+long hair, straight hair, silky
+short hair, bob cut, sharp
+long hair, ponytail, high ponytail
+long hair, twintails, low twintails
+long hair, twin braids, braided
+medium hair, wolf cut, shaggy
+short hair, pixie cut, tomboy
+long hair, hime cut, elegant
+very long hair, floating hair, ethereal
+long hair, drill hair, ojou-sama
+updo, hair bun, messy bun
+braided ponytail, intricate
+half updo, elegant
+hair over one eye, mysterious
+ahoge, expressive hair, heart ahoge
+hair between eyes, detailed bangs
+messy hair, bedhead, fluffy
+wet hair, soaked
