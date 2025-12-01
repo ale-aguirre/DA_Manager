@@ -77,38 +77,9 @@ def sanitize_filename(name: str) -> str:
     return cleaned or "unknown"
 
 async def canonicalize_character_name(name: str) -> str:
-    try:
-        cache = FACTORY_STATE.get("canonical_cache") or {}
-        key = (name or "").strip()
-        if key in cache:
-            return cache[key]
-        base = sanitize_filename(name)
-        need = any(ord(c) > 127 for c in key)
-        if not need:
-            cache[key] = base
-            FACTORY_STATE["canonical_cache"] = cache
-            return base
-        api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            cache[key] = base
-            FACTORY_STATE["canonical_cache"] = cache
-            return base
-        client = Groq(api_key=api_key)
-        messages = [
-            {"role": "system", "content": "Return a filesystem-safe ASCII slug for the given character name. Use underscores. Only letters, numbers, underscore or hyphen."},
-            {"role": "user", "content": key},
-        ]
-        completion = await groq_chat_with_fallbacks(client, messages, temperature=0.1)
-        try:
-            content = completion.choices[0].message.content
-        except Exception:
-            content = base
-        out = sanitize_filename(content or base)
-        cache[key] = out
-        FACTORY_STATE["canonical_cache"] = cache
-        return out
-    except Exception:
-        return sanitize_filename(name)
+    # Simplificado: usar siempre sanitize_filename para evitar alucinaciones del LLM
+    # y garantizar nombres de carpeta consistentes y predecibles.
+    return sanitize_filename(name)
 
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
@@ -1562,11 +1533,11 @@ async def planner_magicfix(req: MagicFixRequest):
         intensity_context = ""
         if req.intensity:
             if req.intensity == "SFW":
-                intensity_context = "Create a SAFE (SFW) scene. Avoid explicit poses or nudity. Use wholesome or cool outfits."
+                intensity_context = "CRITICAL: Create a SAFE (SFW) scene. NO cleavage, NO suggestive poses. Use wholesome, casual, or cool outfits."
             elif req.intensity == "ECCHI":
-                intensity_context = "Create a SUGGESTIVE (Ecchi) scene. Use slightly revealing outfits or playful poses, but NOT fully explicit."
+                intensity_context = "CRITICAL: Create a SUGGESTIVE (Ecchi) scene. Use slightly revealing outfits (swimsuit, cleavage) or playful poses, but NOT fully explicit."
             elif req.intensity == "NSFW":
-                intensity_context = "Create a NSFW/EXPLICIT scene. Use daring poses and revealing outfits appropriate for mature content."
+                intensity_context = "CRITICAL: Create a NSFW/EXPLICIT scene. Use daring poses (kneeling, all fours, spreading) and revealing outfits (lingerie, latex, nude if artist style permits)."
 
         system_prompt = (
             "You are an Anime Art Director. Create a UNIQUE, VIVID scene. "

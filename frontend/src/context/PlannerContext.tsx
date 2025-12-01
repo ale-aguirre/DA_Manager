@@ -324,6 +324,14 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                 { outfit: removeOutfit, pose: removePose, location: removeLocation }
             );
 
+            // Fix: If intensityOverride is present, we must update the tags in the prompt
+            // because 'job.prompt' might still have the old tags (closure staleness)
+            // or we just want to ensure the new intensity is enforced.
+            if (intensityOverride) {
+                const { updateIntensityTags } = await import("../helpers/planner");
+                newPrompt = updateIntensityTags(newPrompt, intensityOverride as "SFW" | "ECCHI" | "NSFW");
+            }
+
             // Add extras (lighting, camera, expression, hairstyle)
             // This helper appends them if not present
             const { rebuildPromptWithExtras } = await import("../helpers/planner");
