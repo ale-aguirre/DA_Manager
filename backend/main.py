@@ -1379,16 +1379,16 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             safe_count, ecchi_count, nsfw_count = _compute_distribution(requested_n)
         for i, base in enumerate(validated[:requested_n]):
             if i < safe_count:
-                intensity = "SAFE"
+                intensity = "SFW"
             elif i < safe_count + ecchi_count:
                 intensity = "ECCHI"
             else:
                 intensity = "NSFW"
-            rating = "rating_safe" if intensity == "SAFE" else ("rating_questionable, cleavage" if intensity == "ECCHI" else "rating_explicit, nsfw, explicit")
+            rating = "rating_safe" if intensity == "SFW" else ("rating_questionable, cleavage" if intensity == "ECCHI" else "rating_explicit, nsfw, explicit")
             # Lighting/CÃ¡mara: usar sugerencia IA si existe; si no, fallback y atmÃ³sfera
             lighting_choice = (base.get("lighting") or "").strip() or (random.choice(lighting) if lighting else "soft lighting")
             atmo_choice = random.choice(atmospheres) if atmospheres else ""
-            cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SAFE" else "cowboy shot"))
+            cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SFW" else "cowboy shot"))
             expression_choice = random.choice(expressions) if expressions else "smile"
             # hairstyle_choice removed
             # quality_end removed

@@ -195,7 +195,8 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
                         <span className="text-[10px] uppercase text-slate-500 font-bold tracking-wider">Intensity</span>
                         <div className="flex bg-slate-950 rounded border border-slate-800 p-0.5">
                             {["SFW", "ECCHI", "NSFW"].map((opt) => {
-                                const current = getValue("intensity") || "SFW";
+                                let current = getValue("intensity") || "SFW";
+                                if (current === "SAFE") current = "SFW";
                                 const isActive = current === opt;
                                 let colorClass = "text-slate-400 hover:text-slate-200";
                                 if (isActive) {
