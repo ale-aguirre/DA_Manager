@@ -373,9 +373,6 @@ export const computeTechBootstrap = (params: BootstrapParams): {
 } => {
   // Lógica pura de inicialización
   const {
-    activeCharacter,
-    techConfigByCharacter,
-    globalCheckpoint,
     options,
     upscalers,
     vaes,
