@@ -1,13 +1,11 @@
 cowboy shot, character focus
 upper body, portrait, emotion focus
-full body, wide shot
-close-up, eye focus, detailed face
-dutch angle, dynamic, unstable
+full body, wide angle lens
+close-up, detailed face, eye focus
+dutch angle, dynamic framing
 from below, low angle, imposing
 from above, high angle, vulnerable
-fisheye, distorted, artistic
+fisheye, artistic distortion
 looking at viewer, eye contact
-facing away, back view, mystery
-depth of field, bokeh, cinematic focus
-rule of thirds, perfect composition
-foreshortening, dynamic perspective
+depth of field, f/1.8, bokeh
+cinematic angle, movie still

@@ -1,20 +1,8 @@
-bedroom (soft lighting)
-dungeon (chains & torches)
-rooftop at night
-shrine garden
-classroom empty
-locker room
-bathhouse
-tatami room
-neon-lit alley
-beach at sunset
-hot springs outdoor
-luxury hotel suite
-laboratory sci-fi
-mansion library
-night club VIP
-dark forest clearing
-cyberpunk apartment
-studio set (white backdrop)
-dojou training hall
-throne room
+simple background, white background
+grey background, studio background
+abstract background, gradient background
+two-tone background, colorful background
+blurred background, bokeh
+indoor, studio, professional lighting
+photoshoot background, backdrop
+minimalist background, clean background
