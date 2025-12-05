@@ -206,54 +206,86 @@ export default function PlannerView() {
   };
 
   const handleGenerateDrafts = async () => {
-    if (!activeCharacter) return;
+    // Collect all unique characters from current jobs + activeCharacter (if any)
+    const uniqueCharacters = new Set<string>();
+    if (activeCharacter) uniqueCharacters.add(activeCharacter);
+    jobs.forEach(j => uniqueCharacters.add(j.character_name));
+
+    if (uniqueCharacters.size === 0) return;
+
+    // Get master batch count from active character
+    const masterConfig = activeCharacter ? techConfig[activeCharacter] : {};
+    const masterBatchCount = masterConfig?.batch_count || 1;
+
     setUiState({ isLoading: true });
     try {
-      const cfg = techConfig[activeCharacter] || {};
-      const targetCount = cfg.batch_count || 1;
+      const itemsToAdd: PlannerDraftItem[] = [];
+      let totalRemoved = 0;
+      let totalAdded = 0;
 
-      // Filter existing jobs for this character
-      const existingJobs = jobs.filter(j => j.character_name === activeCharacter);
-      const currentCount = existingJobs.length;
+      // Work on a copy to calculate removals
+      let newJobs = [...jobs];
 
-      if (currentCount < targetCount) {
-        // Add needed jobs
-        const needed = targetCount - currentCount;
-        const item: PlannerDraftItem = {
-          character_name: activeCharacter,
-          trigger_words: [],
-          batch_count: needed
-        };
-        const res = await postPlannerDraft([item], undefined, true);
-        if (res.jobs && res.jobs.length > 0) {
-          setJobs(prev => [...prev, ...res.jobs]);
-          setUiState({ toast: { message: `Agregados ${res.jobs.length} jobs`, type: "success" } });
+      for (const charName of Array.from(uniqueCharacters)) {
+        // Apply master batch count to all characters
+        // We also update the config so it persists if we switch characters
+        if (charName !== activeCharacter) {
+          setTechConfig(charName, { batch_count: masterBatchCount });
         }
-      } else if (currentCount > targetCount) {
-        // Remove excess jobs (from the end)
-        const toRemove = currentCount - targetCount;
-        // We need to identify WHICH jobs to remove. 
-        // Strategy: Remove the last 'toRemove' jobs that belong to this character.
-        setJobs(prev => {
-          let removedCount = 0;
-          const newJobs = [...prev];
-          // Iterate backwards
+
+        const targetCount = masterBatchCount;
+
+        const charJobs = newJobs.filter(j => j.character_name === charName);
+        const currentCount = charJobs.length;
+
+        if (currentCount < targetCount) {
+          // Need to add jobs
+          const needed = targetCount - currentCount;
+          itemsToAdd.push({
+            character_name: charName,
+            trigger_words: [], // Backend will resolve triggers
+            batch_count: needed
+          });
+          totalAdded += needed;
+        } else if (currentCount > targetCount) {
+          // Need to remove jobs
+          const toRemove = currentCount - targetCount;
+          let removedForChar = 0;
+          // Remove from the end (newest)
           for (let i = newJobs.length - 1; i >= 0; i--) {
-            if (removedCount >= toRemove) break;
-            if (newJobs[i].character_name === activeCharacter) {
+            if (removedForChar >= toRemove) break;
+            if (newJobs[i].character_name === charName) {
               newJobs.splice(i, 1);
-              removedCount++;
+              removedForChar++;
             }
           }
-          return newJobs;
-        });
-        setUiState({ toast: { message: `Removidos ${toRemove} jobs excedentes`, type: "info" } });
-      } else {
-        setUiState({ toast: { message: "Cantidad de jobs correcta", type: "info" } });
+          totalRemoved += removedForChar;
+        }
       }
+
+      // 1. Fetch additions if any
+      if (itemsToAdd.length > 0) {
+        const res = await postPlannerDraft(itemsToAdd, undefined, true);
+        if (res.jobs && res.jobs.length > 0) {
+          // Append new jobs to the (potentially reduced) list
+          newJobs = [...newJobs, ...res.jobs];
+        }
+      }
+
+      // 2. Update state once
+      if (totalAdded > 0 || totalRemoved > 0) {
+        setJobs(newJobs);
+        const parts: string[] = [];
+        if (totalAdded > 0) parts.push(`Agregados ${totalAdded}`);
+        if (totalRemoved > 0) parts.push(`Removidos ${totalRemoved}`);
+        setUiState({ toast: { message: `${parts.join(", ")} jobs (Batch: ${masterBatchCount})`, type: "success" } });
+      } else {
+        setUiState({ toast: { message: `Todos sincronizados a ${masterBatchCount} jobs`, type: "info" } });
+      }
+
     } catch (e) {
       console.error(e);
-      setUiState({ toast: { message: "Error generando drafts", type: "error" } });
+      setUiState({ toast: { message: "Error actualizando drafts", type: "error" } });
     } finally {
       setUiState({ isLoading: false });
     }
