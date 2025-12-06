@@ -13,6 +13,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { SidebarStatus } from "./SidebarStatus";
 
 const NavLink = ({
   href,
@@ -29,19 +30,16 @@ const NavLink = ({
 }) => (
   <Link
     href={href}
-    className={`flex items-center rounded-lg py-2.5 text-sm font-medium transition-all duration-200 group ${
-      collapsed ? "justify-center px-2" : "gap-3 px-3"
-    } ${
-      active
+    className={`flex items-center rounded-lg py-2.5 text-sm font-medium transition-all duration-200 group ${collapsed ? "justify-center px-2" : "gap-3 px-3"
+      } ${active
         ? "bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-lg shadow-pink-900/20"
         : "text-slate-400 hover:bg-slate-900 hover:text-pink-400"
-    }`}
+      }`}
     title={collapsed ? label : undefined}
   >
     <Icon
-      className={`h-5 w-5 min-w-[20px] ${
-        active ? "text-white" : "group-hover:text-pink-400"
-      }`}
+      className={`h-5 w-5 min-w-[20px] ${active ? "text-white" : "group-hover:text-pink-400"
+        }`}
     />
     {!collapsed && (
       <motion.span
@@ -158,15 +156,17 @@ export default function Sidebar() {
           />
         </nav>
 
-        {/* Footer Settings */}
-        <div className="p-3 border-t border-slate-900">
-          <NavLink
-            href="/settings"
-            label="Configuración"
-            icon={Settings}
-            active={isActive("/settings")}
-            collapsed={collapsed}
-          />
+        <div className="mt-auto border-t border-slate-900">
+          <SidebarStatus collapsed={collapsed} />
+          <div className="p-3">
+            <NavLink
+              href="/settings"
+              label="Configuración"
+              icon={Settings}
+              active={isActive("/settings")}
+              collapsed={collapsed}
+            />
+          </div>
         </div>
       </motion.aside>
     </>
