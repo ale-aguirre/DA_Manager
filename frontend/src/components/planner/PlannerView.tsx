@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Trash2, Play, Cog } from "lucide-react";
+import { Trash2, Play, Cog, RefreshCw } from "lucide-react";
 import { usePlannerContext } from "../../context/PlannerContext";
 import PlannerLayout from "./layout/PlannerLayout";
 import JobQueue from "./jobs/JobQueue";
@@ -244,7 +244,9 @@ export default function PlannerView() {
           itemsToAdd.push({
             character_name: charName,
             trigger_words: [], // Backend will resolve triggers
-            batch_count: needed
+            batch_count: needed,
+            generation_mode: masterConfig?.generation_mode || "RANDOM",
+            theme: masterConfig?.theme || "NONE"
           });
           totalAdded += needed;
         } else if (currentCount > targetCount) {
@@ -318,6 +320,45 @@ export default function PlannerView() {
     setTechConfig(activeCharacter, { extraLoras: next });
   };
 
+  const handleCreateDrafts = async () => {
+    if (!activeCharacter) return;
+
+    const masterConfig = techConfig[activeCharacter] || {};
+    const count = masterConfig.batch_count || 1;
+    const mode = masterConfig.generation_mode || "RANDOM";
+    const theme = masterConfig.theme || "NONE";
+
+    if (confirm(`¿Borrar jobs actuales de ${activeCharacter} y crear ${count} nuevos (${mode})?`)) {
+      setUiState({ isLoading: true });
+      try {
+        // 1. Remove existing jobs for this char
+        const filtered = jobs.filter(j => j.character_name !== activeCharacter);
+
+        // 2. Create new drafts
+        const items = [{
+          character_name: activeCharacter,
+          trigger_words: [],
+          batch_count: count,
+          generation_mode: mode,
+          theme: theme
+        }];
+
+        const res = await postPlannerDraft(items, undefined, true);
+        if (res.jobs) {
+          setJobs([...filtered, ...res.jobs]);
+          setUiState({ toast: { message: `Creados ${res.jobs.length} nuevos drafts`, type: "success" } });
+        }
+      } catch (e) {
+        console.error(e);
+        setUiState({ toast: { message: "Error creando drafts", type: "error" } });
+      } finally {
+        setUiState({ isLoading: false });
+      }
+    }
+  };
+
+
+
   return (
     <PlannerLayout>
       <div className="flex h-full flex-col min-w-0 overflow-y-auto bg-slate-950">
@@ -340,9 +381,45 @@ export default function PlannerView() {
             />
           </section>
 
-          {/* 2. Global Prompts & Generate Actions */}
+          {/* 2. Control Panel (Configuration) */}
+          <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+              <span className="bg-violet-900/50 text-violet-200 px-2 py-0.5 rounded text-xs">STEP 1</span>
+              Plan & Draft
+            </h3>
+            <ControlPanel
+              activeCharacter={activeCharacter}
+              paramTab={paramTab}
+              setParamTab={setParamTab}
+              isRegenerating={isRegenerating}
+              onRegenerateDrafts={handleGenerateDrafts}
+              onCreateDrafts={handleCreateDrafts}
+              reforgeUpscalers={resources?.upscalers || []}
+              refreshingUpscalers={false}
+              upscalerVersion={0}
+              refreshUpscalers={loadResources}
+            />
+
+            {/* New Drafts Button moved here for visibility */}
+            <div className="mt-4 pt-4 border-t border-slate-700 flex justify-end">
+              <button
+                onClick={handleCreateDrafts}
+                disabled={isRegenerating || !activeCharacter}
+                className="flex items-center gap-2 rounded-lg bg-violet-600 px-6 py-3 text-white font-semibold hover:bg-violet-500 disabled:opacity-50 shadow-lg shadow-violet-900/20 transition-all active:scale-95"
+              >
+                <RefreshCw className="h-5 w-5" />
+                CREATE NEW DRAFTS
+              </button>
+            </div>
+          </section>
+
+          {/* 3. Global Prompts & Generate Actions */}
           <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_200px]">
             <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+              <h3 className="mb-3 text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <span className="bg-blue-900/50 text-blue-200 px-2 py-0.5 rounded text-xs">STEP 2</span>
+                Refine Prompts
+              </h3>
               <PromptsEditor
                 basePrompt={globalConfig.positivePrompt || ""}
                 negativePrompt={globalConfig.negativePrompt || ""}
@@ -352,54 +429,46 @@ export default function PlannerView() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <button
-                onClick={handleRegenerate}
-                disabled={isRegenerating || jobs.length === 0}
-                className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-lg bg-green-600 p-4 text-green-100 transition-all hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-lg shadow-green-900/20"
-              >
-                {isRegenerating ? (
-                  <>
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-                    <span className="font-bold">GENERANDO...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-8 w-8 fill-current" />
-                    <span className="text-lg font-bold">GENERAR</span>
-                  </>
-                )}
-              </button>
+              <div className="h-full flex flex-col justify-end">
+                <h3 className="mb-3 text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                  <span className="bg-green-900/50 text-green-200 px-2 py-0.5 rounded text-xs">STEP 3</span>
+                  Execute
+                </h3>
+                <button
+                  onClick={handleRegenerate}
+                  disabled={isRegenerating || jobs.length === 0}
+                  className="flex h-32 w-full flex-col items-center justify-center gap-2 rounded-lg bg-green-600 p-4 text-green-100 transition-all hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-lg shadow-green-900/20"
+                >
+                  {isRegenerating ? (
+                    <>
+                      <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+                      <span className="font-bold">GENERATING...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-8 w-8 fill-current" />
+                      <span className="text-lg font-bold">START GPU</span>
+                      <span className="text-[10px] opacity-80">{jobs.length} Jobs Ready</span>
+                    </>
+                  )}
+                </button>
+              </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 mt-2">
                 <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                  Guardar Positivo
+                  Save Pos
                 </button>
                 <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                  Guardar Negativo
+                  Save Neg
                 </button>
                 <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                  Cargar Positivo
+                  Load Pos
                 </button>
                 <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                  Cargar Negativo
+                  Load Neg
                 </button>
               </div>
             </div>
-          </section>
-
-          {/* 3. Control Panel (Configuration) */}
-          <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-            <ControlPanel
-              activeCharacter={activeCharacter}
-              paramTab={paramTab}
-              setParamTab={setParamTab}
-              isRegenerating={isRegenerating}
-              onRegenerateDrafts={handleGenerateDrafts}
-              reforgeUpscalers={resources?.upscalers || []}
-              refreshingUpscalers={false}
-              upscalerVersion={0}
-              refreshUpscalers={loadResources}
-            />
           </section>
           {/* 4. Job Queue */}
           <section>

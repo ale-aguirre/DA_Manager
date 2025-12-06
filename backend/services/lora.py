@@ -90,7 +90,16 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
         if target.exists():
             if on_log:
                 on_log(f"LoRA ya existe para {character_name}: {target.name}")
+            print(f"[DEBUG] File exists: {target}")
             return True, "File exists"
+        else:
+            print(f"[DEBUG] File NOT found: {target}")
+            # Listar directorio para ver qué hay
+            try:
+                files = list(lora_dir.glob(f"*{safe[:10]}*"))
+                print(f"[DEBUG] Candidates in {lora_dir}: {[f.name for f in files]}")
+            except Exception:
+                pass
 
         loop = asyncio.get_running_loop()
 

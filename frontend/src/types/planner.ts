@@ -72,6 +72,9 @@ export interface TechConfig {
   width?: number;
   height?: number;
   positivePrompt?: string;
+  // Nuevos campos para modos y temas
+  generation_mode?: "RANDOM" | "SEQUENCE";
+  theme?: string;
 }
 
 // Metadatos de recursos usados en ejecución

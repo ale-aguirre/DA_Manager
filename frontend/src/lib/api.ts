@@ -6,6 +6,9 @@ export interface PlannerDraftItem {
   safe_count?: number;
   ecchi_count?: number;
   nsfw_count?: number;
+  // Nuevos campos
+  generation_mode?: string;
+  theme?: string;
 }
 
 export interface PlannerJob {

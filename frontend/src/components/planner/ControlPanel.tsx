@@ -12,6 +12,7 @@ interface ControlPanelProps {
   setParamTab: (tab: "generation" | "hires" | "adetailer") => void;
   isRegenerating: boolean;
   onRegenerateDrafts: () => void | Promise<void>;
+  onCreateDrafts: () => void | Promise<void>;
   // Upscaler props passed down for now or moved to context later
   reforgeUpscalers: string[];
   refreshingUpscalers: boolean;
@@ -26,6 +27,7 @@ export default function ControlPanel(props: ControlPanelProps) {
     setParamTab,
     isRegenerating,
     onRegenerateDrafts,
+    onCreateDrafts,
     reforgeUpscalers,
     refreshingUpscalers,
     upscalerVersion,
@@ -61,22 +63,32 @@ export default function ControlPanel(props: ControlPanelProps) {
           ))}
         </div>
 
-        <button
-          type="button"
-          onClick={onRegenerateDrafts}
-          disabled={isRegenerating}
-          className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-[12px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
-        >
-          {isRegenerating ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" /> Generando...
-            </>
-          ) : (
-            <>
-              <RefreshCw className="h-3 w-3" /> Update
-            </>
-          )}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onCreateDrafts}
+            disabled={isRegenerating}
+            className="inline-flex items-center gap-2 rounded-md border border-violet-700 bg-violet-900/50 px-3 py-1.5 text-[12px] text-violet-200 hover:bg-violet-800 disabled:opacity-60"
+          >
+            <RefreshCw className="h-3 w-3" /> New Drafts
+          </button>
+          <button
+            type="button"
+            onClick={onRegenerateDrafts}
+            disabled={isRegenerating}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-[12px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+          >
+            {isRegenerating ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" /> Syncing...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-3 w-3" /> Sync Count
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Content */}
@@ -243,6 +255,38 @@ export default function ControlPanel(props: ControlPanelProps) {
                 <button onClick={() => handleConfigChange({ seed: -1 })} className="rounded border border-slate-700 bg-slate-800 px-3 py-2 text-xs hover:bg-slate-700">
                   Random
                 </button>
+              </div>
+            </div>
+
+            {/* Generation Mode & Theme */}
+            <div className="col-span-2 grid grid-cols-2 gap-4 mt-2 border-t border-slate-700 pt-4">
+              <div>
+                <label className="text-xs text-slate-300 font-semibold text-violet-400">Generation Mode</label>
+                <select
+                  value={currentConfig.generation_mode || "RANDOM"}
+                  onChange={(e) => handleConfigChange({ generation_mode: e.target.value })}
+                  className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                >
+                  <option value="RANDOM">RANDOM (Standard)</option>
+                  <option value="SEQUENCE">SEQUENCE (SFW-ECCHI-NSFW)</option>
+                </select>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  {currentConfig.generation_mode === "SEQUENCE"
+                    ? "Genera 3 imágenes por lote (SFW->NSFW) con misma seed."
+                    : "Generación aleatoria estándar."}
+                </p>
+              </div>
+              <div>
+                <label className="text-xs text-slate-300 font-semibold text-violet-400">Seasonal Theme</label>
+                <select
+                  value={currentConfig.theme || "NONE"}
+                  onChange={(e) => handleConfigChange({ theme: e.target.value })}
+                  className="mt-2 w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-slate-100"
+                >
+                  <option value="NONE">None (Default Wardrobe)</option>
+                  <option value="christmas">Christmas (Santa, Elf, Reindeer)</option>
+                  <option value="halloween">Halloween (Witch, Vampire)</option>
+                </select>
               </div>
             </div>
           </div>

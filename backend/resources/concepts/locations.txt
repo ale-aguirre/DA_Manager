@@ -1,12 +1,3 @@
-bedroom
-onsen
-dungeon
-spaceship
-classroom
-beach
-bathroom
-kitchen
-library
-rooftop
-alley
-forest
+bedroom, messy bed, morning light
+white background, studio lighting, minimalist
+luxury hotel, night city view, glass window
