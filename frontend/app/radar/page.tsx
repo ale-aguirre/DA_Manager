@@ -11,7 +11,8 @@ export default function RadarPage() {
   const onScan = async (
     period: "Day" | "Week" | "Month" = "Month",
     sort: "Rating" | "Downloads" = "Rating",
-    query?: string
+    query?: string,
+    limit: number = 100
   ) => {
     setLoading(true);
     setError(null);
@@ -22,6 +23,7 @@ export default function RadarPage() {
       const u = new URL(base);
       u.searchParams.set("period", periodParam);
       u.searchParams.set("sort", sortParam);
+      u.searchParams.set("limit", String(limit));
       if (query && query.trim().length > 0) {
         u.searchParams.set("query", query.trim());
       }

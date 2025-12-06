@@ -142,7 +142,7 @@ export default function Sidebar() {
           />
           <NavLink
             href="/factory"
-            label="Fábrica"
+            label="Producción"
             icon={Factory}
             active={isActive("/factory")}
             collapsed={collapsed}

@@ -477,23 +477,25 @@ async def files_open(payload: dict):
         target = (base / target_rel).resolve()
         if not target.exists():
             raise HTTPException(status_code=404, detail="Ruta no encontrada")
-        if base not in target.parents and target != base:
-            raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
-        open_dir = target if target.is_dir() else target.parent
+        # Security check
         try:
-            import platform, subprocess, os as _os
-            system = platform.system().lower()
-            if system.startswith("win"):
-                try:
-                    _os.startfile(str(open_dir))
-                except Exception:
-                    subprocess.Popen(["explorer", str(open_dir)])
-            elif system == "darwin":
-                subprocess.Popen(["open", str(open_dir)])
-            else:
-                subprocess.Popen(["xdg-open", str(open_dir)])
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
+             target.relative_to(base)
+        except ValueError:
+             raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+
+        open_dir = target if target.is_dir() else target.parent
+        path = os.path.normpath(str(open_dir))
+
+        import platform
+        import subprocess
+
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.Popen(["open", path])
+        else:  # Linux
+            subprocess.Popen(["xdg-open", path])
+            
         return {"status": "ok"}
     except HTTPException:
         raise
@@ -506,22 +508,32 @@ async def system_open_folder(payload: dict):
         raise HTTPException(status_code=400, detail="OUTPUTS_DIR no configurado en .env.")
     base = Path(OUTPUTS_DIR).resolve()
     rel = (payload.get("path") or "").strip()
-    # Permitir vacÃ­o o '.' para abrir el directorio base
-    if not rel or rel == ".":
+    
+    import platform
+    import subprocess
+    
+    # Permitir vacío o '.' para abrir el directorio base
+    target = base
+    if rel and rel != ".":
+        target = (base / rel).resolve()
+        if not target.exists():
+             raise HTTPException(status_code=404, detail="Ruta no encontrada")
+        # Security check
         try:
-            import os as _os
-            _os.startfile(str(base))
-            return {"status": "ok"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
-    target = (base / rel).resolve()
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="Ruta no encontrada")
-    if base not in target.parents and target != base:
-        raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+             target.relative_to(base)
+        except ValueError:
+             raise HTTPException(status_code=400, detail="Ruta fuera de OUTPUTS_DIR")
+
+    open_dir = target if target.is_dir() else target.parent
+    path = os.path.normpath(str(open_dir))
+
     try:
-        import os as _os
-        _os.startfile(str(target if target.is_dir() else target.parent))
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.Popen(["open", path])
+        else:  # Linux
+            subprocess.Popen(["xdg-open", path])
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
@@ -537,13 +549,13 @@ async def system_outputs_dir():
         raise HTTPException(status_code=500, detail=f"Error resolviendo OUTPUTS_DIR: {e}")
 
 @app.get("/scan/civitai")
-async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated", query: Optional[str] = None):
+async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest Rated", query: Optional[str] = None, limit: int = 100):
     """Escanea modelos de Civitai usando cloudscraper.
     Devuelve una lista con los campos necesarios para el Radar:
     id, name, tags, stats, images (url + tipo) y modelVersions (para baseModel).
     """
     url = "https://civitai.com/api/v1/models"
-    # Mapear desde UI a valores vÃ¡lidos de Civitai
+    # Mapear desde UI a valores válidos de Civitai
     sort_map = {
         "Rating": "Highest Rated",
         "Downloads": "Most Downloaded",
@@ -560,19 +572,23 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
     civitai_period = period_map.get(period, "Week")
     q = (query or "").strip()
     use_query = bool(q and len(q) >= 3)
+    
+    # Validar limit para evitar abusos o errores
+    limit = max(1, min(200, int(limit)))
+
     params_trend = {
         "types": "LORA",
         "sort": civitai_sort,
         "period": civitai_period,
         "page": page,
-        "limit": 100,
+        "limit": limit,
         "nsfw": "true",
         "include": "tags",
     }
     params_search = {
         "types": "LORA",
         "query": q,
-        "limit": 100,
+        "limit": limit,
         "page": page,
         "nsfw": "true",
         "include": "tags",

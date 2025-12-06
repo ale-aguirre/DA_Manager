@@ -13,7 +13,7 @@ export interface RadarViewProps {
   items: CivitaiModel[];
   loading: boolean;
   error: string | null;
-  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string) => void;
+  onScan: (period: "Day" | "Week" | "Month", sort: "Rating" | "Downloads", query?: string, limit?: number) => void;
 }
 
 export type LoraState = {
@@ -106,6 +106,7 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
   const [selectedItems, setSelectedItems] = React.useState<SelectedItem[]>([]);
   const [period, setPeriod] = React.useState<"Day" | "Week" | "Month">("Month");
   const [sort, setSort] = React.useState<"Rating" | "Downloads">("Rating");
+  const [limit, setLimit] = React.useState<number>(100);
   const router = useRouter();
 
   // Blacklist state
@@ -217,12 +218,12 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     const h = setTimeout(() => {
       const q = query.trim();
       if (q.length >= 3 && q !== lastFiredRef.current) {
-        onScan(period, sort, q);
+        onScan(period, sort, q, limit);
         lastFiredRef.current = q;
       }
     }, 800);
     return () => clearTimeout(h);
-  }, [query, onScan, period, sort]);
+  }, [query, onScan, period, sort, limit]);
 
   const toggleSelect = (id: number) => {
     const m = items.find((x) => x.id === id);
@@ -479,11 +480,24 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
               className="w-[220px] rounded-lg border border-slate-800 bg-slate-900 pl-8 pr-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-slate-700"
             />
           </div>
+
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1">
+            <label className="text-[10px] text-zinc-400 uppercase font-bold">Limit</label>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              className="w-12 bg-transparent text-xs text-zinc-200 focus:outline-none text-right"
+            />
+          </div>
+
           <button
             onClick={() => {
               const q = query.trim();
               const qArg = q.length >= 3 ? q : undefined;
-              onScan(period, sort, qArg);
+              onScan(period, sort, qArg, limit);
               if (qArg) lastFiredRef.current = qArg;
             }}
             disabled={loading}
@@ -494,14 +508,14 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
             ) : (
               <Scan className="h-4 w-4" aria-hidden />
             )}
-            {loading ? "Escaneando..." : "Buscar / Escanear"}
+            {loading ? "Escaneando..." : "Buscar"}
           </button>
           <button
             onClick={openBlacklist}
             className="inline-flex items-center gap-2 rounded-lg border border-red-600 bg-red-600/20 px-3 py-2 text-sm text-red-100 hover:bg-red-600/30 hover:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-600 cursor-pointer transition-all active:scale-95"
           >
             <ListX className="h-4 w-4" />
-            Filtros Negativos
+            Filtros
           </button>
         </div>
       </div>
