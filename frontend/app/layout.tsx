@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "../src/components/layout/Sidebar";
 import Footer from "../src/components/layout/Footer";
+import { TranslationProvider } from "../src/hooks/useTranslation";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,41 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LadyNuggets Manager",
-  description:
-    "Automatización local de workflows de Stable Diffusion con FastAPI, scraping (cloudscraper) y Groq.",
-  keywords: [
-    "Stable Diffusion",
-    "Civitai",
-    "Groq",
-    "FastAPI",
-    "Rule34",
-    "automatización",
-    "LadyNuggets",
-  ],
-  applicationName: "LadyNuggets Manager",
-  authors: [{ name: "Ale" }],
-  creator: "Ale",
-  publisher: "Ale",
-  openGraph: {
-    title: "LadyNuggets Manager",
-    description: "Automatización local de workflows de Stable Diffusion.",
-    url: "/",
-    siteName: "LadyNuggets Manager",
-    images: [{ url: "/logo.png", width: 1200, height: 630, alt: "LadyNuggets" }],
-    locale: "es_ES",
-    type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "LadyNuggets Manager",
-    description: "Automatización local de workflows de Stable Diffusion.",
-    images: ["/logo.png"],
-  },
-  icons: {
-    icon: "/favicon.ico",
-  },
-  robots: { index: true, follow: true },
+  title: "LadyManager",
+  description: "AI Anime Generation Pipeline",
 };
 
 export default function RootLayout({
@@ -59,16 +27,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <div className="flex min-h-screen bg-slate-950 text-white">
-          <Sidebar />
-          <div className="flex-1 flex flex-col">
-            <main className="flex-1 p-4">{children}</main>
-            <Footer />
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <TranslationProvider>
+          <div className="flex min-h-screen bg-slate-950 text-white">
+            <Sidebar />
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <main className="flex-1 p-4 overflow-y-auto">{children}</main>
+              <Footer />
+            </div>
           </div>
-        </div>
+        </TranslationProvider>
       </body>
     </html>
   );

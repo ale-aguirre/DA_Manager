@@ -11,9 +11,12 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
+  Target,
+  Globe,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { SidebarStatus } from "./SidebarStatus";
+import { useTranslation } from "../../hooks/useTranslation";
 
 const NavLink = ({
   href,
@@ -56,6 +59,7 @@ const NavLink = ({
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { t, language, setLanguage } = useTranslation();
   const isActive = (path: string) => pathname === path;
   const [collapsed, setCollapsed] = React.useState(false);
 
@@ -71,12 +75,12 @@ export default function Sidebar() {
     localStorage.setItem("ui_sidebar_collapsed", newState ? "1" : "0");
   };
 
+  const toggleLanguage = () => {
+    setLanguage(language === 'es' ? 'en' : 'es');
+  };
+
   return (
     <>
-      {/* Botón flotante cuando está colapsado (para reabrir) */}
-      {/* Botón flotante eliminado: el rail visible incluye su propio control */}
-
-      {/* Sidebar Principal */}
       <motion.aside
         className="h-screen sticky top-0 bg-slate-950 border-r border-slate-900 flex flex-col flex-shrink-0 overflow-hidden z-40"
         initial={false}
@@ -86,7 +90,7 @@ export default function Sidebar() {
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
       >
-        {/* Header con TU LOGO restaurado */}
+        {/* Header */}
         <div className="p-4 mb-2 flex items-center justify-between">
           <div className="flex items-center gap-3 overflow-hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -121,47 +125,66 @@ export default function Sidebar() {
         >
           <NavLink
             href="/"
-            label="Dashboard"
+            label={t("nav.dashboard")}
             icon={LayoutDashboard}
             active={isActive("/")}
             collapsed={collapsed}
           />
           <NavLink
             href="/radar"
-            label="Radar"
+            label={t("nav.radar")}
             icon={Radar}
             active={isActive("/radar")}
             collapsed={collapsed}
           />
           <NavLink
             href="/planner"
-            label="Planificador"
+            label={t("nav.planner")}
             icon={ClipboardList}
             active={isActive("/planner")}
             collapsed={collapsed}
           />
           <NavLink
             href="/factory"
-            label="Producción"
+            label={t("nav.production")}
             icon={Factory}
             active={isActive("/factory")}
             collapsed={collapsed}
           />
           <NavLink
             href="/gallery"
-            label="Galería"
+            label={t("nav.gallery")}
             icon={ImageIcon}
             active={isActive("/gallery")}
+            collapsed={collapsed}
+          />
+          <NavLink
+            href="/marketing"
+            label={t("nav.marketing")}
+            icon={Target}
+            active={isActive("/marketing")}
             collapsed={collapsed}
           />
         </nav>
 
         <div className="mt-auto border-t border-slate-900">
+          {/* Language Switcher */}
+          <div className={`p-2 flex ${collapsed ? 'justify-center' : 'justify-end'} border-b border-slate-900/50`}>
+            <button
+              onClick={toggleLanguage}
+              className="flex items-center gap-2 px-2 py-1 rounded text-xs text-slate-400 hover:text-white hover:bg-slate-900 transition-colors"
+              title="Switch Language"
+            >
+              <Globe className="h-3 w-3" />
+              {!collapsed && <span className="font-bold">{language.toUpperCase()}</span>}
+            </button>
+          </div>
+
           <SidebarStatus collapsed={collapsed} />
           <div className="p-3">
             <NavLink
               href="/settings"
-              label="Configuración"
+              label={t("nav.settings")}
               icon={Settings}
               active={isActive("/settings")}
               collapsed={collapsed}
