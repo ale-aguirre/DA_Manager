@@ -130,3 +130,22 @@
 - Cause: Cambios recientes (Planner/LoRA previews, caches, progreso en vivo) no documentados; fases históricas sin vigencia.
 - Fix: Reescritura compacta del Roadmap, centrada en estado actual, endpoints activos y entregables próximos; eliminación de contenido viejo.
 - Prevention: Actualizar el Roadmap al cerrar fixes/refactors relevantes y registrar fecha; mantener una sección de "Cambios recientes" con qué y cómo.
+
+## 2025-12-06
+- Issue: Error 500 en `/planner/draft` al intentar generar plan de trabajo.
+- Cause: Faltaba la definición de la función auxiliar `sanitize_tag` dentro del endpoint `planner_draft` en `backend/main.py` (NameError).
+- Fix: Se añadió la definición de `sanitize_tag` antes de su uso.
+- Prevention: Validar endpoints complejos con pruebas unitarias o manuales exhaustivas tras refactorizaciones de código.
+
+- Issue: UI del Planner "rota" (pantalla blanca) tras editar scroll.
+- Cause: Se eliminó accidentalmente una etiqueta de cierre `</div>` en `PlannerView.tsx` y se borró lógica de `handleRegenerate` durante una edición con herramientas de IA.
+- Fix: Se restauró la estructura JSX correcta y la lógica perdida.
+- Prevention: Revisar diffs cuidadosamente al aplicar parches grandes en archivos complejos de React.
+
+- Feature: I18n System.
+- Implementation: Se creó `frontend/src/data/translations.ts` con diccionario simple ES/EN y `frontend/src/hooks/useTranslation.tsx` para consumo mediante hook `useTranslation`.
+- Benefit: Centralización de textos, facilidad para cambiar idioma de la interfaz (actualmente "Set Workflow", "Producción", etc.).
+
+- Issue: Error en consola `Uncaught (in promise) Error: A listener indicated an asynchronous response...`.
+- Cause: Conflicto común provocado por extensiones de navegador (LastPass, React DevTools, etc.) al intentar inyectar scripts.
+- Fix: N/A (Error externo benigno). Se verificó la ausencia de `onMessage` listeners problemáticos en el código propio.

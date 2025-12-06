@@ -19,11 +19,11 @@
 - Radar con escaneo bajo demanda y descarga manual de LoRA + `.civitai.info`.
 - Gallery montada con rutas absolutas y botón “Abrir carpeta”.
 
-## Cambios recientes (qué y cómo — 2025-11-26)
-- Corregido error de hidratación: tarjeta LoRA y acción “Info” pasaron de `<button>` anidados a `div` con `onClick`.
-- Previews: prioridad a imágenes locales desde `.civitai.info`; fallback remoto solo si no hay imágenes.
-- Rendimiento: removidos preloads masivos; memoización con TTL y coalescencia de promesas en la capa API.
-- Calidad: ESLint OK (warnings acordados por `<img>`), `tsc --noEmit` OK.
+## Cambios recientes (qué y cómo — 2025-12-06)
+- **Planner Refactor**: Layout de 3 columnas para estrategias, botón "Set Workflow" compacto con loader, scroll automático a la mesa de trabajo.
+- **I18n System**: Implementado `frontend/src/data/translations.ts` y hook `useTranslation` para textos en ES/EN.
+- **Draft Logic Fixed**: Solucionado error 500 en backend (función auxiliar `sanitize_tag`) y restaurada lógica de re-generación forzada.
+- Calidad: JSX de `PlannerView` reparado, warnings de lint limpios.
 
 ## Endpoints activos (resumen)
 - `GET /local/lora-info` → lee `.civitai.info` (`trainedWords`, `imageUrls`, `modelId`, `id`).
@@ -48,7 +48,7 @@
 
 ---
 
-Última actualización: 2025-11-26 (America/Buenos_Aires)
+Última actualización: 2025-12-06 (America/Buenos_Aires)
 - [x] Sliders `Width` y `Height` en Planner (por personaje): defaults `832x1216`, rango `512–2048`, paso `8`, con clamp múltiplo de 8 en backend.
 - [x] Payload ReForge ampliado con `width`/`height` y verificación de límites.
 

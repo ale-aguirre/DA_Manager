@@ -1,11 +1,11 @@
 export interface PlannerDraftItem {
   character_name: string;
   trigger_words: string[];
-  // Opcionales: control explícito de cantidad por intensidad
   batch_count?: number;
   safe_count?: number;
   ecchi_count?: number;
   nsfw_count?: number;
+  theme?: string;
 }
 
 export interface PlannerJob {

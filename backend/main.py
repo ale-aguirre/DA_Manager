@@ -121,6 +121,7 @@ class PlannerDraftItem(BaseModel):
     safe_count: Optional[int] = None
     ecchi_count: Optional[int] = None
     nsfw_count: Optional[int] = None
+    theme: Optional[str] = None
 
 class PlannerJob(BaseModel):
     character_name: str
@@ -1406,31 +1407,27 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             atmo_choice = random.choice(atmospheres) if atmospheres else ""
             cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SFW" else "cowboy shot"))
             expression_choice = random.choice(expressions) if expressions else "smile"
-            # hairstyle_choice removed
-            # quality_end removed
-            # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
-            # Prompt incluye cÃ¡mara, expresiÃ³n, peinado y estilo/atmÃ³sfera ademÃ¡s del triplete base
-            
-            # SANITIZATION: Ensure no ghost tags or forbidden text labels
-            def sanitize_tag(text: str) -> str:
-                if not text: return ""
-                s = str(text).strip()
-                if s.lower() in ["(none)", "none", "null", "undefined", "sfw", "ecchi", "nsfw"]: return ""
-                return s
+            # Helper sanitization
+            def sanitize_tag(t: str) -> str:
+                return re.sub(r'[<>\(\)]', '', str(t)).strip()
 
             parts = [
-                lora_tag,
-                trigger,
-                sanitize_tag(cam_choice),
-                sanitize_tag(expression_choice),
-                # hairstyle_choice removed
-                sanitize_tag(lighting_choice or atmo_choice or "soft lighting"),
-                rating, # This is safe because it's set programmatically above
+                sanitize_tag(", ".join(char.trigger_words or [])),
+            ]
+            if char.theme == "Christmas":
+                parts.append("christmas, holiday, festive")
+            elif char.theme == "Halloween":
+                parts.append("halloween, spooky")
+
+            parts.extend([
                 sanitize_tag(base["outfit"]),
                 sanitize_tag(base["pose"]),
                 sanitize_tag(base["location"]),
-                # quality_end removed
-            ]
+                sanitize_tag(lighting_choice),
+                sanitize_tag(atmo_choice),
+                sanitize_tag(cam_choice),
+                sanitize_tag(expression_choice),
+            ])
             if allow_extra_loras:
                 try:
                     extra_list = c.get("extra_loras") if isinstance(c, dict) else None
