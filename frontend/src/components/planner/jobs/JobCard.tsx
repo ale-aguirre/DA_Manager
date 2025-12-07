@@ -53,6 +53,10 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
     // Sync Prompt -> Fields
     React.useEffect(() => {
         if (!resources) return;
+
+        const LADYNUGGETS_STYLE = "(style_by_ araneesama: 0.4),(style_by_ Blue-Senpai:1) (style_by_ Kurowa:0.8)";
+        const LADYNUGGETS_VARIANT = "(style_by_ araneesama: 0.4),(style_by_ Kurowa:0.8)";
+
         // Parse prompt
         const triplet = extractTriplet(job.prompt, {
             outfits: resources.outfits,
@@ -67,10 +71,46 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
             artists: resources.artists
         });
 
+        // Custom Detection for LadyNuggets Style
+        if (job.prompt.includes("style_by_ araneesama")) {
+            // Distinguish between V1 and V2
+            if (job.prompt.includes("Blue-Senpai")) {
+                extras.artist = LADYNUGGETS_STYLE;
+            } else {
+                extras.artist = LADYNUGGETS_VARIANT;
+            }
+        }
+
+        // Custom Detection for Simple Background
+        if (job.prompt.includes("simple background") || job.prompt.includes("white background")) {
+            const simpleLoc = resources.locations.find(l => l.includes("simple background"));
+            if (simpleLoc) triplet.location = simpleLoc;
+        }
+
         const updates: Partial<PlannerJob> = {};
+        const locks = new Set(job.locked_fields || []);
         let hasUpdates = false;
 
-        // Helper to check and update if not locked and different
+        // Auto-Lock Checks
+        if (!extras.hairstyle && !locks.has("hairstyle")) {
+            locks.add("hairstyle");
+            updates.locked_fields = Array.from(locks);
+            hasUpdates = true;
+        }
+
+        if ((extras.artist === LADYNUGGETS_STYLE || extras.artist === LADYNUGGETS_VARIANT) && !locks.has("artist")) {
+            locks.add("artist");
+            updates.locked_fields = Array.from(locks);
+            hasUpdates = true;
+        }
+
+        // 3. Location: Lock if it includes "simple background"
+        if (triplet.location?.includes("simple background") && !locks.has("location")) {
+            locks.add("location");
+            updates.locked_fields = Array.from(locks);
+            hasUpdates = true;
+        }
+
         const check = (field: keyof PlannerJob, val: string | undefined) => {
             if (!isLocked(field as string) && val && val !== job[field]) {
                 updates[field] = val as any;
@@ -91,17 +131,14 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
             updateJob(index, updates);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [job.prompt, resources, job.locked_fields, index, updateJob]); // Depend on prompt changes
+    }, [job.prompt, resources, index, updateJob]);
 
     const handleFieldChange = (field: keyof PlannerJob, value: string) => {
-        // 1. Update the field itself
         const updates: any = { [field]: value };
 
-        // 2. Rebuild prompt
         if (resources) {
             let newPrompt = job.prompt;
 
-            // Is it a triplet field?
             if (["outfit", "pose", "location"].includes(field as string)) {
                 newPrompt = rebuildPromptWithTriplet(
                     newPrompt,
@@ -110,7 +147,6 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
                     { [field]: job[field as keyof PlannerJob] as string }
                 );
             }
-            // Is it an extra field?
             else if (["lighting", "camera", "expression", "hairstyle", "artist"].includes(field as string)) {
                 newPrompt = rebuildPromptWithExtras(
                     newPrompt,
@@ -125,8 +161,6 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
                     { [field]: job[field as keyof PlannerJob] as string }
                 );
             }
-            // Intensity is now handled via Magic Fix (Remix), but we still update the tag locally
-            // to ensure immediate feedback if the user doesn't wait for Remix.
             else if (field === "intensity") {
                 newPrompt = updateIntensityTags(newPrompt, value as "SFW" | "ECCHI" | "NSFW");
             }
@@ -259,7 +293,11 @@ export default function JobCard({ job, index, displayIndex }: JobCardProps) {
                         {renderSelect("Camera", <Camera className="h-3 w-3" />, "camera", resources?.camera)}
                         {renderSelect("Expression", <User className="h-3 w-3" />, "expression", resources?.expressions)}
                         {renderSelect("Hairstyle", <Sparkles className="h-3 w-3" />, "hairstyle", resources?.hairstyles)}
-                        {renderSelect("Artist / Style", <Brush className="h-3 w-3" />, "artist", resources?.artists)}
+                        {renderSelect("Artist / Style", <Brush className="h-3 w-3" />, "artist", [
+                            "(style_by_ araneesama: 0.4),(style_by_ Blue-Senpai:1) (style_by_ Kurowa:0.8)",
+                            "(style_by_ araneesama: 0.4),(style_by_ Kurowa:0.8)",
+                            ...(resources?.artists || [])
+                        ])}
                     </div>
 
                     {/* Actions Bar */}

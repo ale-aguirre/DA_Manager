@@ -58,6 +58,10 @@ FALLBACK_LOCATIONS = [
     "classroom",
 ]
 
+# Estilo inmutable definido por el usuario (LadyNuggets Lock)
+ARTIST_STYLE_LOCKED = "(style_by_ araneesama: 0.4),(style_by_ Blue-Senpai:1) (style_by_ Kurowa:0.8)"
+ARTIST_STYLE_VARIANT = "(style_by_ araneesama: 0.4),(style_by_ Kurowa:0.8)"
+
 DEFAULT_NEGATIVE_PROMPT = (
     "worst quality, low quality, average quality, lowres, jpeg artifacts, blurry, "
     "bad anatomy, bad hands, missing fingers, extra digit, fewer digits, bad feet, "
@@ -81,6 +85,54 @@ async def canonicalize_character_name(name: str) -> str:
     # Simplificado: usar siempre sanitize_filename para evitar alucinaciones del LLM
     # y garantizar nombres de carpeta consistentes y predecibles.
     return sanitize_filename(name)
+
+# == HELPER FUNCTIONS RESTORED ==
+def get_lora_dir() -> Optional[Path]:
+    if LORA_PATH and str(LORA_PATH).strip():
+        p = Path(LORA_PATH)
+        if p.exists(): return p
+    if REFORGE_PATH and str(REFORGE_PATH).strip():
+        try:
+            # Assumes REFORGE_PATH points to webui-user.bat or similar inside the root or refoge folder?
+            # Usually strict path to webui root. 
+            # If REFORGE_PATH is root:
+            # models/Lora
+            p = Path(REFORGE_PATH).resolve()
+            if p.is_file(): p = p.parent
+            # Check if we are in root or bin
+            target = p / "models" / "Lora"
+            if target.exists(): return target
+            # Try assume REFORGE_PATH might be some inner folder? Stick to standard.
+        except: pass
+    return None
+
+def _find_lora_file_stem(char_name: str) -> Optional[str]:
+    safe = sanitize_filename(char_name)
+    d = get_lora_dir()
+    if not d: return safe # Fallback to safe name
+    
+    # 1. Try exact safe name
+    if (d / f"{safe}.safetensors").exists(): return safe
+    
+    # 2. Try recursive search for partial match or safe match
+    for f in d.rglob("*.safetensors"):
+        if f.stem.lower() == safe.lower():
+            return f.stem
+    return None
+
+def _find_lora_info_path(name: str) -> Optional[Path]:
+    d = get_lora_dir()
+    if not d: return None
+    stem = _find_lora_file_stem(name) or sanitize_filename(name)
+    
+    # Try exact
+    p = d / f"{stem}.civitai.info"
+    if p.exists(): return p
+    
+    # Try recursive
+    for f in d.rglob(f"{stem}.civitai.info"):
+        return f
+    return None
 
 # Modelos Pydantic para IA
 class AIItem(BaseModel):
@@ -123,6 +175,9 @@ class PlannerDraftItem(BaseModel):
     ecchi_count: Optional[int] = None
     nsfw_count: Optional[int] = None
     theme: Optional[str] = None
+    # LadyNuggets new fields
+    generation_mode: Optional[str] = "BATCH" # "BATCH" or "SEQUENCE"
+    simple_background: Optional[bool] = True
 
 class PlannerJob(BaseModel):
     character_name: str
@@ -1006,16 +1061,21 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
         ]
 
 @app.post("/planner/draft")
+@app.post("/planner/draft")
 async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int] = None, allow_extra_loras: Optional[bool] = False):
-    """Genera 10 jobs por personaje con relleno INFALIBLE y enriquece contexto:
-    - Intento IA (Groq) para sugerir combinaciones Outfit+Pose+Location.
-    - ValidaciÃ³n y Fallback determinista: si IA falla o hay vacÃ­os, se eligen aleatorios.
-    - Enriquecimiento Civitai: base_prompt, reference_images, recommended_params.
-
-    Devuelve compatiblemente "jobs" agregados y ademÃ¡s "drafts" por personaje.
+    """Genera jobs por personaje aplicando Lógica LadyNuggets:
+    - Estilo Artista BLOQUEADO.
+    - Composiciones Dinámicas (Resource).
+    - Peinado BLOQUEADO (vacío).
+    - Fondo Simple opcional.
+    - Modo SECUENCIA (misma seed para tripletas).
     """
-    # Lectura desde nueva estructura jerÃ¡rquica en RESOURCES_DIR
-    poses = _read_lines("concepts/poses.txt")
+    # Lectura desde nueva estructura jerárquica en RESOURCES_DIR
+    # NOTA: Usamos resources/dynamic_compositions.txt para poses si existe
+    dynamic_compositions = _read_lines("resources/dynamic_compositions.txt")
+    if not dynamic_compositions:
+        dynamic_compositions = _read_lines("concepts/poses.txt") or FALLBACK_POSES
+
     locations = _read_lines("concepts/locations.txt")
     outfits_casual = _read_lines("wardrobe/casual.txt")
     outfits_lingerie = _read_lines("wardrobe/lingerie.txt")
@@ -1023,30 +1083,18 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     lighting = _read_lines("styles/lighting.txt")
     camera = _read_lines("styles/camera.txt")
     expressions = _read_lines("visuals/expressions.txt")
-    hairstyles = _read_lines("visuals/hairstyles.txt")
-
+    # hairstyles ignored as per LadyNuggets Lock
+    
     # Unificar outfits y aplicar fallbacks de emergencia
     all_outfits = list(dict.fromkeys([x for x in ([*outfits_casual, *outfits_lingerie, *outfits_cosplay]) if x and x.strip()]))
     if not all_outfits:
         all_outfits = FALLBACK_OUTFITS
 
-    # Fallbacks si los recursos estÃ¡n vacÃ­os
-    if not poses:
-        poses = FALLBACK_POSES
-    if not locations:
-        locations = FALLBACK_LOCATIONS
-    if not lighting:
-        lighting = ["soft lighting"]
-    if not camera:
-        camera = ["front view", "cowboy shot"]
-    if not expressions:
-        expressions = ["smile", "blushing"]
-    if not hairstyles:
-        hairstyles = ["ponytail", "long hair"]
-
-    # Filtro simple para SAFE (evitar poses mÃ¡s explÃ­citas).
-    banned = {"spread legs", "straddling", "all fours"}
-    safe_poses = [p for p in poses if not any(b in p.lower() for b in banned)] or poses
+    # Fallbacks si los recursos están vacíos
+    if not locations: locations = FALLBACK_LOCATIONS
+    if not lighting: lighting = ["soft lighting"]
+    if not camera: camera = ["front view", "cowboy shot"]
+    if not expressions: expressions = ["smile", "blushing"]
 
     # Helper: enriquecer con Civitai
     async def civitai_enrich(character_name: str, trigger_words: List[str]) -> dict:
@@ -1056,8 +1104,6 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
             return [t for t in (tags or []) if (t and t.strip() and t.strip().lower() not in banned)]
         triggers = ", ".join(_clean_tags(trigger_words or [])) or sanitize_filename(character_name)
-        # Fallback base prompt cuando Civitai no estÃ¡ disponible
-        # Fallback base prompt cuando Civitai no estÃ¡ disponible
         base_prompt = ""
 
         token = os.getenv("CIVITAI_API_KEY")
@@ -1161,11 +1207,8 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             "recommended_params": recommended_params,
         }
 
-    # Aprendizaje de estilo (STYLE_EXAMPLES)
-    try:
-        styles_examples = " ".join(_read_lines("learning/user_styles.txt"))
-    except Exception:
-        styles_examples = ""
+    # Style learning examples (for reference only, unused in locked mode)
+    styles_examples = ""
 
     # Loras locales
     local_lora_names: List[str] = []
@@ -1182,289 +1225,118 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     except Exception:
         local_lora_names = []
 
-    async def groq_suggest_combos(character_name: str, trigger_words: List[str], preferred_location: Optional[str] = None, count: int = 10) -> List[dict]:
-        """Solicita a Groq una lista de combinaciones. Devuelve [{outfit, pose, location, lighting, camera}]"""
-        if not GROQ_API_KEY or Groq is None:
-            return []
-        try:
-            client = Groq(api_key=GROQ_API_KEY)
-            system_prompt = (
-                "You are an Anime Art Director. Based on the character '{name}' and location '{location}', select the BEST matching Outfit, Lighting, and Camera angle from the provided lists. "
-                "Ensure visual coherence (e.g., dark lighting for dungeons, torchlight for caves, armor for dangerous areas). "
-                "Use these STYLE EXAMPLES as a reference for quality tags and sentence structure. Mimic this level of detail. "
-                f"STYLE EXAMPLES: {styles_examples} "
-                + ("When allowed, you may suggest extra LoRAs from the provided list. Return them in an optional 'extra_loras' array with up to 2 names." if allow_extra_loras else "Do not suggest any extra LoRAs; strictly use the character LoRA only.")
-                + " CRITICAL: DO NOT use natural language sentences like 'a girl standing'. USE ONLY Danbooru tags separated by commas: '1girl, solo, standing'. USE specific tags: 'plaid skirt' instead of 'skirt'."
-                + " Return ONLY JSON array with format: [{\"outfit\":\"...\",\"pose\":\"...\",\"location\":\"...\",\"lighting\":\"...\",\"camera\":\"...\"}] with up to 10 elements."
-            )
-            user_prompt = (
-                f"Character: {character_name}\n"
-                f"Triggers: {', '.join(trigger_words or [])}\n"
-                f"Preferred Location (optional): {preferred_location or '(none)'}\n"
-                f"Outfit list (examples): {', '.join((outfits_casual + outfits_lingerie + outfits_cosplay)[:15])}\n"
-                f"Pose list (examples): {', '.join(poses[:15])}\n"
-                f"Location list (examples): {', '.join(locations[:15])}\n"
-                f"Lighting list (examples): {', '.join(lighting[:15])}\n"
-                f"Camera list (examples): {', '.join(camera[:15])}\n"
-                + (f"Local LoRAs (names): {', '.join(local_lora_names[:30])}\n" if allow_extra_loras and local_lora_names else "")
-                + "Return ONLY JSON array with the specified format."
-            )
-            completion = await groq_chat_with_fallbacks(
-                client,
-                [
-                    {"role": "system", "content": system_prompt.replace("{name}", character_name).replace("{location}", preferred_location or "(none)")},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.9,
-            )
-            content = completion.choices[0].message.content.strip()
-            start = content.find("[")
-            end = content.rfind("]")
-            json_str = content[start:end+1] if start != -1 and end != -1 else content
-            data = json.loads(json_str)
-            combos: List[dict] = []
-            if isinstance(data, list):
-                for it in data:
-                    if isinstance(it, dict) and it.get("outfit") and it.get("pose") and it.get("location"):
-                        combos.append({
-                            "outfit": str(it["outfit"]),
-                            "pose": str(it["pose"]),
-                            "location": str(it["location"]),
-                            "lighting": str(it.get("lighting") or ""),
-                            "camera": str(it.get("camera") or ""),
-                            "extra_loras": it.get("extra_loras") if allow_extra_loras else None,
-                        })
-            return combos[:count]
-        except Exception:
-            return []
-
-    def random_combo() -> dict:
-        return {
-            "outfit": random.choice(all_outfits) if all_outfits else random.choice(FALLBACK_OUTFITS),
-            "pose": random.choice(safe_poses) if safe_poses else random.choice(FALLBACK_POSES),
-            "location": random.choice(locations) if locations else random.choice(FALLBACK_LOCATIONS),
-            "lighting": random.choice(lighting) if lighting else "soft lighting",
-            "camera": random.choice(camera) if camera else "front view",
-        }
-
-    # ConstrucciÃ³n de trabajos y borradores enriquecidos por personaje
+    # Construcción de trabajos y borradores
     all_jobs: List[PlannerJob] = []
+    all_jobs_payload: List[dict] = []
     drafts: List[dict] = []
 
-    def _compute_distribution(n: int) -> tuple[int, int, int]:
-        """Devuelve (safe_count, ecchi_count, nsfw_count).
-        Por defecto: TODO SAFE (n, 0, 0) para que el usuario elija cambiarlo después.
-        """
-        return (n, 0, 0)
-
     for char in payload:
-        # ... (lines 1257-1319 omitted for brevity in thought, but included in context) ...
+        # 1. Determinar triggers y LoRA tag
         real_stem = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
-        lora_tag = f"<lora:{real_stem}:0.8>"
-        # Triggers oficiales desde .civitai.info si existe
-        def _lora_dir() -> Path:
-            le = os.getenv("LORA_PATH")
-            re = os.getenv("REFORGE_PATH")
-            if le and str(le).strip():
-                return Path(le).resolve()
-            return Path(re).resolve().parents[3] / "models" / "Lora"
+        # lora_tag is typically injected by frontend using the file, but we need triggers
         
-        # Búsqueda robusta de .civitai.info (igual que en local_lora_info)
-        lora_dir = _lora_dir()
+        # Búsqueda robusta de triggers oficiales
+        lora_dir = get_lora_dir() or Path(".") # Fallback safety
         base_name = _find_lora_file_stem(char.character_name) or sanitize_filename(char.character_name)
-        candidates_to_check = [
-            lora_dir / f"{base_name}.civitai.info",
-            lora_dir / f"{char.character_name}.civitai.info",
-            lora_dir / f"{char.character_name.replace(' ', '_')}.civitai.info",
-            lora_dir / f"{base_name.replace(' ', '_')}.civitai.info",
-        ]
-        # Añadir búsqueda sanitizada
-        safe_name = re.sub(r"[^a-zA-Z0-9_\-.]", "_", str(char.character_name))
-        candidates_to_check.append(lora_dir / f"{safe_name}.civitai.info")
-
-        info_path = None
-        for cand in candidates_to_check:
-            if cand.exists():
-                info_path = cand
-                break
-        
-        if not info_path:
-             # Fallback a búsqueda flexible
-             candidates = list(lora_dir.glob(f"*{base_name}*.civitai.info"))
-             if candidates:
-                 info_path = candidates[0]
-             else:
-                 info_path = lora_dir / f"{sanitize_filename(char.character_name)}.civitai.info"
-        official_triggers: list[str] = []
+        # (Reuse trigger finding logic logic roughly)
+        official_triggers = []
         try:
-            if info_path.exists():
-                content = info_path.read_text(encoding="utf-8")
-                j = json.loads(content)
-                tw = j.get("trainedWords")
-                if isinstance(tw, list):
-                    official_triggers = [str(x) for x in tw if isinstance(x, (str, int, float))]
-                else:
-                    tr = j.get("triggers")
-                    if isinstance(tr, list):
-                        official_triggers = [str(x) for x in tr if isinstance(x, (str, int, float))]
-        except Exception:
-            official_triggers = []
-        def _clean_tags(tags: List[str]) -> List[str]:
-            banned = {"character", "hentai", "anime", "high quality", "masterpiece"}
-            return [t for t in (tags or []) if (t and str(t).strip() and str(t).strip().lower() not in banned)]
+             # Try common paths
+             p1 = lora_dir / f"{base_name}.civitai.info"
+             if p1.exists():
+                 j = json.loads(p1.read_text(encoding="utf-8"))
+                 official_triggers = j.get("trainedWords") or j.get("triggers") or []
+        except: pass
         
-        # Si tenemos triggers oficiales, usarlos tal cual (especialmente el primero que suele ser el principal)
-        # Prioridad: Payload del frontend (ya enriquecido por Radar)
-        if char.trigger_words and len(char.trigger_words) > 0:
-             # Asumimos que el frontend envía el trigger correcto como primer elemento
-             trigger = char.trigger_words[0]
-        elif official_triggers:
-             trigger = official_triggers[0]
-        else:
-             trigger = sanitize_filename(char.character_name)
+        if char.trigger_words: trigger = char.trigger_words[0]
+        elif official_triggers: trigger = official_triggers[0]
+        else: trigger = sanitize_filename(char.character_name)
         
-        # Determinar cantidad de jobs solicitada
-        # Prioridad: 1. char.batch_count (específico), 2. job_count (global/query), 3. Default 10
-        if hasattr(char, "batch_count") and isinstance(char.batch_count, int) and char.batch_count > 0:
-            requested_n = char.batch_count
-        elif isinstance(job_count, int) and job_count > 0:
-            requested_n = job_count
-        else:
-            requested_n = 10
-
-        # 1) Intentar combos con IA
-        combos = await groq_suggest_combos(char.character_name, official_triggers or (char.trigger_words or []), None, requested_n)
-        # 2) ValidaciÃ³n y fallback determinista
-        while len(combos) < requested_n:
-            combos.append(random_combo())
-        # GarantÃ­a de no vacÃ­os
-        validated: List[dict] = []
-        def _bad_value(s: str) -> bool:
-            low = (s or "").strip().lower()
-            return low in ("none", "null", "n/a", "na", "vacÃ­o", "empty", "undefined")
-        def _pick_outfit() -> str:
-            pool = all_outfits
-            return random.choice(pool) if pool else random.choice(FALLBACK_OUTFITS)
-        def _pick_pose() -> str:
-            pool = safe_poses if safe_poses else poses
-            return random.choice(pool) if pool else random.choice(FALLBACK_POSES)
-        def _pick_location() -> str:
-            return random.choice(locations) if locations else random.choice(FALLBACK_LOCATIONS)
-        for c in combos[:requested_n]:
-            o_raw = (c.get("outfit") or "")
-            p_raw = (c.get("pose") or "")
-            l_raw = (c.get("location") or "")
-            li_raw = (c.get("lighting") or "")
-            ca_raw = (c.get("camera") or "")
-            o = _pick_outfit() if _bad_value(o_raw) or (o_raw.strip() == "") else o_raw.strip()
-            p = _pick_pose() if _bad_value(p_raw) or (p_raw.strip() == "") else p_raw.strip()
-            l = _pick_location() if _bad_value(l_raw) or (l_raw.strip() == "") else l_raw.strip()
-            li = (li_raw or "").strip()
-            ca = (ca_raw or "").strip()
-            # Coherencia bÃ¡sica: evitar bikini en dungeon
-            if "dungeon" in (l or "").lower() and "bikini" in (o or "").lower():
-                o = "armor" if "armor" in [x.lower() for x in all_outfits] else "rags"
-            # Garantizar string seguro
-            o = o or "casual clothes"
-            p = p or "standing pose"
-            l = l or "studio"
-            # Sanitization: Remove (none) ghost tags
-            o = re.sub(r'\(none\),?', '', o, flags=re.IGNORECASE).strip()
-            p = re.sub(r'\(none\),?', '', p, flags=re.IGNORECASE).strip()
-            l = re.sub(r'\(none\),?', '', l, flags=re.IGNORECASE).strip()
+        # Define LoRA Tag
+        lora_tag = f"<lora:{real_stem}:0.8>"
+        
+        # 2. Configurar Cantidad y Modo
+        requested_n = char.batch_count if (char.batch_count and char.batch_count > 0) else (job_count if job_count else 10)
+        
+        per_char_jobs_payload = []
+        is_sequence = (char.generation_mode == "SEQUENCE")
+        
+        # Definir iteraciones
+        iterations = (requested_n // 3) if is_sequence else requested_n
+        if is_sequence and iterations < 1: iterations = 1
+        
+        for i in range(iterations):
+            # == 3.1 SETUP COMÚN ==
+            comp_raw = random.choice(dynamic_compositions) if dynamic_compositions else "dynamic pose"
+            outfit_raw = random.choice(all_outfits) if all_outfits else "casual"
             
-            validated.append({"outfit": o, "pose": p, "location": l, "lighting": li, "camera": ca})
-
-        per_char_jobs: List[PlannerJob] = []
-        per_char_jobs_payload: List[dict] = []
-        atmospheres: List[str] = await _get_atmospheres_for_character(char.character_name)
-
-        # Clasificar intensidad usando distribuciÃ³n explÃ­cita si viene en el payload; si no, proporcional al N solicitado
-        def _clean_int(v: Optional[int]) -> int:
-            try:
-                return int(v) if (v is not None and int(v) > 0) else 0
-            except Exception:
-                return 0
-        explicit_safe = _clean_int(getattr(char, "safe_count", None))
-        explicit_ecchi = _clean_int(getattr(char, "ecchi_count", None))
-        explicit_nsfw = _clean_int(getattr(char, "nsfw_count", None))
-        if (explicit_safe + explicit_ecchi + explicit_nsfw) > 0:
-            # Ajustar para que siempre sumen al total solicitado
-            safe_count = min(explicit_safe, requested_n)
-            ecchi_count = min(explicit_ecchi, max(0, requested_n - safe_count))
-            nsfw_count = max(0, requested_n - safe_count - ecchi_count)
-        else:
-            safe_count, ecchi_count, nsfw_count = _compute_distribution(requested_n)
-        for i, base in enumerate(validated[:requested_n]):
-            if i < safe_count:
-                intensity = "SFW"
-            elif i < safe_count + ecchi_count:
-                intensity = "ECCHI"
+            # Logic for Location
+            if char.simple_background:
+                loc_final = "simple background, white background"
+                lighting_final = ""
+                camera_final = "cowboy shot"
             else:
-                intensity = "NSFW"
-            rating = "rating_safe" if intensity == "SFW" else ("rating_questionable, cleavage" if intensity == "ECCHI" else "rating_explicit, nsfw, explicit")
-            # Lighting/CÃ¡mara: usar sugerencia IA si existe; si no, fallback y atmÃ³sfera
-            lighting_choice = (base.get("lighting") or "").strip() or (random.choice(lighting) if lighting else "soft lighting")
-            atmo_choice = random.choice(atmospheres) if atmospheres else ""
-            cam_choice = (base.get("camera") or "").strip() or (random.choice(camera) if camera else ("front view" if intensity == "SFW" else "cowboy shot"))
-            expression_choice = random.choice(expressions) if expressions else "smile"
-            # Helper sanitization
-            def sanitize_tag(t: str) -> str:
-                return re.sub(r'[<>\(\)]', '', str(t)).strip()
+                l_choice = random.choice(locations) if locations else "studio"
+                loc_final = l_choice
+                lighting_final = random.choice(lighting) if lighting else "soft lighting"
+                camera_final = random.choice(camera) if camera else "dynamic angle"
 
-            parts = [
-                sanitize_tag(", ".join(char.trigger_words or [])),
-            ]
-            if char.theme == "Christmas":
-                parts.append("christmas, holiday, festive")
-            elif char.theme == "Halloween":
-                parts.append("halloween, spooky")
+            # Master Seed
+            master_seed = random.randint(0, 2_147_483_647)
+            
+            # == 3.2 GENERAR VARIANTES ==
+            variants = ["SFW", "ECCHI", "NSFW"] if is_sequence else ["SFW"] # Batch default placeholder
+            
+            current_variants_loop = variants if is_sequence else [None]
 
-            parts.extend([
-                sanitize_tag(base["outfit"]),
-                sanitize_tag(base["pose"]),
-                sanitize_tag(base["location"]),
-                sanitize_tag(lighting_choice),
-                sanitize_tag(atmo_choice),
-                sanitize_tag(cam_choice),
-                sanitize_tag(expression_choice),
-            ])
-            if allow_extra_loras:
-                try:
-                    extra_list = c.get("extra_loras") if isinstance(c, dict) else None
-                    if isinstance(extra_list, list):
-                        for nm in extra_list[:2]:
-                            if isinstance(nm, str) and nm.strip():
-                                parts.insert(0, f"<lora:{sanitize_filename(nm.strip())}:0.6>")
-                except Exception:
-                    pass
-            prompt = ", ".join([p for p in parts if p and str(p).strip()])
-            # Debug: registrar valores generados
-            print(f"[planner/draft] Generando Job: Outfit={base['outfit']}, Pose={base['pose']}, Location={base['location']}")
-            seed = random.randint(0, 2_147_483_647)
-            job_model = PlannerJob(character_name=char.character_name, prompt=prompt, seed=seed)
-            per_char_jobs.append(job_model)
-            # Marcar visibilidad de IA en campos tÃ©cnicos cuando provienen de la sugerencia
-            ai_meta = {}
-            if (base.get("lighting") or "").strip():
-                ai_meta["lighting"] = "Sugerido por IA por coherencia"
-            if (base.get("camera") or "").strip():
-                ai_meta["camera"] = "Sugerido por IA por coherencia"
-            if (c.get("outfit") or "").strip():
-                ai_meta["outfit"] = "Sugerido por IA por coherencia"
+            for v_idx, forcing in enumerate(current_variants_loop):
+                current_seed = master_seed if is_sequence else random.randint(0, 2_147_483_647)
+                
+                # Determine Intensity
+                if is_sequence:
+                    intensity = forcing
+                    expression = "Seductive" if intensity != "SFW" else "Smile"
+                else: 
+                     # BATCH logic: distribute
+                     mod = i % 3
+                     if mod == 0: intensity = "SFW"
+                     elif mod == 1: intensity = "ECCHI"
+                     else: intensity = "NSFW"
+                     expression = random.choice(expressions)
 
-            per_char_jobs_payload.append({
-                **job_model.model_dump(),
-                "intensity": intensity,
-                "outfit": base["outfit"],
-                "pose": base["pose"],
-                "location": base["location"],
-                "lighting": lighting_choice or atmo_choice,
-                "camera": cam_choice,
-                "expression": expression_choice,
-                # "hairstyle": hairstyle_choice,
-                "ai_meta": ai_meta,
-            })
+                rating_tags = "rating_safe" if intensity == "SFW" else ("rating_questionable, cleavage" if intensity == "ECCHI" else "rating_explicit, nsfw, explicit")
+                
+                # Prompt Parts
+                parts = [
+                    lora_tag,
+                    ", ".join(char.trigger_words or []) or trigger,
+                    outfit_raw,
+                    loc_final,
+                    lighting_final,
+                    camera_final,
+                    comp_raw,
+                    # No Hairstyle!
+                    ARTIST_STYLE_LOCKED,
+                    rating_tags,
+                    "masterpiece, best quality, ultra detailed, 8k"
+                ]
+                
+                final_prompt = ", ".join([p.strip() for p in parts if p and p.strip()])
+                
+                job_model = PlannerJob(character_name=char.character_name, prompt=final_prompt, seed=current_seed)
+                all_jobs.append(job_model)
+                
+                per_char_jobs_payload.append({
+                    **job_model.model_dump(),
+                    "intensity": intensity,
+                    "outfit": outfit_raw,
+                    "pose": comp_raw, 
+                    "location": loc_final,
+                    "lighting": lighting_final,
+                    "camera": camera_final,
+                    "expression": expression,
+                    "generation_mode": "SEQUENCE" if is_sequence else "BATCH"
+                })
 
         # Enriquecimiento de contexto por personaje (Civitai)
         enrich = await civitai_enrich(char.character_name, official_triggers or (char.trigger_words or []))
@@ -1475,10 +1347,7 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
             "reference_images": enrich.get("reference_images"),
             "jobs": per_char_jobs_payload,
         })
-        all_jobs.extend(per_char_jobs)
-        # TambiÃ©n agregamos payload extendido para la respuesta agregada
-        if "all_jobs_payload" not in locals():
-            all_jobs_payload = []
+        
         all_jobs_payload.extend(per_char_jobs_payload)
 
     return JSONResponse(content={
