@@ -630,8 +630,8 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
     q = (query or "").strip()
     use_query = bool(q and len(q) >= 3)
     
-    # Validar limit para evitar abusos o errores
-    limit = max(1, min(200, int(limit)))
+    # Validar limit para evitar abusos o errores (Civitai max paging is usually 100)
+    limit = max(1, min(100, int(limit)))
 
     params_trend = {
         "types": "LORA",
@@ -641,6 +641,7 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
         "limit": limit,
         "nsfw": "true",
         "include": "tags",
+        "tag": "anime", # Force anime tag to ensure relevant results upstream
     }
     params_search = {
         "types": "LORA",
@@ -671,7 +672,7 @@ async def scan_civitai(page: int = 1, period: str = "Week", sort: str = "Highest
                 
                 print(f"[DEBUG] Civitai Request: URL={url} Params={p}")
                 
-                resp = requests.get(url, params=p, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}, timeout=20)
+                resp = requests.get(url, params=p, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}, timeout=45)
                 if resp.status_code != 200:
                     print(f"[ERROR] Civitai API returned {resp.status_code}")
                     return {"items": []}
@@ -949,22 +950,28 @@ QUALITY_TAGS = (
 @app.get("/planner/resources")
 async def planner_resources():
     """Devuelve listas de recursos para planificación.
-    Incluye: outfits, poses, locations y además lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (visuals/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). También styles y concepts legacy.
+    Incluye: outfits, poses, locations y además lighting (styles/lighting.txt), camera (styles/camera.txt), expressions (modifiers/expressions.txt), hairstyles (visuals/hairstyles.txt) y upscalers (tech/upscalers.txt). También styles y concepts legacy.
     """
-    # Lectura desde ambas rutas para máxima compatibilidad
+    # Lectura desde nuevas rutas
     outfits_top = _read_lines("outfits.txt")
     outfits_casual = _read_lines("wardrobe/casual.txt")
     outfits_lingerie = _read_lines("wardrobe/lingerie.txt")
     outfits_cosplay = _read_lines("wardrobe/cosplay.txt")
-    poses_top = _read_lines("poses.txt")
-    poses_concepts = _read_lines("concepts/poses.txt")
-    locations_top = _read_lines("locations.txt")
-    locations_concepts = _read_lines("concepts/locations.txt")
+    
+    # New Poses logic
+    poses_dynamic = _read_lines("poses/dynamic.txt")
+    poses_lazy = _read_lines("poses/lazy.txt")
+    poses_sexual = _read_lines("poses/sexual.txt")
+    poses_legacy = _read_lines("poses.txt") # Keep just in case for older manual files
+    
+    locations_aesthetic = _read_lines("locations/aesthetic.txt")
+    locations_legacy = _read_lines("locations.txt")
+    
     styles = _read_lines("styles.txt")
     concepts = _read_lines("concepts.txt")
     lighting = _read_lines("styles/lighting.txt")
     camera = _read_lines("styles/camera.txt")
-    expressions = _read_lines("visuals/expressions.txt")
+    expressions = _read_lines("modifiers/expressions.txt")
     hairstyles = _read_lines("visuals/hairstyles.txt")
     upscalers = _read_lines("tech/upscalers.txt")
     artists = _read_lines("styles/artists.txt")
@@ -975,16 +982,13 @@ async def planner_resources():
         return list(dict.fromkeys([x for x in lst if x and x.strip() and x.strip().lower() not in banned]))
 
     outfits = _clean_res(outfits_top + outfits_casual + outfits_lingerie + outfits_cosplay)
-    poses = _clean_res(poses_top + poses_concepts)
-    locations = _clean_res(locations_top + locations_concepts)
+    poses = _clean_res(poses_dynamic + poses_lazy + poses_sexual + poses_legacy)
+    locations = _clean_res(locations_aesthetic + locations_legacy)
 
     # Fallback de emergencia para evitar vacíos
-    if not outfits:
-        outfits = FALLBACK_OUTFITS
-    if not poses:
-        poses = FALLBACK_POSES
-    if not locations:
-        locations = FALLBACK_LOCATIONS
+    if not outfits: outfits = FALLBACK_OUTFITS
+    if not poses: poses = FALLBACK_POSES
+    if not locations: locations = FALLBACK_LOCATIONS
 
     return {
         "outfits": outfits,
@@ -1002,7 +1006,7 @@ async def planner_resources():
 
 @app.get("/resources/expressions")
 async def resources_expressions():
-    items = _read_lines("visuals/expressions.txt")
+    items = _read_lines("modifiers/expressions.txt")
     return {"items": items}
 
 @app.get("/resources/hairstyles")
@@ -1072,17 +1076,21 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     """
     # Lectura desde nueva estructura jerárquica en RESOURCES_DIR
     # NOTA: Usamos resources/dynamic_compositions.txt para poses si existe
-    dynamic_compositions = _read_lines("resources/dynamic_compositions.txt")
+    # UPDATE: Usamos poses/dynamic.txt y poses/lazy.txt combinados para el draft automático
+    poses_dynamic = _read_lines("poses/dynamic.txt")
+    poses_lazy = _read_lines("poses/lazy.txt")
+    dynamic_compositions = poses_dynamic + poses_lazy
+    
     if not dynamic_compositions:
         dynamic_compositions = _read_lines("concepts/poses.txt") or FALLBACK_POSES
 
-    locations = _read_lines("concepts/locations.txt")
+    locations = _read_lines("locations/aesthetic.txt")
     outfits_casual = _read_lines("wardrobe/casual.txt")
     outfits_lingerie = _read_lines("wardrobe/lingerie.txt")
     outfits_cosplay = _read_lines("wardrobe/cosplay.txt")
     lighting = _read_lines("styles/lighting.txt")
     camera = _read_lines("styles/camera.txt")
-    expressions = _read_lines("visuals/expressions.txt")
+    expressions = _read_lines("modifiers/expressions.txt")
     # hairstyles ignored as per LadyNuggets Lock
     
     # Unificar outfits y aplicar fallbacks de emergencia
