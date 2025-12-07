@@ -1,4 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { postGalleryGenerateInfo, getGalleryMetadata } from "../../lib/api";
+
+const TEXT_TEMPLATES = [
+  { label: "❤️ Patreon", text: "\n\nSupport me & get 8K sets: [patreon.com/ladynuggets](https://patreon.com/ladynuggets)" },
+  { label: "🐦 Twitter", text: "\nFollow me on X for more!" },
+  { label: "⚠️ AI Disclosure", text: "Generated with AI (Stable Diffusion)." }
+];
 
 export interface SessionImage {
   b64?: string;
@@ -29,6 +36,18 @@ export default function ImageModal({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [localPrompt, setLocalPrompt] = useState<string>(promptUsed || "");
+
+  // Fetch metadata if prompt missing
+  useEffect(() => {
+    if (!promptUsed && image.path) {
+      getGalleryMetadata(image.path).then(meta => {
+        if (meta.prompt) setLocalPrompt(meta.prompt);
+      });
+    } else {
+      setLocalPrompt(promptUsed);
+    }
+  }, [image.path, promptUsed]);
 
   // LocalStorage helpers
   const getFileKey = useCallback((): string | null => {
@@ -52,8 +71,8 @@ export default function ImageModal({
       const tags = Array.isArray(parsed.tags)
         ? parsed.tags.join(", ")
         : typeof parsed.tags === "string"
-        ? parsed.tags
-        : "";
+          ? parsed.tags
+          : "";
       setTagsText(tags || "");
     } catch {
       // ignore parse errors
@@ -77,43 +96,50 @@ export default function ImageModal({
     setError(null);
     setCopied(false);
     try {
-      const res = await fetch(`${baseUrl}/marketing/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt_used: promptUsed ?? "",
-          character: character ?? "",
-        }),
-      });
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const outTitle: string = data?.title ?? "";
-      const outDesc: string = data?.description ?? "";
-      const outTags: string[] = Array.isArray(data?.tags) ? data.tags : [];
+      // Use smart backend endpoint
+      // Extract loras from prompt if possible or just pass empty for now since we don't have separate metadata passed here yet
+      // Actually, image.path might allow us to fetch metadata if we had a way, but for now relies on prompt heuristics if loras not explicit.
+      // Wait, the backend expects 'loras' list. Ideally we'd parse this from metadata but we only have 'promptUsed' prop here.
+      // The backend logic handles empty loras gracefully (fallback to 'Unknown').
+
+      // The backend logic handles empty loras gracefully (fallback to 'Unknown').
+
+      const p = localPrompt || promptUsed || "";
+      const data = await postGalleryGenerateInfo(p, []); // ToDo: pass loras if available
+
+      const outTitle: string = data.title;
+      const outTags: string = data.tags;
+      // Backend returns empty description, we keep existing or just empty.
+
       setTitle(outTitle);
-      setDescription(outDesc);
-      setTagsText(outTags.join(", "));
+      // Don't overwrite description if user already wrote something
+      if (!description) {
+        setDescription(data.description);
+      }
+      setTagsText(outTags);
+
       // Persistir inmediatamente tras generación
       try {
         const key = getFileKey();
         if (key) {
           const payload = {
             title: outTitle,
-            description: outDesc,
-            tags: outTags.join(", "),
+            description: description || data.description,
+            tags: outTags,
           };
           localStorage.setItem(key, JSON.stringify(payload));
         }
-      } catch {}
+      } catch { }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg || "Error generando metadata");
     } finally {
       setLoading(false);
     }
+  };
+
+  const addTemplate = (text: string) => {
+    setDescription(prev => (prev + text).trim());
   };
 
   const copyAll = async () => {
@@ -177,9 +203,14 @@ export default function ImageModal({
           <div className="md:w-1/2 p-4 space-y-4">
             <div>
               <h3 className="text-lg font-semibold">Inspector de Marketing</h3>
-              <p className="text-sm text-slate-300 mt-1">Prompt usado:</p>
-              <p className="text-sm text-slate-200 line-clamp-3">
-                {promptUsed || "(vacío)"}
+              {character && (
+                <p className="text-xs font-bold uppercase tracking-wider text-indigo-400 mb-2">
+                  {character}
+                </p>
+              )}
+              <p className="text-sm text-slate-300 mt-1">Prompt usado (Detectado):</p>
+              <p className="text-sm text-slate-200 line-clamp-3 bg-slate-800 p-2 rounded">
+                {localPrompt || promptUsed || "(cargando info...)"}
               </p>
             </div>
 
@@ -219,6 +250,19 @@ export default function ImageModal({
                 className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm"
                 placeholder="Descripción corta y emocionante"
               />
+              {/* Chips Area */}
+              <div className="flex flex-wrap gap-2 mt-2">
+                {TEXT_TEMPLATES.map((tmpl) => (
+                  <button
+                    key={tmpl.label}
+                    onClick={() => addTemplate(tmpl.text)}
+                    className="px-2 py-1 rounded-full bg-slate-700 text-xs text-slate-300 hover:bg-pink-600 hover:text-white transition-colors border border-slate-600"
+                    title="Click to append"
+                  >
+                    {tmpl.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -263,7 +307,7 @@ export default function ImageModal({
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </div >
+    </div >
   );
 }

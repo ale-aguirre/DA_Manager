@@ -23,6 +23,7 @@ export default function GalleryView() {
   const [selectedImage, setSelectedImage] = React.useState<SessionImage | null>(
     null
   );
+  const [activeCharacter, setActiveCharacter] = React.useState<string>("");
   const [overrideBase, setOverrideBase] = React.useState<string>("");
   const [folders, setFolders] = React.useState<string[]>([]);
   const [selectedFolder, setSelectedFolder] = React.useState<string>("");
@@ -79,7 +80,7 @@ export default function GalleryView() {
         setSelectedFolder(last);
         setOverrideBase(`OUTPUTS_DIR/${last}/`);
       }
-    } catch {}
+    } catch { }
     (async () => {
       try {
         const res = await fetch(`${baseUrl}/gallery/folders`);
@@ -87,7 +88,7 @@ export default function GalleryView() {
           const data = await res.json();
           if (Array.isArray(data)) setFolders(data);
         }
-      } catch {}
+      } catch { }
     })();
     loadPage(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,6 +96,7 @@ export default function GalleryView() {
 
   const onClickItem = (it: GalleryItem) => {
     setSelectedImage({ url: `${it.url}`, path: it.path });
+    setActiveCharacter(it.character);
     setShowModal(true);
   };
 
@@ -104,10 +106,10 @@ export default function GalleryView() {
     setSelectedFolder(folder);
     try {
       localStorage.setItem("gallery_base_override", v);
-    } catch {}
+    } catch { }
     try {
       localStorage.setItem("gallery_last_folder", folder);
-    } catch {}
+    } catch { }
     loadPage(true);
   };
 
@@ -208,7 +210,7 @@ export default function GalleryView() {
                 onError={(e) => {
                   try {
                     console.error("[Gallery] Error cargando imagen:", it.url);
-                  } catch {}
+                  } catch { }
                   (e.currentTarget as HTMLImageElement).classList.add(
                     "opacity-60"
                   );
@@ -250,7 +252,7 @@ export default function GalleryView() {
         <ImageModal
           image={selectedImage}
           promptUsed={""}
-          character={selectedCharacter || ""}
+          character={activeCharacter || selectedCharacter || ""}
           baseUrl={baseUrl}
           onClose={() => setShowModal(false)}
           onDeleted={() => {

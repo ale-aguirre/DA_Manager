@@ -5,3 +5,4 @@ cloudscraper
 groq
 httpx
 requests
+Pillow

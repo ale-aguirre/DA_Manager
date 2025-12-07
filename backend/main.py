@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from urllib.parse import quote
 from typing import List, Optional
 import json
+from PIL import Image
 try:
     from groq import Groq
 except Exception:
@@ -1547,15 +1548,15 @@ async def planner_magicfix(req: MagicFixRequest):
                 intensity_context = "CRITICAL: Create a NSFW/EXPLICIT scene. Use daring poses (kneeling, all fours, spreading) and revealing outfits (lingerie, latex, nude if artist style permits)."
 
         system_prompt = (
-            "You are an Anime Art Director. Create a UNIQUE, VIVID scene. "
+            "You are a Visionary Anime Art Director. Your goal is to CREATE A MASTERPIECE. "
+            "Suggest a UNIQUE, VIVID, and CINEMATIC scene composition. "
             "Select: Outfit, Pose, Location, Lighting, Camera Angle, Expression AND Artist Style. "
             f"{intensity_context} "
-            "Use the provided resources as a guide, but you can be creative if needed. "
-            f"Available Outfits: {', '.join(outfits[:20])}... "
-            f"Available Poses: {', '.join(poses[:20])}... "
-            f"Available Locations: {', '.join(locations[:20])}... "
-            f"Available Artists: {', '.join(artists[:20])}... "
-            "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\", \"artist\": \"...\"}"
+            "RULES:"
+            "1. BE CREATIVE. Do not just pick from the lists if you have a better idea that fits the Intensity."
+            "2. Focus on Lighting and Atmosphere (e.g. 'volumetric lighting', 'bioluminescent glow', 'golden hour')."
+            "3. Use Dynamic Camera Angles (e.g. 'dutch angle', 'fisheye', 'from below')."
+            "4. Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\", \"artist\": \"...\"}"
         )
         noise = random.randint(0, 999999)
         user_prompt = f"Current Tags: {req.prompt}\nTarget Intensity: {req.intensity or 'Unchanged'}\nSeed: {noise}\nTask: Remix this scene completely."
@@ -2417,8 +2418,13 @@ async def dream(req: DreamRequest):
         raise HTTPException(status_code=500, detail="Groq SDK no disponible en el servidor")
 
     system_prompt = (
-        "You are a Stable Diffusion Prompt Engineer. You DO NOT speak Spanish. "
-        "You ONLY output comma-separated Danbooru tags in English. NO sentences. NO explanations."
+        "You are a Master Stable Diffusion Prompt Engineer for Anime Art. "
+        "Your task is to EXPAND simple ideas into High-Quality, Extremely Detailed Anime prompts. "
+        "RULES:"
+        "1. ALWAYS start with quality tags: 'masterpiece, best quality, ultra detailed, 8k'. "
+        "2. Add detailed descriptions of Lighting, Shadows, and Atmosphere. "
+        "3. Use booru-style tags (comma-separated). "
+        "4. Output ONLY the tags. NO explanations. NO sentences."
     )
     user_prompt = f"Character: {req.character}\nTags: {req.tags or ''}\nOutput: comma-separated Danbooru tags in English."
 
@@ -3093,3 +3099,199 @@ async def local_lora_info(name: str):
         print(f"Error leyendo info de {name}: {e}")
         return {"trainedWords": [], "name": base_name, "error": str(e)}
 
+
+# ==========================================
+# MARKETING INSPECTOR UTILS
+# ==========================================
+
+class GenerateInfoRequest(BaseModel):
+    prompt: str
+    loras: List[str] = []
+
+@app.post("/gallery/generate-info")
+async def gallery_generate_info(req: GenerateInfoRequest):
+    """
+    Genera Título y Tags inteligentes.
+    Intenta usar LLM (Groq) para resultados creativos.
+    Fallback a heurísticas si falla.
+    """
+    # 1. Extraer Personaje (Common logic)
+    raw_char_base = ""
+    if req.loras:
+        raw_char_base = Path(req.loras[0]).stem
+    else:
+        match = re.search(r"<lora:([^:>]+)(?::[^>]+)?>", req.prompt)
+        if match:
+            raw_char_base = match.group(1)
+    
+    character = "Unknown"
+    if raw_char_base:
+        base = raw_char_base
+        base = re.sub(r"(?i)(_v\d+|v\d+|xl|pony|sdxl|lora|pdxl|noobai|illustrious|master|monochrome|pokemon)", "", base)
+        base = re.sub(r"\.safetensors|\.pt", "", base)
+        base = base.replace("_", " ").replace("-", " ").strip()
+        if not base:
+             base = raw_char_base.split("_")[0]
+        character = base.title()
+
+    # == INTENTO LLM (CREATIVE MODE) ==
+    if GROQ_API_KEY and Groq:
+        try:
+            client = Groq(api_key=GROQ_API_KEY)
+            system_prompt = (
+                "You are an expert Social Media Manager for a Premium Anime Art Gallery. "
+                "Your job is to create viral, engaging metadata for AI Art. "
+                "Output ONLY a JSON object with keys: 'title', 'description', 'tags'."
+            )
+            user_prompt = (
+                f"Analyze this art generation.\n"
+                f"Character: {character}\n"
+                f"Prompt Used: {req.prompt[:500]}...\n\n"
+                "TASKS:\n"
+                "1. Title: Creative, short, catchy (max 6 words).\n"
+                "2. Description: 2 sentences. Enthusiastic, mentioning the vibe/outfit. Use emojis (✨, 🌸, etc).\n"
+                "3. Tags: 20 comma-separated simple English tags. Include vibe tags (e.g. 'cinematic', 'cute'). Format hashtags style for tags string is optional, but preferred plain text for this listing.\n"
+                "RETURN JSON ONLY."
+            )
+            
+            completion = await groq_chat_with_fallbacks(
+                client,
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                temperature=0.8
+            )
+            
+            content = completion.choices[0].message.content.strip()
+            # Extract JSON
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1:
+                data = json.loads(content[start:end+1])
+                return {
+                    "title": data.get("title", f"{character} Art"),
+                    "description": data.get("description", "Generated with LadyManager ✨"),
+                    "tags": data.get("tags", "anime, aiart, stable diffusion")
+                }
+        except Exception as e:
+            print(f"[Gallery] LLM Generation failed: {e}. Using Fallback.")
+
+    # == FALLBACK (HEURISTICS) ==
+    try:
+        # 2. Extraer Outfit (heurística)
+        outfit_candidates = [
+            "bikini", "lingerie", "dress", "uniform", "armor", "suit", "casual", 
+            "swimsuit", "pajamas", "kimono", "yukata", "cosplay", "santa costume",
+            "christmas", "halloween", "witch", "nurse", "maid", "school uniform",
+            "gym clothes", "sportswear", "office lady", "bunny suit"
+        ]
+        
+        found_outfit = "Special"
+        prompt_lower = req.prompt.lower()
+        
+        for cand in outfit_candidates:
+            if cand in prompt_lower:
+                found_outfit = cand.title()
+                break
+                
+        title = f"{character} - {found_outfit} Ver."
+
+        # 3. Generar Tags (limpieza y blocklist)
+        blocklist = {
+            "masterpiece", "best quality", "very aesthetic", "absurdres", "newest", "aesthetic",
+            "source filmmaker", "3d", "render", "photorealistic", "realistic", "raw photo",
+            "8k", "4k", "breathtaking", "amazing", "high quality", "highres", "lowres",
+            "bad anatomy", "bad hands", "text", "error", "missing fingers", "extra digit",
+            "fewer digits", "cropped", "worst quality", "low quality", "normal quality",
+            "jpeg artifacts", "signature", "watermark", "username", "blurry", "artist name",
+            "1girl", "solo", "breasts", "cleavage", "large breasts", "nsfw", "rating_explicit",
+            "score_9", "score_8_up", "score_7_up", "rating_safe", "safe", "general", "sensitive",
+            "questionable", "explicit", "spreading", "doggy style", "sex", "pussy", "cum",
+            "penetration", "fellatio", "all fours", "nude", "naked", "nipples"
+        }
+
+        raw_tags = [t.strip() for t in req.prompt.split(",") if t.strip()]
+        clean_tags = []
+        seen = set()
+        
+        for tag in raw_tags:
+            lower = tag.lower()
+            # Filtrar basura y blocklist
+            if lower in blocklist or len(lower) < 2:
+                continue
+            if "lora" in lower: # Ocultar lora tags
+                continue
+            if lower.startswith("zz"): # Posibles triggers tecnicos
+                continue
+            
+            # Formato Hashtag
+            if lower not in seen:
+                # "#BlueEyes"
+                hashtag = "#" + "".join(word.title() for word in tag.replace("-", " ").split())
+                clean_tags.append(hashtag)
+                seen.add(lower)
+
+        tags_str = " ".join(clean_tags[:30])
+
+        # 4. Generar Descripción Template
+        description = (
+            f"Here is a new AI generation of {character}!\n"
+            f"Build: {found_outfit} Style.\n\n"
+            "Hope you like it! ✨"
+        )
+
+        return {
+            "title": title,
+            "tags": tags_str,
+            "description": description
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando info: {str(e)}")
+
+
+
+@app.get("/gallery/metadata")
+async def get_image_metadata(path: str):
+    """
+    Lee los metadatos de la imagen (PNG Info) para extraer el prompt.
+    """
+    if not OUTPUTS_DIR:
+        raise HTTPException(status_code=500, detail="OUTPUTS_DIR no configurado")
+    
+    try:
+        base = Path(OUTPUTS_DIR).resolve()
+        # Permitir rutas relativas se decodifican
+        target = (base / path).resolve()
+        
+        # Validar ruta segura
+        if base not in target.parents and base != target.parent:
+             # Fallback si se abriÃ³ una subcarpeta con override_base en gallery
+             pass 
+
+        if not target.exists():
+            return {"prompt": "", "params": ""}
+
+        with Image.open(target) as img:
+            img.load()
+            info = img.info or {}
+            params = info.get("parameters", "")
+            
+            # Parse simple
+            prompt = ""
+            if params:
+                # A1111 format: Prompt \n Negative prompt: ...
+                if "Negative prompt:" in params:
+                    prompt = params.split("Negative prompt:")[0].strip()
+                elif "Steps:" in params:
+                    prompt = params.split("Steps:")[0].strip()
+                else:
+                    prompt = params
+
+            return {"prompt": prompt, "full_params": params}
+            
+    except Exception as e:
+        print(f"Error leyendo metadata de {path}: {e}")
+        return {"prompt": "", "error": str(e)}
+
+
+
+# Reload trigger 2

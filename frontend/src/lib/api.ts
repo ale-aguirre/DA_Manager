@@ -469,3 +469,32 @@ export async function getLoraVerify(filename: string): Promise<LoraVerifyRespons
   }
   return res.json();
 }
+
+export interface GeneratedInfo {
+  title: string;
+  tags: string;
+  description: string;
+}
+
+export async function postGalleryGenerateInfo(prompt: string, loras: string[] = []): Promise<GeneratedInfo> {
+  const res = await fetch(`${BASE_URL}/gallery/generate-info`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, loras }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Generate info failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export async function getGalleryMetadata(path: string): Promise<{ prompt: string; full_params?: string }> {
+  try {
+    const res = await fetch(`${BASE_URL}/gallery/metadata?path=${encodeURIComponent(path)}`);
+    if (!res.ok) return { prompt: "" };
+    return res.json();
+  } catch {
+    return { prompt: "" };
+  }
+}
