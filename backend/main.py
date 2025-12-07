@@ -1288,6 +1288,35 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 loc_final = l_choice
                 lighting_final = random.choice(lighting) if lighting else "soft lighting"
                 camera_final = random.choice(camera) if camera else "dynamic angle"
+            
+            # == 3.1b THEME OVERRIDE (Christmas) ==
+            theme_clean = (char.theme or "").strip().lower()
+            if "christmas" in theme_clean or "navidad" in theme_clean:
+                christmas_outfits = [
+                    "santa girl costume, red dress, fur trim",
+                    "reindeer costume, antlers, cozy",
+                    "festive sweater, winter clothes, scarf",
+                    "christmas lingerie, red and white, bells",
+                    "elf costume, green and red"
+                ]
+                christmas_locs = [
+                    "snowy street, christmas lights, night",
+                    "christmas tree background, presents, fireplace, indoor",
+                    "winter cabin, snowy window, cozy atmosphere",
+                    "frozen lake, snow falling, winter forest"
+                ]
+                # Override
+                outfit_raw = random.choice(christmas_outfits)
+                # Force detailed background for theme even if simple_background was requested? 
+                # User said "overwrites current tags", likely implies forcing the theme scene.
+                # However, if user explicitly checked simple background, maybe we should respect? 
+                # User request: "quiero escenas o secuencias de navidad". Implies background.
+                if not char.simple_background: 
+                     loc_final = random.choice(christmas_locs)
+                     lighting_final = "warm fireplace glow, festive lighting"
+                else:
+                     # Even in simple background, maybe add some snow?
+                     loc_final = "simple background, white background, floating snowflakes"
 
             # Master Seed
             master_seed = random.randint(0, 2_147_483_647)
