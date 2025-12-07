@@ -92,6 +92,17 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
                 on_log(f"LoRA ya existe para {character_name}: {target.name}")
             return True, "File exists"
 
+        # Búsqueda recursiva: si el archivo existe en algún subdirectorio, usamos ese.
+        # Esto previene re-descargas si el usuario organizó sus LoRAs en carpetas.
+        try:
+            found_existing = next(lora_dir.rglob(safe), None)
+            if found_existing:
+                if on_log:
+                    on_log(f"LoRA encontrado en subcarpeta: {found_existing.relative_to(lora_dir)}")
+                return True, "File exists in subfolder"
+        except Exception:
+            pass
+
         loop = asyncio.get_running_loop()
 
         def log_safe(msg: str):
