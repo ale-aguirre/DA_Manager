@@ -74,7 +74,14 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
             const defaults = {
                 positivePrompt: "masterpiece, best quality, absurdres, highres, 8k, detailed",
-                negativePrompt: "low quality, worst quality, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry"
+                negativePrompt: "low quality, worst quality, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
+                clipSkip: 2,
+                hiresFix: true,
+                upscaleBy: 2,
+                hiresSteps: 20,
+                upscaler: "R-ESRGAN 4x+ Anime 6B",
+                width: 832,
+                height: 1216,
             };
 
             if (savedConfig) {
@@ -82,8 +89,15 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                     const parsed = JSON.parse(savedConfig);
                     setGlobalConfigState({
                         ...parsed,
-                        positivePrompt: parsed.positivePrompt || defaults.positivePrompt,
-                        negativePrompt: parsed.negativePrompt || defaults.negativePrompt
+                        // FORCE OVERRIDE defaults as per requested logic
+                        clipSkip: 2,
+                        hiresFix: true,
+                        upscaleBy: 2,
+                        hiresSteps: 20,
+                        upscaler: "R-ESRGAN 4x+ Anime 6B",
+                        // Ensure width/height are respected if valid, else default
+                        width: parsed.width || 832,
+                        height: parsed.height || 1216,
                     });
                 } catch (e) {
                     setGlobalConfigState(defaults);
@@ -91,6 +105,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             } else {
                 setGlobalConfigState(defaults);
             }
+
 
             const savedMeta = localStorage.getItem("planner_meta");
             if (savedMeta) {
@@ -281,6 +296,14 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                 vaes: vaes,
                 loras: loras.files,
                 upscalers: upscalers.length > 0 ? upscalers : res.upscalers // Prefer real API list
+            });
+
+            // Default Checkpoint Logic: Always select first one if none selected
+            setGlobalConfigState((prev) => {
+                if (!prev.checkpoint && ckpts && ckpts.length > 0) {
+                    return { ...prev, checkpoint: ckpts[0] };
+                }
+                return prev;
             });
         } catch (e) {
             console.error("Failed to load resources", e);
