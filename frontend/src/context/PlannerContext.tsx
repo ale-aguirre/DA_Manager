@@ -244,18 +244,26 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         setUiStateState((prev) => ({ ...prev, ...updates }));
     }, []);
 
-    const clearAll = useCallback(() => {
-        if (confirm("¿Estás seguro de borrar todo?")) {
-            setJobs([]);
-            setTechConfigState({});
-            setMetaByCharacterState({});
-            setLoreByCharacterState({});
-            localStorage.removeItem(STORAGE_KEYS.JOBS);
-            localStorage.removeItem(STORAGE_KEYS.TECH);
+    const clearAll = () => {
+        // Confirmation moved to UI (PlannerView modal)
+        setJobs([]);
+        // Reset configs
+        setTechConfigState({}); // Changed from setTechConfig to setTechConfigState
+        setGlobalConfigState({ positivePrompt: "", negativePrompt: "" }); // Changed from setGlobalConfig to setGlobalConfigState
+        setMetaByCharacterState({}); // Added back as it was in the original clearAll
+        setLoreByCharacterState({}); // Added back as it was in the original clearAll
+        // Clear localStorage
+        try {
+            localStorage.removeItem("planner_jobs");
+            localStorage.removeItem("planner_tech"); // Added back as it was in the original clearAll
             localStorage.removeItem("planner_meta");
-            localStorage.removeItem("planner_lore");
+            localStorage.removeItem("planner_lore"); // Added back as it was in the original clearAll
+            localStorage.removeItem("planner_config"); // Added back as it was in the original clearAll
+            localStorage.removeItem("planner_context");
+        } catch (e) {
+            console.error(e);
         }
-    }, []);
+    };
 
     // 4. Async Actions
     const loadResources = useCallback(async () => {

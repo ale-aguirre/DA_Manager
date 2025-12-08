@@ -122,8 +122,52 @@ export function mergeNegative(
 
 /**
  * Reconstruye el prompt reemplazando inteligentemente los elementos del triplete.
- * Requiere las listas de recursos (knownResources) para identificar qué borrar.
+ * Requiere las listas de recursos para identificar qué borrar.
  */
+
+// Helper para normalizar tags (quitar pesos, paréntesis, espacios extras)
+function normalizeTag(tag: string): string {
+  // 1. Quitar paréntesis y pesos: (tag:1.2) -> tag
+  //    También [[tag]] -> tag, {{tag}} -> tag
+  let clean = tag.replace(/[(){}[\]]/g, "");
+  // Quitar la parte del peso si existe (e.g. ":1.2")
+  if (clean.includes(":")) {
+    clean = clean.split(":")[0];
+  }
+  // 2. Normalizar espacios y guiones bajos a un estándar (espacio simple)
+  //    red_dress -> red dress
+  return clean.replace(/_/g, " ").trim().toLowerCase();
+}
+
+/**
+ * Chequea si un token (con posible peso/formato) coincide con un target (nombre canónico).
+ * target debe estar ya "limpio" (sin _, lowercase).
+ */
+function isMatch(token: string, target: string): boolean {
+  if (!target) return false;
+  const tokenNorm = normalizeTag(token);
+  const targetNorm = normalizeTag(target);
+
+  // Coincidencia exacta de la base
+  if (tokenNorm === targetNorm) return true;
+
+  // Coincidencia parcial robusta (evitar falsos positivos cortos)
+  // Si target="dress" y token="red dress", NO es match (queremos especificidad en triplete).
+  // Pero si target="red dress" y token="red_dress", SÍ es match.
+
+  // Para recursos definidos (outfits, poses), usualmente buscamos match completo del concepto.
+  // Pero a veces el usuario corta el tag.
+
+  // Vamos a ser estrictos: Token NORMALIZADO debe ser IGUAL al target NORMALIZADO
+  // O el target debe estar contenido en el token (ej: token "my red dress", target "red dress")
+  // PERO, solo si es un "word boundary".
+
+  // Simplificación efectiva:
+  // Si normalizamos ambos a espacios, podemos buscar subcadenas.
+  return tokenNorm.includes(targetNorm) || targetNorm.includes(tokenNorm);
+}
+
+
 export function rebuildPromptWithTriplet(
   currentPrompt: string,
   newValues: { outfit?: string; pose?: string; location?: string },
@@ -132,61 +176,50 @@ export function rebuildPromptWithTriplet(
 ): string {
   let tokens = splitPrompt(currentPrompt);
 
-  const replaceOrAdd = (newValue: string | undefined, oldValue: string | undefined, resourceList: string[]) => {
+  const replaceOrAdd = (
+    newValue: string | undefined,
+    oldValue: string | undefined,
+    resourceList: string[] | undefined
+  ) => {
+    // Si no hay nuevo valor, no hacemos nada (no borramos nada tampoco si no hay reemplazo explícito)
+    // EXCEPCIÓN: Si queremos borrar explícitamente, newValue podría ser null? 
+    // Por ahora asumimos flujo de "cambio": si cambio outfit, borro el anterior y pongo el nuevo.
     if (!newValue) return;
+
     const newValClean = newValue.trim();
-    if (!newValClean) return;
+    const newValNorm = normalizeTag(newValClean);
 
-    // 1. Estrategia de Eliminación: Old Value (Prioridad Alta)
-    if (oldValue) {
-      const oldClean = oldValue.trim().toLowerCase();
-      if (oldClean) {
-        tokens = tokens.filter(t => {
-          const tLow = t.toLowerCase();
-          // Si el token es igual al valor viejo, o lo contiene (ej: "red dress" vs "dress")
-          // Pero cuidado con falsos positivos. Usamos coincidencia exacta o "word boundary" simulado.
-          return tLow !== oldClean && !tLow.includes(oldClean) && !oldClean.includes(tLow);
-        });
+    // Filter tokens
+    tokens = tokens.filter(t => {
+      // 1. Si el token es EXACTAMENTE el nuevo valor (idempotencia), lo borramos para volver a agregarlo al final 
+      //    (o lo dejamos y no agregamos? Mejor borrar y reagregar para mantener orden lógico o actualizar pesos si cambiaran)
+      //    Prefiero borrar todo rastro antiguo para evitar duplicados.
+      if (normalizeTag(t) === newValNorm) return false;
+
+      // 2. Si coincide con oldValue (lo que el UI dice que había antes)
+      if (oldValue && isMatch(t, oldValue)) return false;
+
+      // 3. Si coincide con algo de la lista de recursos (limpieza preventiva de la categoría)
+      if (resourceList) {
+        // ¿Es un recurso de esta categoría?
+        const match = resourceList.some(r => isMatch(t, r));
+        if (match) {
+          // CUIDADO: No borrar cosas que coincidan por accidente (ej: "sitting" vs "sitting on chair").
+          // isMatch usa includes bidireccional, lo cual es agresivo pero necesario para (red_dress) vs (red dress).
+          return false;
+        }
       }
-    }
 
-    // 2. Estrategia de Eliminación: Resource List (Limpieza Profunda)
-    if (resourceList && resourceList.length > 0) {
-      tokens = tokens.filter((t) => {
-        const lowToken = t.toLowerCase();
+      return true;
+    });
 
-        // Si es EXACTAMENTE el nuevo valor, mantenlo (idempotencia)
-        if (lowToken === newValClean.toLowerCase()) return true;
-
-        // Chequear si es un recurso conocido
-        const isResource = resourceList.some(r => {
-          const rLow = r.toLowerCase();
-          return (rLow.length > 2 && lowToken.includes(rLow)) || (lowToken.length > 2 && rLow.includes(lowToken));
-        });
-
-        return !isResource;
-      });
-    }
-
-    // Añadir el nuevo valor al final
+    // Añadir nuevo valor
     tokens.push(newValClean);
   };
 
-  if (knownResources) {
-    replaceOrAdd(newValues.outfit, oldValues?.outfit, knownResources.outfits);
-    replaceOrAdd(newValues.pose, oldValues?.pose, knownResources.poses);
-    replaceOrAdd(newValues.location, oldValues?.location, knownResources.locations);
-  } else {
-    // Fallback: intentar borrar oldValues si existen, aunque no tengamos resource list
-    if (oldValues?.outfit) tokens = tokens.filter(t => !t.toLowerCase().includes(oldValues.outfit!.toLowerCase()));
-    if (newValues.outfit) tokens.push(newValues.outfit);
-
-    if (oldValues?.pose) tokens = tokens.filter(t => !t.toLowerCase().includes(oldValues.pose!.toLowerCase()));
-    if (newValues.pose) tokens.push(newValues.pose);
-
-    if (oldValues?.location) tokens = tokens.filter(t => !t.toLowerCase().includes(oldValues.location!.toLowerCase()));
-    if (newValues.location) tokens.push(newValues.location);
-  }
+  replaceOrAdd(newValues.outfit, oldValues?.outfit, knownResources?.outfits);
+  replaceOrAdd(newValues.pose, oldValues?.pose, knownResources?.poses);
+  replaceOrAdd(newValues.location, oldValues?.location, knownResources?.locations);
 
   return tokens.join(", ");
 }
@@ -217,36 +250,24 @@ export function rebuildPromptWithExtras(
 ): string {
   let tokens = splitPrompt(prompt);
 
-  const replaceOrAdd = (newValue: string | undefined, oldValue: string | undefined, resourceList: string[] | undefined) => {
+  const replaceOrAdd = (
+    newValue: string | undefined,
+    oldValue: string | undefined,
+    resourceList: string[] | undefined
+  ) => {
     if (!newValue) return;
     const newValClean = newValue.trim();
-    if (!newValClean) return;
+    const newValNorm = normalizeTag(newValClean);
 
-    // 1. Remove Old Value
-    if (oldValue) {
-      const oldClean = oldValue.trim().toLowerCase();
-      if (oldClean) {
-        tokens = tokens.filter(t => {
-          const tLow = t.toLowerCase();
-          return tLow !== oldClean && !tLow.includes(oldClean) && !oldClean.includes(tLow);
-        });
+    tokens = tokens.filter(t => {
+      if (normalizeTag(t) === newValNorm) return false;
+      if (oldValue && isMatch(t, oldValue)) return false;
+      if (resourceList) {
+        if (resourceList.some(r => isMatch(t, r))) return false;
       }
-    }
+      return true;
+    });
 
-    // 2. Remove from Resource List (if provided) to ensure no duplicates/conflicts
-    if (resourceList && resourceList.length > 0) {
-      tokens = tokens.filter((t) => {
-        const lowToken = t.toLowerCase();
-        if (lowToken === newValClean.toLowerCase()) return true; // Keep if identical
-        const isResource = resourceList.some(r => {
-          const rLow = r.toLowerCase();
-          return (rLow.length > 2 && lowToken.includes(rLow)) || (lowToken.length > 2 && rLow.includes(lowToken));
-        });
-        return !isResource;
-      });
-    }
-
-    // 3. Add New Value
     tokens.push(newValClean);
   };
 
@@ -390,11 +411,14 @@ export const computeTechBootstrap = (params: BootstrapParams): {
 
 // Intensidad por tags básicos
 export function getIntensity(prompt: string): { label: "SFW" | "ECCHI" | "NSFW" } {
-  const tokens = splitPrompt(prompt).map((t) => t.toLowerCase());
-  if (tokens.includes("rating_explicit") || tokens.includes("nsfw") || tokens.includes("explicit")) {
+  // Usar normalización para detectar
+  const tokens = splitPrompt(prompt);
+  const normalized = tokens.map(normalizeTag);
+
+  if (normalized.some(t => t.includes("rating explicit") || t.includes("nsfw") || t === "explicit")) {
     return { label: "NSFW" };
   }
-  if (tokens.includes("rating_questionable") || tokens.some((t) => t.includes("ecchi"))) {
+  if (normalized.some(t => t.includes("rating questionable") || t.includes("ecchi") || t.includes("suggestive"))) {
     return { label: "ECCHI" };
   }
   return { label: "SFW" };
@@ -404,16 +428,19 @@ export function updateIntensityTags(prompt: string, newIntensity: "SFW" | "ECCHI
   let tokens = splitPrompt(prompt);
 
   // 1. Define Tag Sets
-  const sfwTags = ["rating_safe", "safe"];
-  const ecchiTags = ["rating_questionable", "questionable", "suggestive", "cleavage"];
-  const nsfwTags = ["rating_explicit", "explicit", "nsfw"];
+  const sfwTags = ["rating_safe", "safe", "rating safe"];
+  const ecchiTags = ["rating_questionable", "questionable", "suggestive", "cleavage", "rating questionable"];
+  const nsfwTags = ["rating_explicit", "explicit", "nsfw", "rating explicit"];
 
   // Also remove literal labels if they exist (Sanitization)
   const labels = ["sfw", "ecchi", "nsfw"];
 
-  // 2. Remove ALL intensity tags first to start clean
-  const allIntensity = new Set([...sfwTags, ...ecchiTags, ...nsfwTags, ...labels]);
-  tokens = tokens.filter(t => !allIntensity.has(t.toLowerCase()));
+  const allToRemove = [...sfwTags, ...ecchiTags, ...nsfwTags, ...labels];
+
+  // 2. Remove ALL intensity tags first to start clean using robust matching
+  tokens = tokens.filter(t => {
+    return !allToRemove.some(r => isMatch(t, r));
+  });
 
   // 3. Inject correct tags based on new mode
   if (newIntensity === "SFW") {

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Trash2, Play, Cog } from "lucide-react";
+import { Trash2, Play, Cog, AlertCircle } from "lucide-react";
 import { usePlannerContext } from "../../context/PlannerContext";
 import { TranslationProvider, useTranslation } from "../../hooks/useTranslation";
 import PlannerLayout from "./layout/PlannerLayout";
@@ -32,6 +32,7 @@ function PlannerDashboard() {
   const [paramTab, setParamTab] = useState<"generation" | "hires" | "adetailer">("generation");
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [showPayloadModal, setShowPayloadModal] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
 
   // Strategy State
   const [strategyMode, setStrategyMode] = useState<"Random" | "Sequence">("Random");
@@ -277,12 +278,7 @@ function PlannerDashboard() {
               <h3 className="mb-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Debug Zone</h3>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    if (confirm("¿Estás seguro de reiniciar todo? Se perderán los jobs actuales.")) {
-                      clearAll();
-                      window.location.href = "/radar";
-                    }
-                  }}
+                  onClick={() => setShowResetModal(true)}
                   className="flex items-center gap-2 rounded border border-red-900/30 bg-red-900/10 px-3 py-2 text-xs text-red-400 hover:bg-red-900/20"
                 >
                   <Trash2 className="h-3 w-3" /> Reset & Radar
@@ -319,6 +315,45 @@ function PlannerDashboard() {
               </div>
               <div className="mt-4 flex justify-end gap-2">
                 <button onClick={() => setShowPayloadModal(false)} className="rounded border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800">Cerrar</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+
+        {/* Reset Confirmation Modal */}
+        {showResetModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="w-[90vw] max-w-md rounded-xl border border-red-900/50 bg-slate-950 p-6 shadow-2xl">
+              <div className="mb-4 flex items-center gap-3 text-red-400">
+                <AlertCircle className="h-6 w-6" />
+                <h3 className="text-lg font-bold">¿Reiniciar Todo?</h3>
+              </div>
+
+              <p className="mb-6 text-sm text-zinc-300 leading-relaxed">
+                Esta acción eliminará <strong>todos los trabajos actuales</strong> y la configuración del planificador.
+                <br /><br />
+                Serás redirigido al <strong>Radar</strong> para comenzar una nueva selección.
+              </p>
+
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  onClick={() => setShowResetModal(false)}
+                  className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-2 text-sm text-zinc-300 hover:bg-slate-800 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => {
+                    clearAll();
+                    window.location.href = "/radar";
+                  }}
+                  className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 shadow-lg shadow-red-900/20 transition-all active:scale-95"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Confirmar Reinicio
+                </button>
               </div>
             </div>
           </div>

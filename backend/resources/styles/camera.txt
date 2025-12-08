@@ -5,7 +5,6 @@ close-up, detailed face, eye focus
 dutch angle, dynamic framing
 from below, low angle, imposing
 from above, high angle, vulnerable
-fisheye, artistic distortion
 looking at viewer, eye contact
 depth of field, f/1.8, bokeh
 cinematic angle, movie still

@@ -2796,50 +2796,74 @@ def _read_resource_lines(rel_path: str) -> List[str]:
 
 @app.post("/planner/magicfix")
 async def planner_magicfix(req: MagicFixRequest):
-    """Genera una escena VÃVIDA y COMPLETA (Outfit, Pose, Location, Light, Cam, Expr)."""
+    """Genera una escena VÍVIDA y COMPLETA (Outfit, Pose, Location, Light, Cam, Expr)."""
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt requerido")
     
     # 1. Cargar todos los recursos para el fallback
-    outfits = _read_lines("outfits.txt")
-    poses = _read_lines("poses.txt")
-    locations = _read_lines("locations.txt")
-    lighting = _read_lines("styles/lighting.txt")
-    camera = _read_lines("styles/camera.txt")
-    expressions = _read_lines("visuals/expressions.txt")
+    outfits = _read_resource_lines("outfits.txt")
+    poses = _read_resource_lines("poses.txt")
+    locations = _read_resource_lines("locations.txt")
+    lighting = _read_resource_lines("styles/lighting.txt")
+    camera = _read_resource_lines("styles/camera.txt")
+    expressions = _read_resource_lines("visuals/expressions.txt")
 
     # 2. Fallback de Emergencia (Aleatoriedad Pura)
     def get_random():
+        # Lógica de fallback mejorada por intensidad
+        pf_outfits = outfits if outfits else ["casual"]
+        if req.intensity == "NSFW":
+             # Preferir items que suenen a poca ropa si existen en la lista, fallback a micro-bikini
+             nsfw_candidates = [o for o in pf_outfits if "bikini" in o or "lingerie" in o or "nude" in o or "naked" in o]
+             chosen_outfit = random.choice(nsfw_candidates) if nsfw_candidates else "micro bikini"
+        else:
+             chosen_outfit = random.choice(pf_outfits)
+
         return {
-            "outfit": random.choice(outfits) if outfits else "casual",
+            "outfit": chosen_outfit,
             "pose": random.choice(poses) if poses else "standing",
             "location": random.choice(locations) if locations else "simple background",
             "lighting": random.choice(lighting) if lighting else "cinematic lighting",
             "camera": random.choice(camera) if camera else "cowboy shot",
             "expression": random.choice(expressions) if expressions else "blush",
-            "ai_reasoning": "ðŸŽ² Fallback Aleatorio (IA no disponible)"
+            "ai_reasoning": "🎲 Fallback Aleatorio (IA no disponible)"
         }
 
     if not GROQ_API_KEY or Groq is None:
         return get_random()
 
-    # 3. GeneraciÃ³n IA con Temperatura Alta
+    # 3. Generación IA con Temperatura Alta
     try:
         client = Groq(api_key=GROQ_API_KEY)
-        system_prompt = (
-            "You are an Anime Art Director. Create a UNIQUE, VIVID scene. "
-            "Select: Outfit, Pose, Location, Lighting, Camera Angle, and Expression. "
-            "Be creative! Mix themes. "
-            "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\"}"
+        
+        # Construcción del Prompt de Sistema con Restricciones
+        restrictions = (
+            "Avoid: 'latex', 'bodysuit', 'catsuit', 'sumo', 'fat', 'ugly', 'fisheye'. "
         )
+        style_guide = "Style: Anime, High Quality, Detailed."
+        
+        if req.intensity == "NSFW":
+            style_guide += " INTENSITY: NSFW/LEWD. Prefer outfits like: 'micro bikini', 'lingerie', 'nude', 'revealing clothes'. AVOID covering the body too much."
+        elif req.intensity == "ECCHI":
+             style_guide += " INTENSITY: ECCHI/SEXY. Prefer 'suggestive' outfits, cleavage, tight clothes."
+        else:
+             style_guide += " INTENSITY: SFW/SAFE. Cute and stylish outfits."
+
+        system_prompt = (
+            f"You are an Anime Art Director. Create a UNIQUE, VIVID scene. {style_guide}\n"
+            f"Select: Outfit, Pose, Location, Lighting, Camera Angle, and Expression.\n"
+            f"Constraints: {restrictions}\n"
+            "Return ONLY JSON: {\"outfit\": \"...\", \"pose\": \"...\", \"location\": \"...\", \"lighting\": \"...\", \"camera\": \"...\", \"expression\": \"...\", \"ai_reasoning\": \"Brief explanation\"}"
+        )
+        
         # Inyectamos ruido en el prompt para forzar variedad
         noise = random.randint(0, 999999)
-        user_prompt = f"Current Tags: {req.prompt}\nSeed: {noise}\nTask: Create a NEW scene variation."
+        user_prompt = f"Current Tags: {req.prompt}\nSeed: {noise}\nTask: Create a NEW scene variation suited for {req.intensity or 'SFW'} context."
 
         completion = await groq_chat_with_fallbacks(
             client,
             [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-            temperature=0.95  # <--- CREATIVIDAD MÃXIMA
+            temperature=0.95  # <--- CREATIVIDAD MÁXIMA
         )
         
         content = completion.choices[0].message.content.strip()
@@ -2848,14 +2872,19 @@ async def planner_magicfix(req: MagicFixRequest):
         json_str = content[start:end+1] if start != -1 and end != -1 else "{}"
         data = json.loads(json_str)
         
+        # Validación post-IA (Safety net)
+        outfit_res = data.get("outfit") or ""
+        if "latex" in outfit_res.lower() or "sumo" in outfit_res.lower():
+             outfit_res = "micro bikini" if req.intensity == "NSFW" else "casual dress"
+
         return {
-            "outfit": data.get("outfit") or random.choice(outfits),
+            "outfit": outfit_res or random.choice(outfits),
             "pose": data.get("pose") or random.choice(poses),
             "location": data.get("location") or random.choice(locations),
             "lighting": data.get("lighting") or random.choice(lighting),
             "camera": data.get("camera") or random.choice(camera),
             "expression": data.get("expression") or random.choice(expressions),
-            "ai_reasoning": "âœ¨ Destino Alterado por IA"
+            "ai_reasoning": data.get("ai_reasoning") or "✨ Destino Alterado por IA"
         }
     except Exception as e:
         print(f"MagicFix Error: {e}")
