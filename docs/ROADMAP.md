@@ -1,15 +1,12 @@
 
 # 🗺️ LadyManager Roadmap (Actualizado 2025-11-26)
 
+
+> Para reglas de arquitectura, ver ARCHITECTURE_AND_RULES.md
+
 **Stack:** FastAPI (Backend `:8000`) + Next.js 14 (Frontend `:3000`).
 
 **Módulos activos:** `Radar`, `Planner`, `Factory`, `Gallery`, `Studio`, `Archivos Locales`.
-
-**Principios clave:**
-- Sin vacíos críticos: Outfit/Pose/Location siempre con fallback desde `backend/resources`.
-- UI densa tipo Technical Dashboard, íconos Lucide, loaders/toasts.
-- Rutas y paths por `.env`: `REFORGE_PATH`, `LORA_PATH`, `OUTPUTS_DIR`, `CIVITAI_API_KEY`, `GROQ_API_KEY`.
-- Puertos fijos `3000/8000`.
 
 ## Estado actual
 - Planner estable con previews locales desde `.civitai.info`; se consulta Civitai solo si faltan imágenes en local.

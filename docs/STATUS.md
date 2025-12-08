@@ -56,3 +56,8 @@
 ### Preservación
 - Lógica de Batch Count y Multi-LoRA Selector intactas.
 - Estilo visual técnico y densidad alta.
+
+## Arquitectura V4 (Smart Hybrid) — 2025-12-08
+- Cambio de paradigma: De reglas rígidas a híbrido (IA + Lógica Estricta).
+- Integración aprobada: Ollama (Local) y Resource Manager.
+- Documentación Maestra: ARCHITECTURE_AND_RULES.md establecida.
