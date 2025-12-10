@@ -131,7 +131,8 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
       try {
         const res = await fetch("http://127.0.0.1:8000/local/loras", { cache: "no-store" });
         const data = res.ok ? await res.json() : { files: [] };
-        const files: string[] = Array.isArray(data?.files) ? data.files : [];
+        const rawFiles = Array.isArray(data?.files) ? data.files : [];
+        const files: string[] = rawFiles.map((f: any) => typeof f === "string" ? f : f?.filename || "");
         const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
         setDownloadStates((prev) => {
           const next = { ...prev };
@@ -214,16 +215,17 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
     setBlacklistInput((prev) => parseInputToList(prev).filter((t) => t !== tag.toLowerCase()).join(", "));
   };
 
-  React.useEffect(() => {
-    const h = setTimeout(() => {
-      const q = query.trim();
-      if (q.length >= 3 && q !== lastFiredRef.current) {
-        onScan(period, sort, q, limit);
-        lastFiredRef.current = q;
-      }
-    }, 800);
-    return () => clearTimeout(h);
-  }, [query, onScan, period, sort, limit]);
+  // REMOVED: Auto-search on typing (User requested manual search only)
+  // React.useEffect(() => {
+  //   const h = setTimeout(() => {
+  //     const q = query.trim();
+  //     if (q.length >= 3 && q !== lastFiredRef.current) {
+  //       onScan(period, sort, q, limit);
+  //       lastFiredRef.current = q;
+  //     }
+  //   }, 800);
+  //   return () => clearTimeout(h);
+  // }, [query, onScan, period, sort, limit]);
 
   const toggleSelect = (id: number) => {
     const m = items.find((x) => x.id === id);
@@ -381,7 +383,24 @@ export default function RadarView({ items, loading, error, onScan }: RadarViewPr
 
       // 4. Envío al Backend (Solo Personajes)
       if (payload.length > 0) {
+        console.log("[Radar] Enviando payload:", payload);
         const res = await postPlannerDraft(payload, 1); // Batch count 1
+        console.log("[Radar] Respuesta Backend:", res);
+
+        if (!res) {
+          throw new Error("Comms Error: Respuesta del Planner es NULL/UNDEFINED");
+        }
+
+        // Paranoid check
+        if (typeof res !== "object") {
+          throw new Error("Comms Error: Respuesta no es un objeto válido");
+        }
+
+        if (!Array.isArray(res.jobs)) {
+          console.error("[Radar] res.jobs INVALID:", res.jobs);
+          throw new Error(`Planner Error: 'jobs' no es un array (es ${typeof res.jobs})`);
+        }
+
         localStorage.setItem("planner_jobs", JSON.stringify(res.jobs));
 
         // Guardar Contexto

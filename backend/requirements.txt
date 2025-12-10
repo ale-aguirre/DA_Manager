@@ -6,3 +6,5 @@ groq
 httpx
 requests
 Pillow
+aiohttp
+groq

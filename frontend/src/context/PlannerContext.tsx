@@ -79,7 +79,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                 hiresFix: true,
                 upscaleBy: 2,
                 hiresSteps: 20,
-                upscaler: "R-ESRGAN 4x+ Anime 6B",
+                upscaler: "R-ESRGAN 4x+ Anime6B",
                 width: 832,
                 height: 1216,
             };
@@ -92,9 +92,9 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                         // FORCE OVERRIDE defaults as per requested logic
                         clipSkip: 2,
                         hiresFix: true,
-                        upscaleBy: 2,
+                        // upscaleBy: 2, // Leave user pref or default
                         hiresSteps: 20,
-                        upscaler: "R-ESRGAN 4x+ Anime 6B",
+                        upscaler: "R-ESRGAN 4x+ Anime6B",
                         // Ensure width/height are respected if valid, else default
                         width: parsed.width || 832,
                         height: parsed.height || 1216,

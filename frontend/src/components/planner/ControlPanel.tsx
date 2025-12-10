@@ -43,7 +43,7 @@ export default function ControlPanel(props: ControlPanelProps) {
   } = props;
 
   const { t } = useTranslation();
-  const { techConfig, setTechConfig } = usePlannerContext();
+  const { techConfig, setTechConfig, globalConfig } = usePlannerContext();
 
   // Local state for UI organization
   const [mainTab, setMainTab] = useState<"strategy" | "technical">("strategy");
@@ -327,19 +327,19 @@ export default function ControlPanel(props: ControlPanelProps) {
 
             {paramTab === "hires" && (
               <HiresSettings
-                hiresFix={currentConfig.hiresFix ?? true}
+                hiresFix={currentConfig.hiresFix ?? globalConfig.hiresFix ?? true}
                 onToggleHiresFix={(v) => handleConfigChange({ hiresFix: v })}
                 upscalerList={reforgeUpscalers}
-                currentUpscaler={currentConfig.upscaler || ""}
+                currentUpscaler={currentConfig.upscaler || globalConfig.upscaler || ""}
                 onChangeUpscaler={(v) => handleConfigChange({ upscaler: v })}
                 refreshUpscalers={refreshUpscalers}
                 refreshing={refreshingUpscalers}
                 upscalerVersion={upscalerVersion}
                 denoise={currentConfig.denoisingStrength ?? 0.35}
                 onChangeDenoise={(v) => handleConfigChange({ denoisingStrength: v })}
-                upscaleBy={currentConfig.upscaleBy || 1.5}
+                upscaleBy={currentConfig.upscaleBy || globalConfig.upscaleBy || 2}
                 onChangeUpscaleBy={(v) => handleConfigChange({ upscaleBy: v })}
-                hiresSteps={currentConfig.hiresSteps || 10}
+                hiresSteps={currentConfig.hiresSteps || globalConfig.hiresSteps || 20}
                 onChangeHiresSteps={(v) => handleConfigChange({ hiresSteps: v })}
               />
             )}

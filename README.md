@@ -18,9 +18,13 @@ Puertos:
 ## Configuración de Entornos
 Backend (.env en /backend):
 - REFORGE_PATH: ruta absoluta al folder wildcards de Dynamic Prompts
-- GROQ_API_KEY: clave de Groq (texto)
-- CIVITAI_API_KEY: clave opcional (para NSFW y cuota)
-- PRESETS_DIR: ruta absoluta al folder presets de Stable Diffusion
+- OUTPUTS_DIR: ruta absoluta al folder de salida de imágenes generadas
+- PRESETS_DIR: ruta absoluta al folder de presets (global prompts)
+- AI_PROVIDER: "ollama" (local) o "groq" (cloud) para generación de escenarios
+- OLLAMA_URL: URL de Ollama (default: http://localhost:11434)
+- OLLAMA_MODEL: modelo de Ollama (default: dolphin-llama3)
+- GROQ_API_KEY: clave de Groq (solo si AI_PROVIDER=groq)
+- CIVITAI_API_KEY: clave opcional (para NSFW y cuota en Radar)
 
 Ejemplo: ver backend/.env.example
 
@@ -48,15 +52,37 @@ Abrir http://localhost:3000
 ## Notas Importantes
 - Todas las rutas locales deben provenir de variables de entorno (.env) — sin paths hardcodeados.
 - Scraping externo usa cloudscraper (no usar requests para sitios protegidos por Cloudflare).
-- El endpoint /save-files guarda personajes.txt y poses.txt en REFORGE_PATH con formato:
-  - "trigger1, trigger2, nombre_limpio, masterpiece, best quality, amazing quality, absurdres, explicit, nsfw, (highly detailed face:1.2)"
 - CORS habilitado para http://localhost:3000.
+- Global Prompts se guardan en PRESETS_DIR como archivos .txt
 
-## Scripts útiles
-- Backend salud: GET http://127.0.0.1:8000/
-- Scan Civitai: GET http://127.0.0.1:8000/scan/civitai
-- Proceso IA: POST http://127.0.0.1:8000/process-ai
-- Guardar archivos: POST http://127.0.0.1:8000/save-files
+## Scripts útiles (Endpoints)
+**Health & Config:**
+- GET / - Health check del backend
+- GET /planner/ai-status - Estado del provider de AI (Ollama/Groq)
+
+**Radar (Búsqueda de modelos):**
+- GET /scan/civitai - Búsqueda de LoRAs en Civitai
+- POST /download-lora - Descarga de LoRA desde Civitai
+- GET /local/loras - Lista LoRAs locales
+- GET /local/lora-info?name=X - Info de LoRA local
+
+**Planner (Generación de drafts):**
+- POST /planner/draft - Genera jobs desde personajes seleccionados
+- POST /planner/execute-v2 - Inicia producción con jobs
+
+**Presets (Global Prompts):**
+- GET /presets/list - Lista presets guardados
+- GET /presets/read?name=X - Lee contenido de preset
+- POST /presets/save - Guarda preset
+- POST /presets/open - Abre carpeta de presets en explorador
+
+**Factory (Producción):**
+- GET /factory/status - Estado de producción actual
+- POST /factory/stop - Detiene producción
+
+**Gallery:**
+- GET /gallery?folder=X - Lista imágenes de folder
+- GET /gallery/metadata?path=X - Metadata de imagen
 
 ## Desarrollo y Git
 - Ramas activas: develop, feature/git-setup

@@ -6,6 +6,10 @@ export interface PlannerDraftItem {
   ecchi_count?: number;
   nsfw_count?: number;
   theme?: string;
+  generation_mode?: "BATCH" | "SEQUENCE";
+  simple_background?: boolean;
+  global_positive?: string;
+  global_negative?: string;
 }
 
 export interface PlannerJob {
@@ -254,7 +258,9 @@ export async function getLocalLoras(): Promise<{ files: string[]; path?: string 
     throw new Error(`Local LoRAs failed (${res.status}): ${text}`);
   }
   const data = await res.json();
-  return { files: Array.isArray(data?.files) ? data.files : [], path: typeof data?.path === "string" ? data.path : undefined };
+  /* Backwards compatibility: Map objects to strings for components expecting filenames */
+  const files = Array.isArray(data?.files) ? data.files.map((f: any) => typeof f === "string" ? f : f.filename) : [];
+  return { files, path: typeof data?.path === "string" ? data.path : undefined };
 }
 
 export async function postPlannerExecuteV2(
@@ -497,4 +503,33 @@ export async function getGalleryMetadata(path: string): Promise<{ prompt: string
   } catch {
     return { prompt: "" };
   }
+}
+
+// --- Presets API ---
+export async function getPresetsList(): Promise<{ files: string[]; path: string }> {
+  const res = await fetch(`${BASE_URL}/presets/list`);
+  if (!res.ok) throw new Error(`Failed to list presets (${res.status})`);
+  return res.json();
+}
+
+export async function readPreset(name: string): Promise<{ name: string; content: string }> {
+  const res = await fetch(`${BASE_URL}/presets/read?name=${encodeURIComponent(name)}`);
+  if (!res.ok) throw new Error(`Failed to read preset (${res.status})`);
+  return res.json();
+}
+
+export async function openPresetsFolder(): Promise<{ status: string; path: string }> {
+  const res = await fetch(`${BASE_URL}/presets/open`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to open presets folder (${res.status})`);
+  return res.json();
+}
+
+export async function getAIStatus(): Promise<{
+  provider: string;
+  ollama: { url: string; model: string; active: boolean } | null;
+  groq: { api_key_configured: boolean; model: string; active: boolean } | null;
+}> {
+  const res = await fetch(`${BASE_URL}/planner/ai-status`);
+  if (!res.ok) throw new Error(`Failed to get AI status (${res.status})`);
+  return res.json();
 }

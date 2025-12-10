@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Toast from "./Toast";
 
 export default function PlannerLayout({ children }: { children: React.ReactNode }) {
     return (
@@ -9,6 +10,8 @@ export default function PlannerLayout({ children }: { children: React.ReactNode 
             <main className="flex-1 overflow-hidden">
                 {children}
             </main>
+            {/* Toast Notifications */}
+            <Toast />
         </div>
     );
 }

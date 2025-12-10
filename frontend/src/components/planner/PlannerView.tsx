@@ -10,6 +10,7 @@ import JobQueue from "./jobs/JobQueue";
 import ControlPanel from "./ControlPanel";
 import TechnicalModelPanel from "./TechnicalModelPanel";
 import PromptsEditor from "./PromptsEditor";
+import AIStatusBadge from "./AIStatusBadge";
 import { postPlannerExecuteV2, ResourceMeta, postPlannerDraft, PlannerDraftItem } from "../../lib/api";
 
 function PlannerDashboard() {
@@ -126,7 +127,10 @@ function PlannerDashboard() {
           character_name: charName,
           trigger_words: [],
           batch_count: masterBatchCount,
-          theme: strategyTheme !== "None" ? strategyTheme : undefined
+          theme: strategyTheme !== "None" ? strategyTheme : undefined,
+          // Pass Dynamic Config
+          global_positive: globalConfig.positivePrompt,
+          global_negative: globalConfig.negativePrompt
         });
       }
 
@@ -202,6 +206,7 @@ function PlannerDashboard() {
                   availableLoras={resources?.loras || []}
                   checkpointVersion={0}
                   techConfigByCharacter={techConfig}
+                  globalConfig={globalConfig}
                   onSetCheckpoint={handleSetCheckpoint}
                   onSetVae={handleSetVae}
                   onSetClipSkip={handleSetClipSkip}
@@ -216,33 +221,21 @@ function PlannerDashboard() {
                   onChangeBase={(v: string) => setGlobalConfig({ positivePrompt: v })}
                   onChangeNegative={(v: string) => setGlobalConfig({ negativePrompt: v })}
                 />
-                {/* Prompt Presets Buttons */}
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                    Guardar Positivo
-                  </button>
-                  <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                    Guardar Negativo
-                  </button>
-                  <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                    Cargar Positivo
-                  </button>
-                  <button className="rounded border border-slate-800 bg-slate-900 py-2 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors">
-                    Cargar Negativo
-                  </button>
-                </div>
               </section>
             </div>
 
             {/* 2. Workspace: Job Queue */}
             <div data-section="section-planner-workspace" id="planner-workspace" className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-                <h5 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
-                  MESA DE TRABAJO (DRAFTS)
-                </h5>
-                <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
-                  {jobs.length}
-                </span>
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <h5 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
+                    MESA DE TRABAJO (DRAFTS)
+                  </h5>
+                  <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">
+                    {jobs.length}
+                  </span>
+                </div>
+                <AIStatusBadge />
               </div>
 
               <section className="min-h-[200px]">

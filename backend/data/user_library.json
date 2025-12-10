@@ -1,0 +1,10 @@
+{
+  "test_lora_v1.safetensors": {
+    "alias": "Test Style",
+    "tags": [
+      "style",
+      "anime"
+    ],
+    "type": "Style"
+  }
+}

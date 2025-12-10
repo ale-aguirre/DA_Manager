@@ -17,6 +17,13 @@ export default function TechnicalModelPanel(props: {
       extraLoras?: string[];
     }
   >;
+  globalConfig?: {
+    checkpoint?: string;
+    vae?: string;
+    clipSkip?: number;
+    upscaler?: string;
+    hiresSteps?: number;
+  };
 
   // Props CRÍTICAS para la nueva UI
   availableLoras?: string[];
@@ -34,6 +41,7 @@ export default function TechnicalModelPanel(props: {
     reforgeOptions,
     checkpointVersion,
     techConfigByCharacter,
+    globalConfig,
     availableLoras = [], // Default a array vacío para evitar crash
     onToggleExtraLora,
     onSetCheckpoint,
@@ -44,16 +52,20 @@ export default function TechnicalModelPanel(props: {
 
   const clipSkipValue =
     techConfigByCharacter[activeCharacter]?.clipSkip ??
+    globalConfig?.clipSkip ??
     reforgeOptions?.current_clip_skip ??
-    1;
+    2;
 
   const vaeValue =
     techConfigByCharacter[activeCharacter]?.vae ??
+    globalConfig?.vae ??
     reforgeOptions?.current_vae ??
     "Automatic";
 
   const checkpointValue =
-    techConfigByCharacter[activeCharacter]?.checkpoint ?? "";
+    techConfigByCharacter[activeCharacter]?.checkpoint ??
+    globalConfig?.checkpoint ??
+    (checkpoints.length > 0 ? checkpoints[0] : "");
 
   const selectedExtraLoras =
     techConfigByCharacter[activeCharacter]?.extraLoras || [];
@@ -63,7 +75,7 @@ export default function TechnicalModelPanel(props: {
   const [lorasExpanded, setLorasExpanded] = useState(true); // Default abierto para que VEAS el cambio
 
   const filteredLoras = availableLoras.filter((l) =>
-    l.toLowerCase().includes(loraSearch.toLowerCase())
+    String(l || "").toLowerCase().includes(loraSearch.toLowerCase())
   );
 
   return (
@@ -198,10 +210,9 @@ export default function TechnicalModelPanel(props: {
                       }
                       className={`
                         px-2.5 py-1 rounded-full text-[11px] border transition-all select-none flex items-center gap-1.5
-                        ${
-                          isSelected
-                            ? "bg-violet-600 border-violet-500 text-white shadow-lg shadow-violet-900/20"
-                            : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                        ${isSelected
+                          ? "bg-violet-600 border-violet-500 text-white shadow-lg shadow-violet-900/20"
+                          : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
                         }
                       `}
                     >

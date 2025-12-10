@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { getFactoryStatus, postFactoryStop, getReforgeProgress } from "../../lib/api";
+import { getFactoryStatus, postFactoryStop, getReforgeProgress, postFactoryClearLogs } from "../../lib/api";
 import type { FactoryStatus } from "../../lib/api";
 import { OctagonX, Square, Eraser, Loader2 } from "lucide-react";
 
