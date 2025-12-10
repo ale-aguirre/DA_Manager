@@ -533,3 +533,4 @@ export async function getAIStatus(): Promise<{
   if (!res.ok) throw new Error(`Failed to get AI status (${res.status})`);
   return res.json();
 }
+

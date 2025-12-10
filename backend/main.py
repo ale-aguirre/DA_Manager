@@ -2974,6 +2974,187 @@ async def local_lora_info(name: str):
         return {"trainedWords": [], "name": base_name, "error": str(e)}
 
 
+@app.get("/local/loras-with-metadata")
+async def local_loras_with_metadata():
+    """Devuelve lista de LoRAs locales con metadata completa incluyendo thumbnails."""
+    lora_dir = get_lora_dir()
+    if not lora_dir or not lora_dir.exists():
+        return {"loras": []}
+    
+    # Crear directorio de caché para previews si no existe
+    cache_dir = lora_dir / ".previews"
+    cache_dir.mkdir(exist_ok=True)
+    
+    loras_with_meta = []
+    
+    # Buscar todos los .safetensors
+    for safetensor_file in lora_dir.glob("*.safetensors"):
+        lora_name = safetensor_file.stem
+        
+        # Buscar archivo .civitai.info correspondiente
+        info_path = safetensor_file.with_suffix(".civitai.info")
+        
+        lora_data = {
+            "name": safetensor_file.name,
+            "alias": lora_name.replace("_", " ").replace("-", " "),  # Limpiar nombre del archivo
+            "thumbnail": None,
+            "trainedWords": [],
+            "type": "character",  # Default: la mayoría son personajes
+            "tags": []
+        }
+
+        # Detectar tipo por nombre del archivo (heurística rápida)
+        filename_lower = lora_name.lower()
+        if any(keyword in filename_lower for keyword in ["lazy", "quality", "helper", "embeddings", "neg", "pos", "detail", "fix"]):
+            lora_data["type"] = "helpers"
+        elif any(keyword in filename_lower for keyword in ["outfit", "clothing", "dress", "uniform", "clothes", "fashion"]):
+            lora_data["type"] = "clothing"
+        elif any(keyword in filename_lower for keyword in ["style", "art", "aesthetic", "concept", "mix"]):
+            lora_data["type"] = "style"
+        # else: mantener "character" como default
+        
+        # Si existe .civitai.info, leer metadata
+        if info_path.exists():
+            try:
+                info_text = info_path.read_text(encoding="utf-8")
+                info_data = json.loads(info_text)
+                
+                # Extraer trained words
+                raw_words = info_data.get("trainedWords", [])
+                trained_words = []
+                if isinstance(raw_words, list):
+                    for item in raw_words:
+                        if isinstance(item, list):
+                            trained_words.extend([str(w) for w in item if w])
+                        elif isinstance(item, str):
+                            trained_words.append(item)
+                        else:
+                            trained_words.append(str(item))
+                lora_data["trainedWords"] = trained_words
+                
+                # THUMBNAIL + TYPE: Usar caché o llamar API
+                version_id = info_data.get("id")
+                if version_id:
+                    # Verificar caché
+                    cache_file = cache_dir / f"{lora_name}.json"
+                    cache_data = None
+                    
+                    if cache_file.exists():
+                        # Leer desde caché
+                        try:
+                            cache_text = cache_file.read_text(encoding="utf-8")
+                            cache_data = json.loads(cache_text)
+                            lora_data["thumbnail"] = cache_data.get("thumbnail")
+                            lora_data["type"] = cache_data.get("type", lora_data["type"])
+                            lora_data["tags"] = cache_data.get("tags", [])
+                            print(f"💾 Cached: {lora_name}")
+                        except:
+                            cache_data = None
+                    
+                    if not cache_data:
+                        # Llamar API y cachear resultado
+                        try:
+                            import cloudscraper
+                            scraper = cloudscraper.create_scraper()
+                            api_url = f"https://civitai.com/api/v1/model-versions/{version_id}"
+                            response = scraper.get(api_url, timeout=5)
+                            
+                            if response.status_code == 200:
+                                version_data = response.json()
+                                images = version_data.get("images", [])
+                                thumbnail_url = None
+                                
+                                if images and len(images) > 0:
+                                    first_image = images[0]
+                                    thumbnail_url = first_image.get("url")
+                                    if thumbnail_url:
+                                        lora_data["thumbnail"] = thumbnail_url
+                                        print(f"✓ Thumbnail OK: {lora_name}")
+                                    else:
+                                        print(f"✗ No URL in image data for {lora_name}")
+                                else:
+                                    print(f"✗ No images for {lora_name} (versionId: {version_id})")
+                                
+                                # Detectar tipo desde tags de la API
+                                model_data = version_data.get("model", {})
+                                tags = model_data.get("tags", [])
+                                if tags:
+                                    tags_lower = [str(t).lower() for t in tags]
+                                    if any(t in tags_lower for t in ["character", "anime character", "celebrity", "person"]):
+                                        lora_data["type"] = "character"
+                                    elif any(t in tags_lower for t in ["clothing", "outfit", "fashion", "dress", "uniform"]):
+                                        lora_data["type"] = "clothing"
+                                    elif any(t in tags_lower for t in ["style", "art style", "aesthetic", "concept"]):
+                                        lora_data["type"] = "style"
+                                    lora_data["tags"] = tags
+                                
+                                # Guardar en caché
+                                cache_file.write_text(json.dumps({
+                                    "thumbnail": lora_data["thumbnail"],
+                                    "type": lora_data["type"],
+                                    "tags": lora_data["tags"]
+                                }, ensure_ascii=False))
+                            else:
+                                print(f"✗ API error {response.status_code} for {lora_name}")
+                        except Exception as e:
+                            print(f"✗ Error fetching data for {lora_name}: {e}")
+                else:
+                    print(f"⚠ No versionId for {lora_name}")
+            except Exception as e:
+                print(f"✗ Error reading .civitai.info for {lora_name}: {e}")
+        else:
+            print(f"⚠ No .civitai.info for {lora_name}")
+
+
+        
+        loras_with_meta.append(lora_data)
+    
+    return {"loras": loras_with_meta, "count": len(loras_with_meta)}
+
+
+
+
+# Endpoint para servir imágenes de preview de LoRAs
+@app.get("/api/lora-preview/{filename:path}")
+async def serve_lora_preview(filename: str):
+    """Sirve archivos de preview de LoRAs desde cache."""
+    lora_dir = get_lora_dir()
+    if not lora_dir or not lora_dir.exists():
+        raise HTTPException(status_code=404, detail="LoRA directory not found")
+    
+    # Sanitizar filename y construir path completo
+    # filename puede ser ".previews/nombre.webp" o "nombre.png"
+    safe_path = Path(filename)
+    file_path = lora_dir / safe_path
+    
+    # Seguridad: asegurar que el path esté dentro de lora_dir
+    try:
+        file_path = file_path.resolve()
+        lora_dir_resolved = lora_dir.resolve()
+        if not str(file_path).startswith(str(lora_dir_resolved)):
+            raise HTTPException(status_code=403, detail="Access denied")
+    except:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Preview image not found: {filename}")
+    
+    # Determinar content type
+    content_type = "image/png"
+    if str(filename).endswith(".jpg") or str(filename).endswith(".jpeg"):
+        content_type = "image/jpeg"
+    elif str(filename).endswith(".webp"):
+        content_type = "image/webp"
+    
+    from fastapi.responses import FileResponse
+    return FileResponse(file_path, media_type=content_type)
+
+
+
+
+
+
+
 # ==========================================
 # MARKETING INSPECTOR UTILS
 # ==========================================

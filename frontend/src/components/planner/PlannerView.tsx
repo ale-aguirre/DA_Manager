@@ -8,8 +8,6 @@ import { TranslationProvider, useTranslation } from "../../hooks/useTranslation"
 import PlannerLayout from "./layout/PlannerLayout";
 import JobQueue from "./jobs/JobQueue";
 import ControlPanel from "./ControlPanel";
-import TechnicalModelPanel from "./TechnicalModelPanel";
-import PromptsEditor from "./PromptsEditor";
 import AIStatusBadge from "./AIStatusBadge";
 import { postPlannerExecuteV2, ResourceMeta, postPlannerDraft, PlannerDraftItem } from "../../lib/api";
 
@@ -21,7 +19,6 @@ function PlannerDashboard() {
     techConfig,
     setTechConfig,
     globalConfig,
-    setGlobalConfig,
     resources,
     loadResources,
     setUiState,
@@ -30,7 +27,6 @@ function PlannerDashboard() {
   } = usePlannerContext();
 
   const [activeCharacter, setActiveCharacter] = useState<string>("");
-  const [paramTab, setParamTab] = useState<"generation" | "hires" | "adetailer">("generation");
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [showPayloadModal, setShowPayloadModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
@@ -162,13 +158,6 @@ function PlannerDashboard() {
   };
   const handleSetVae = (value: string) => { if (activeCharacter) setTechConfig(activeCharacter, { vae: value }); };
   const handleSetClipSkip = (value: number) => { if (activeCharacter) setTechConfig(activeCharacter, { clipSkip: value }); };
-  const handleToggleExtraLora = (loraName: string) => {
-    if (!activeCharacter) return;
-    const current = techConfig[activeCharacter]?.extraLoras || [];
-    const exists = current.includes(loraName);
-    const next = exists ? current.filter(l => l !== loraName) : [...current, loraName];
-    setTechConfig(activeCharacter, { extraLoras: next });
-  };
 
   return (
     <PlannerLayout>
@@ -181,8 +170,6 @@ function PlannerDashboard() {
             <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
               <ControlPanel
                 activeCharacter={activeCharacter}
-                paramTab={paramTab}
-                setParamTab={setParamTab}
                 isRegenerating={uiState.isLoading} // Use uiState.isLoading for draft button loader
                 onRegenerateDrafts={handleGenerateDrafts}
                 reforgeUpscalers={resources?.upscalers || []}
@@ -193,36 +180,15 @@ function PlannerDashboard() {
                 setStrategyMode={setStrategyMode}
                 strategyTheme={strategyTheme}
                 setStrategyTheme={setStrategyTheme}
+                checkpoints={resources?.checkpoints || []}
+                vaes={resources?.vaes || []}
+                checkpointVersion={0}
+                onSetCheckpoint={handleSetCheckpoint}
+                onSetVae={handleSetVae}
+                onSetClipSkip={handleSetClipSkip}
+                onRefreshAll={loadResources}
               />
             </section>
-
-            {/* Secondary: Checkpoints & Prompts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-                <TechnicalModelPanel
-                  activeCharacter={activeCharacter}
-                  checkpoints={resources?.checkpoints || []}
-                  vaes={resources?.vaes || []}
-                  availableLoras={resources?.loras || []}
-                  checkpointVersion={0}
-                  techConfigByCharacter={techConfig}
-                  globalConfig={globalConfig}
-                  onSetCheckpoint={handleSetCheckpoint}
-                  onSetVae={handleSetVae}
-                  onSetClipSkip={handleSetClipSkip}
-                  onToggleExtraLora={handleToggleExtraLora}
-                  onRefreshAll={loadResources}
-                />
-              </section>
-              <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-                <PromptsEditor
-                  basePrompt={globalConfig.positivePrompt || ""}
-                  negativePrompt={globalConfig.negativePrompt || ""}
-                  onChangeBase={(v: string) => setGlobalConfig({ positivePrompt: v })}
-                  onChangeNegative={(v: string) => setGlobalConfig({ negativePrompt: v })}
-                />
-              </section>
-            </div>
 
             {/* 2. Workspace: Job Queue */}
             <div data-section="section-planner-workspace" id="planner-workspace" className="space-y-4">

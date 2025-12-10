@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useState } from "react";
-import { Loader2, Wand2, Settings2 } from "lucide-react";
+import { Loader2, Wand2, Settings2, Palette } from "lucide-react";
 import { usePlannerContext } from "../../context/PlannerContext";
 import { useTranslation } from "../../hooks/useTranslation";
 import HiresSettings from "./HiresSettings";
 import { SliderBar } from "./SliderBar";
+import TechnicalPanel from "./TechnicalPanel";
+import LoraStackManager from "./LoraStackManager";
 
 interface ControlPanelProps {
   activeCharacter: string;
-  paramTab: "generation" | "hires" | "adetailer";
-  setParamTab: (tab: "generation" | "hires" | "adetailer") => void;
   isRegenerating: boolean;
   onRegenerateDrafts: () => void | Promise<void>;
   // Upscaler props passed down for now or moved to context later
@@ -23,13 +23,19 @@ interface ControlPanelProps {
   setStrategyMode: (m: "Random" | "Sequence") => void;
   strategyTheme: "None" | "Christmas" | "Halloween";
   setStrategyTheme: (t: "None" | "Christmas" | "Halloween") => void;
+  // Technical Panel props
+  checkpoints: string[];
+  vaes: string[];
+  checkpointVersion: number;
+  onSetCheckpoint: (title: string) => Promise<void> | void;
+  onSetVae: (value: string) => void;
+  onSetClipSkip: (value: number) => void;
+  onRefreshAll: () => Promise<void> | void;
 }
 
 export default function ControlPanel(props: ControlPanelProps) {
   const {
     activeCharacter,
-    paramTab,
-    setParamTab,
     isRegenerating,
     onRegenerateDrafts,
     reforgeUpscalers,
@@ -46,7 +52,8 @@ export default function ControlPanel(props: ControlPanelProps) {
   const { techConfig, setTechConfig, globalConfig } = usePlannerContext();
 
   // Local state for UI organization
-  const [mainTab, setMainTab] = useState<"strategy" | "technical">("strategy");
+  const [mainTab, setMainTab] = useState<"strategy" | "technical" | "loras">("strategy");
+  const [techSubTab, setTechSubTab] = useState<"motor" | "generation" | "hires" | "adetailer">("motor");
 
   // Helper to get current config for active character
   const currentConfig = techConfig[activeCharacter] || {};
@@ -58,12 +65,12 @@ export default function ControlPanel(props: ControlPanelProps) {
   return (
     <div className="mt-4">
       {/* Main Tabs Header */}
-      <div className="mb-4 flex border-b border-slate-700">
+      <div className="mb-4 flex border-b border-slate-800 bg-slate-950">
         <button
           onClick={() => setMainTab("strategy")}
-          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors border-b-2 ${mainTab === "strategy"
-            ? "border-violet-500 text-violet-400"
-            : "border-transparent text-slate-400 hover:text-slate-200"
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200 border-b-2 ${mainTab === "strategy"
+            ? "border-violet-500 text-violet-300 bg-slate-900"
+            : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50"
             }`}
         >
           <Wand2 className="h-4 w-4" />
@@ -71,13 +78,23 @@ export default function ControlPanel(props: ControlPanelProps) {
         </button>
         <button
           onClick={() => setMainTab("technical")}
-          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors border-b-2 ${mainTab === "technical"
-            ? "border-blue-500 text-blue-400"
-            : "border-transparent text-slate-400 hover:text-slate-200"
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200 border-b-2 ${mainTab === "technical"
+            ? "border-emerald-500 text-emerald-300 bg-slate-900"
+            : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50"
             }`}
         >
           <Settings2 className="h-4 w-4" />
           {t("planner.tech_title")}
+        </button>
+        <button
+          onClick={() => setMainTab("loras")}
+          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200 border-b-2 ${mainTab === "loras"
+            ? "border-violet-500 text-violet-300 bg-slate-900"
+            : "border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50"
+            }`}
+        >
+          <Palette className="h-4 w-4" />
+          LORAS
         </button>
       </div>
 
@@ -164,16 +181,16 @@ export default function ControlPanel(props: ControlPanelProps) {
 
       {/* TECHNICAL PANEL */}
       {mainTab === "technical" && (
-        <div data-section="section-tech-settings">
+        <div data-section="section-tech-settings" className="animate-in fade-in slide-in-from-top-2 duration-300">
           {/* Sub Tabs */}
-          <div className="mb-3 flex gap-2">
-            {(["generation", "hires", "adetailer"] as const).map((tab) => (
+          <div className="mb-3 flex gap-2 bg-slate-950 p-2 rounded-lg border border-slate-800">
+            {(["motor", "generation", "hires", "adetailer"] as const).map((tab) => (
               <button
                 key={tab}
-                onClick={() => setParamTab(tab)}
-                className={`rounded-md px-3 py-1 text-xs border ${paramTab === tab
-                  ? "border-slate-600 bg-slate-800 text-slate-100"
-                  : "border-slate-700 bg-slate-900 text-slate-500 hover:text-slate-300"
+                onClick={() => setTechSubTab(tab)}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all duration-200 ${techSubTab === tab
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-slate-900 text-slate-400 hover:text-slate-200 hover:bg-slate-800"
                   }`}
               >
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -182,8 +199,22 @@ export default function ControlPanel(props: ControlPanelProps) {
           </div>
 
           <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg">
-            {paramTab === "generation" && (
-              <div className="grid grid-cols-2 gap-4 items-end">
+            {techSubTab === "motor" && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                <TechnicalPanel
+                  activeCharacter={activeCharacter}
+                  checkpoints={props.checkpoints}
+                  vaes={props.vaes}
+                  checkpointVersion={props.checkpointVersion}
+                  onSetCheckpoint={props.onSetCheckpoint}
+                  onSetVae={props.onSetVae}
+                  onSetClipSkip={props.onSetClipSkip}
+                  onRefreshAll={props.onRefreshAll}
+                />
+              </div>
+            )}
+            {techSubTab === "generation" && (
+              <div className="grid grid-cols-2 gap-4 items-end animate-in fade-in slide-in-from-top-2 duration-300">
                 {/* Generation Settings */}
                 <div className="col-span-2 grid grid-cols-2 gap-3">
                   <div>
@@ -325,7 +356,7 @@ export default function ControlPanel(props: ControlPanelProps) {
               </div>
             )}
 
-            {paramTab === "hires" && (
+            {techSubTab === "hires" && (
               <HiresSettings
                 hiresFix={currentConfig.hiresFix ?? globalConfig.hiresFix ?? true}
                 onToggleHiresFix={(v) => handleConfigChange({ hiresFix: v })}
@@ -344,7 +375,7 @@ export default function ControlPanel(props: ControlPanelProps) {
               />
             )}
 
-            {paramTab === "adetailer" && (
+            {techSubTab === "adetailer" && (
               <div className="col-span-2 flex items-center gap-6 p-4">
                 <label className="flex items-center gap-2 text-slate-300 text-sm cursor-pointer hover:text-white">
                   <input
@@ -372,7 +403,15 @@ export default function ControlPanel(props: ControlPanelProps) {
             )}
           </div>
         </div>
+      )
+      }
+
+      {/* LORAS PANEL */}
+      {mainTab === "loras" && (
+        <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg animate-in fade-in slide-in-from-top-2 duration-300">
+          <LoraStackManager activeCharacter={activeCharacter} />
+        </div>
       )}
-    </div>
+    </div >
   );
 }
