@@ -34,6 +34,7 @@ class LibraryService:
     def get_metadata(self, filename: str, lora_path: Optional[Path] = None) -> Dict[str, Any]:
         """
         Retorna metadatos combinados (User JSON + Sidecar .info).
+        Prioridad para 'type': manual_type > user type > auto-detect
         """
         # 1. Datos del usuario (Alias, Tags manuales)
         user_data = self.library.get(filename, {})
@@ -54,12 +55,16 @@ class LibraryService:
                 except Exception:
                     pass
         
+        # Determinar tipo con prioridad: manual_type > type > auto-detect
+        final_type = user_data.get("manual_type") or user_data.get("type", "character")
+        
         # Merge: User data gana
         return {
             "filename": filename,
             "alias": user_data.get("alias", ""),
             "tags": user_data.get("tags", []),
-            "type": user_data.get("type", "Unknown"),
+            "type": final_type,  # Uses manual_type if exists
+            "manual_type": user_data.get("manual_type"),  # Expose for UI
             "triggers": user_data.get("triggers") or auto_data.get("triggers", []),
             "thumbnail": user_data.get("thumbnail") or auto_data.get("thumbnail", None),
             "base_model": auto_data.get("base_model", "Unknown")
@@ -81,4 +86,20 @@ class LibraryService:
         
         self._save_library()
         print(f"[LibraryService] Updated metadata for {filename}")
+
+    def update_manual_category(self, filename: str, category: str):
+        """
+        Actualiza la categoría manual de un LoRA (sobrescribe auto-detección).
+        category: "character" | "helpers" | "clothing" | "style"
+        """
+        allowed_categories = ["character", "helpers", "clothing", "style"]
+        if category not in allowed_categories:
+            raise ValueError(f"Invalid category: {category}. Must be one of {allowed_categories}")
+        
+        if filename not in self.library:
+            self.library[filename] = {}
+        
+        self.library[filename]["manual_type"] = category
+        self._save_library()
+        print(f"[LibraryService] Set manual category for {filename}: {category}")
 

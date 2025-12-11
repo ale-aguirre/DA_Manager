@@ -9,6 +9,7 @@ import PlannerLayout from "./layout/PlannerLayout";
 import JobQueue from "./jobs/JobQueue";
 import ControlPanel from "./ControlPanel";
 import AIStatusBadge from "./AIStatusBadge";
+import { GlobalLoraStack } from "./GlobalLoraStack"; // NEW
 import { postPlannerExecuteV2, ResourceMeta, postPlannerDraft, PlannerDraftItem } from "../../lib/api";
 
 function PlannerDashboard() {

@@ -97,3 +97,22 @@ export interface PlannerResources {
   vaes?: string[];
   loras?: string[];
 }
+
+// LoRA Metadata with manual categorization support
+export interface LoRAMetadata {
+  name: string;
+  filename: string;
+  alias?: string;
+  thumbnail?: string;
+  trainedWords: string[];
+  type: "character" | "helpers" | "clothing" | "style";
+  manual_type?: "character" | "helpers" | "clothing" | "style"; // User override
+  tags: string[];
+  base_model?: string;
+}
+
+export type LoRAScope = "global" | "per-job";
+
+export interface LoRAWithScope extends LoRAMetadata {
+  scope: LoRAScope;
+}

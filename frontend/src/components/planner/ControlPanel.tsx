@@ -8,6 +8,7 @@ import HiresSettings from "./HiresSettings";
 import { SliderBar } from "./SliderBar";
 import TechnicalPanel from "./TechnicalPanel";
 import LoraStackManager from "./LoraStackManager";
+import { GlobalLoraStack } from "./GlobalLoraStack";
 
 interface ControlPanelProps {
   activeCharacter: string;
@@ -408,7 +409,9 @@ export default function ControlPanel(props: ControlPanelProps) {
 
       {/* LORAS PANEL */}
       {mainTab === "loras" && (
-        <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg animate-in fade-in slide-in-from-top-2 duration-300">
+        <div className="p-4 bg-slate-900 border border-slate-700 rounded-lg animate-in fade-in slide-in-from-top-2 duration-300 space-y-4">
+          {/* Import GlobalLoraStack at top of file if not already */}
+          <GlobalLoraStack />
           <LoraStackManager activeCharacter={activeCharacter} />
         </div>
       )}

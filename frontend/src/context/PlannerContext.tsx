@@ -15,6 +15,7 @@ interface PlannerState {
     globalConfig: TechConfig; // Fallback/Global settings
     metaByCharacter: Record<string, unknown>;
     loreByCharacter: Record<string, string>;
+    globalLoras: string[]; // NEW: Global LoRAs filenames
     uiState: {
         isLoading: boolean;
         activeTab: string;
@@ -33,6 +34,8 @@ interface PlannerContextType extends PlannerState {
     setMetaByCharacter: (character: string, meta: unknown) => void;
     setLoreByCharacter: (character: string, lore: string) => void;
     setUiState: (updates: Partial<PlannerState["uiState"]>) => void;
+    addGlobalLora: (filename: string) => void; // NEW
+    removeGlobalLora: (filename: string) => void; // NEW
 
     // Async Actions
     loadResources: () => Promise<void>;
@@ -47,7 +50,8 @@ const STORAGE_KEYS = {
     JOBS: "planner_jobs",
     TECH: "planner_tech",
     CONFIG: "planner_config",
-    CONTEXT: "planner_context", // For UI state if needed
+    CONTEXT: "planner_context",
+    GLOBAL_LORAS: "planner_global_loras", // NEW
 };
 
 // --- Provider ---
@@ -59,6 +63,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     const [globalConfig, setGlobalConfigState] = useState<TechConfig>({});
     const [metaByCharacter, setMetaByCharacterState] = useState<Record<string, unknown>>({});
     const [loreByCharacter, setLoreByCharacterState] = useState<Record<string, string>>({});
+    const [globalLoras, setGlobalLoras] = useState<string[]>([]); // NEW
 
     const [isLoaded, setIsLoaded] = useState(false);
 
@@ -155,6 +160,19 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
                     console.error("Failed to parse planner_context", e);
                 }
             }
+
+            // NEW: Load global LoRAs
+            const savedGlobalLoras = localStorage.getItem(STORAGE_KEYS.GLOBAL_LORAS);
+            if (savedGlobalLoras) {
+                try {
+                    const parsed = JSON.parse(savedGlobalLoras);
+                    if (Array.isArray(parsed)) {
+                        setGlobalLoras(parsed);
+                    }
+                } catch (e) {
+                    console.error("Failed to parse global LoRAs", e);
+                }
+            }
         } catch (e) {
             console.error("Failed to load from storage", e);
         } finally {
@@ -217,6 +235,12 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem("planner_lore", JSON.stringify(loreByCharacter));
     }, [loreByCharacter, isLoaded]);
 
+    // NEW: Persist global LoRAs
+    useEffect(() => {
+        if (!isLoaded) return;
+        localStorage.setItem(STORAGE_KEYS.GLOBAL_LORAS, JSON.stringify(globalLoras));
+    }, [globalLoras, isLoaded]);
+
     // 3. Actions
     const addJob = useCallback((job: PlannerJob) => {
         setJobs((prev) => [...prev, job]);
@@ -253,6 +277,18 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
             ...prev,
             [character]: lore
         }));
+    }, []);
+
+    // NEW: Global LoRA actions
+    const addGlobalLora = useCallback((filename: string) => {
+        setGlobalLoras((prev) => {
+            if (prev.includes(filename)) return prev; // Avoid duplicates
+            return [...prev, filename];
+        });
+    }, []);
+
+    const removeGlobalLora = useCallback((filename: string) => {
+        setGlobalLoras((prev) => prev.filter(f => f !== filename));
     }, []);
 
     const setUiState = useCallback((updates: Partial<PlannerState["uiState"]>) => {
@@ -442,6 +478,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         globalConfig,
         metaByCharacter,
         loreByCharacter,
+        globalLoras, // NEW
         uiState,
         setJobs,
         addJob,
@@ -452,6 +489,8 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
         setMetaByCharacter,
         setLoreByCharacter,
         setUiState,
+        addGlobalLora, // NEW
+        removeGlobalLora, // NEW
         loadResources,
         magicFixJob,
         clearAll,

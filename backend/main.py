@@ -16,7 +16,7 @@ from services.library import LibraryService
 import cloudscraper
 from pydantic import BaseModel
 from urllib.parse import quote
-from typing import List, Optional
+from typing import List, Optional, Union
 import json
 from PIL import Image
 try:
@@ -184,6 +184,13 @@ class PlannerDraftItem(BaseModel):
     global_positive: Optional[str] = None
     global_negative: Optional[str] = None
 
+class PlannerDraftRequest(BaseModel):
+    """Request model for /planner/draft endpoint"""
+    payload: List[PlannerDraftItem]
+    job_count: Optional[int] = None
+    allow_extra_loras: Optional[bool] = False
+    global_loras: Optional[List[str]] = []  # NEW: Global LoRAs to inject
+
 class PlannerJob(BaseModel):
     character_name: str
     prompt: str
@@ -272,9 +279,14 @@ class PresetSaveRequest(BaseModel):
     content: str
 
 def _ensure_presets_dir() -> Path:
-    if not PRESETS_DIR or not str(PRESETS_DIR).strip():
-        raise HTTPException(status_code=500, detail="PRESETS_DIR no configurado en .env")
-    p = Path(PRESETS_DIR).expanduser().resolve()
+    presets_path = os.getenv("PRESETS_DIR", "")
+    if not presets_path:
+        # Default fallback: create presets dir in backend/data
+        default_dir = Path(__file__).parent / "data" / "presets"
+        default_dir.mkdir(parents=True, exist_ok=True)
+        return default_dir
+    
+    p = Path(presets_path)
     try:
         p.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -1131,8 +1143,27 @@ async def _get_atmospheres_for_character(character: str) -> List[str]:
 
     
 @app.post("/planner/draft")
-async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int] = None, allow_extra_loras: Optional[bool] = False):
+async def planner_draft(body: Union[List[PlannerDraftItem], PlannerDraftRequest]):
+    """
+    Backward compatible endpoint. Accepts:
+    - List[PlannerDraftItem] (old format from Radar)
+    - PlannerDraftRequest (new format with global_loras)
+    """
     from services.llm import LLMService
+    
+    # Normalize input to PlannerDraftRequest
+    if isinstance(body, list):
+        # Old format: array directly
+        request = PlannerDraftRequest(payload=body, job_count=None, global_loras=[])
+    else:
+        # New format: object with payload
+        request = body
+    
+    # Unpack request
+    payload = request.payload
+    job_count = request.job_count
+    global_loras = request.global_loras or []
+    
     # Recursos Fallback
     poses_sexual = _read_lines("poses/sexual.txt") or ["kneeling", "all fours"]
     poses_dynamic = _read_lines("poses/dynamic.txt") or ["standing"]
@@ -1143,6 +1174,19 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     all_jobs_payload = []
     drafts = []
 
+    # === NEW: Build Global LoRA Block ===
+    global_lora_tags = []
+    if global_loras:
+        print(f"[Planner] 🌍 Global LoRAs requested: {global_loras}")
+        for lora_name in global_loras:
+            # Find actual file stem (handles case sensitivity)
+            stem = _find_lora_file_stem(lora_name) or sanitize_filename(lora_name)
+            # Use lower weight for helpers/styles (0.6 vs 0.8 for characters)
+            global_lora_tags.append(f"<lora:{stem}:0.6>")
+        print(f"[Planner] 🌍 Global LoRA tags: {global_lora_tags}")
+    
+    global_lora_block = ", ".join(global_lora_tags) if global_lora_tags else ""
+
     # Helper para detectar y borrar "Novelas"
     def is_novel(text: str) -> bool:
         # Si tiene más de 20 palabras o verbos continuos, es basura.
@@ -1151,8 +1195,15 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
     for char in payload:
         print(f"[Planner] 🧠 Consultando IA para {char.character_name}...")
         
-        # Lógica de Cantidad
-        requested_n = char.batch_count or (job_count or 10)
+        # Lógica de Cantidad - FIXED: Respetar job_count original
+        # Prioridad: char.batch_count > job_count (de query params) > 1 (default)
+        if char.batch_count and char.batch_count > 0:
+            requested_n = char.batch_count
+        elif job_count and job_count > 0:
+            requested_n = job_count
+        else:
+            requested_n = 1  # Default correcto
+        
         is_sequence = (char.generation_mode == "SEQUENCE")
         loops = (requested_n // 3) if is_sequence else requested_n
         if is_sequence and loops < 1: loops = 1
@@ -1231,14 +1282,15 @@ async def planner_draft(payload: List[PlannerDraftItem], job_count: Optional[int
                 trigger_to_use = char.trigger_words[0] if char.trigger_words and len(char.trigger_words) > 0 else sanitize_filename(char.character_name)
                 
                 parts = [
-                    f"<lora:{sanitize_filename(char.character_name)}:0.8>", # Lora (always use filename)
-                    trigger_to_use,                                          # Trigger (use official or fallback)
-                    final_location,                                         # Fondo
-                    ARTIST_STYLE_VARIANT,                                    # Estilo
-                    current_outfit,                                         # Ropa
-                    current_pose,                                           # Pose
-                    current_tags,                                           # Tech Tags (Rating/Intensity)
-                    tech_tags_suffix                                        # User Global Positive
+                    global_lora_block,                                          # 🌍 GLOBAL LoRAs FIRST (helpers/styles)
+                    f"<lora:{sanitize_filename(char.character_name)}:0.8>",     # Character LoRA
+                    trigger_to_use,                                             # Trigger (use official or fallback)
+                    final_location,                                             # Fondo
+                    ARTIST_STYLE_LOCKED,                                       # Estilo
+                    current_outfit,                                             # Ropa
+                    current_pose,                                               # Pose
+                    current_tags,                                               # Tech Tags (Rating/Intensity)
+                    tech_tags_suffix                                            # User Global Positive
                 ]
                 final_prompt = ", ".join([p for p in parts if p and p.strip()])
 
@@ -2526,6 +2578,25 @@ async def update_metadata(req: UpdateMetadataRequest):
     try:
         library_service.update_metadata(req.filename.strip(), req.data)
         return {"status": "ok", "filename": req.filename}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/local/update-category")
+async def update_lora_category(filename: str, category: str):
+    """
+    Actualiza la categoría manual de un LoRA.
+    category: "character" | "helpers" | "clothing" | "style"
+    """
+    if not filename or not filename.strip():
+        raise HTTPException(status_code=400, detail="Filename requerido")
+    if not category or not category.strip():
+        raise HTTPException(status_code=400, detail="Category requerido")
+    
+    try:
+        library_service.update_manual_category(filename.strip(), category.strip())
+        return {"status": "ok", "filename": filename, "category": category}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
