@@ -66,7 +66,7 @@ async def ensure_lora(character_name: str, filename: str, download_url: str, on_
         fname = (filename or character_name).strip()
         if not fname.lower().endswith(".safetensors"):
             fname += ".safetensors"
-        safe = "".join(c for c in fname if c.isalnum() or c in ["_", ".", "-"])
+        safe = "".join(c for c in fname if c.isalnum() or c in ["_", ".", "-", " ", "(", ")"])
         target = (lora_dir / safe).resolve()
 
         # Logs de detective

@@ -1235,7 +1235,12 @@ async def planner_draft(body: Union[List[PlannerDraftItem], PlannerDraftRequest]
 
             final_outfit = random.choice(outfits_casual) if is_novel(raw_outfit) or not raw_outfit else raw_outfit
             final_pose = random.choice(poses_dynamic) if is_novel(raw_pose) or not raw_pose else raw_pose
-            final_location = "simple background" if is_novel(raw_loc) or not raw_loc else raw_loc
+            
+            # Logic: If simple_background is requested (default True), force it.
+            if char.simple_background:
+                final_location = "simple background"
+            else:
+                final_location = "simple background" if is_novel(raw_loc) or not raw_loc else raw_loc
 
             # --- 2. LOGIC ENFORCER (Themes & Intensity) ---
             is_christmas = char.theme and "christmas" in char.theme.lower()
